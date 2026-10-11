@@ -1,0 +1,273 @@
+"""Bridge strict host configuration to the existing room/controller settings.
+
+Rendering is stdlib-only and read-only. Materialization is a development runtime
+operation performed under the host owner lease. Native edits win for fields they
+change; unrelated gameplay preferences saved by a worker survive refresh/restart.
+"""
+from __future__ import annotations
+
+from contextlib import ExitStack
+import copy
+from pathlib import Path
+
+from . import __version__
+from .catalogs import make_pool
+from .config import ConfigError, PRESETS, contained
+from .layout import atomic_json, checked_root, file_lease, load, read_json
+from .layout import DIRECTORIES
+from .catalog_store import resolved_catalogs, settings_for, POINTER
+
+EDITABLE_BASE = {'sr_min', 'sr_max', 'auto_difficulty', 'default_response_language'}
+STATE_FILE = 'state/runtime-config.json'
+ROOM_DIRECTORY = 'config/rooms'
+
+
+def render(root: Path, *, account_id=None) -> dict:
+    root = checked_root(root)
+    marker, config = load(root)
+    expected = config['account']['expected_user_id']
+    if account_id is not None:
+        if type(account_id) is not int or account_id <= 0:
+            raise ConfigError('account identity must be a positive integer')
+        if expected is not None and account_id != expected:
+            raise ConfigError('account identity does not match expected_user_id')
+    account = account_id if account_id is not None else expected
+    resolved = resolved_catalogs(root)
+    rooms = []
+    for room in config['rooms']:
+        alias = room['alias']
+        spec = PRESETS[room['preset']]
+        catalog = str(contained(root, room['catalog']))
+        settings = {
+            'version': 'v7.0.0', 'room_name': f'PoolRotater offline | {alias}',
+            'room_count': len(config['rooms']), 'discord_control_room_alias': alias,
+            'ruleset_id': spec['ruleset'], 'mania_keys': spec['keys'] or 4,
+            'auto_difficulty': spec['auto_difficulty'],
+            'sr_min': room['sr_min'], 'sr_max': room['sr_max'],
+            'default_response_language': room['language'],
+            'farm_db': catalog if spec['ruleset'] == 0 else '',
+            'mania_db': catalog if spec['ruleset'] == 3 else '',
+            'loved_db': '', 'loved_mode': False, 'mania_farm_db': '',
+            'mania_farm_enabled': False, 'mania_convert_db': '',
+            'max_length': 240, 'min_passcount': 1000, 'pool_limit': 200,
+            'max_map_age_years': 0,
+            'ratings_db': str(contained(root, 'state/controller-ratings.db')),
+            'api_rate_db': str(contained(root, 'state/controller-api-rate.db')),
+            'process_control_db': str(contained(root, 'state/controller-process-control.db')),
+            'lazer_coordinator_db': str(contained(root, 'state/controller-lazer-coordinator.db')),
+            'lazer_coordinator_enabled': False,
+            'lazer_chat_patrol_enabled': False, 'lazer_rejoin_on_hard_restart': False,
+            'log_file': str(contained(root, f'logs/room-{alias}.log')),
+            'map_pp_cache_dir': str(contained(root, 'state/controller-map-pp')),
+            'discord_control_health_state_file': str(contained(root, 'state/controller-discord-health.json')),
+            'discord_public_status_state_file': str(contained(root, 'state/controller-discord-public.json')),
+            'token_file': str(contained(root, config['account']['token_file'])),
+            'oauth_client_id_env': config['account']['client_id_env'],
+            'oauth_client_secret_env': config['account']['client_secret_env'],
+            'bot_user_id': account or 0, 'admins': [],
+            'requests_per_minute': 50, 'requests_burst_capacity': 60,
+            'spectator_url': 'offline://fixture-referee',
+            'chat_websocket_enabled': False, 'chat_websocket_endpoint': '',
+            'discord_control_enabled': False, 'discord_modlog_enabled': False,
+            'discord_control_channel_id': 0, 'discord_control_guild_id': 0,
+            'discord_public_status_channel_id': 0,
+            'discord_control_bot_token_env': 'POOLROTATER_DISABLED_DISCORD',
+            'discord_modlog_webhook_env': 'POOLROTATER_DISABLED_MODLOG',
+            'discord_invite_url': '', 'discord_invite_reminder_seconds': 0,
+            'ai_enabled': False, 'ai_api_key_env': 'POOLROTATER_DISABLED_AI',
+            'ai_context_file': '', 'map_pp_display_enabled': False,
+            'hard_restart_interval_minutes': 0,
+            'allowed_mods': [], 'required_mods': [], 'freestyle': False,
+        }
+        if resolved is not None:
+            settings.update(settings_for(room, resolved))
+        rooms.append({'alias': alias, 'preset': room['preset'],
+                      'config_path': str(contained(root, f'{ROOM_DIRECTORY}/{alias}.json')),
+                      'settings': settings})
+    return {'version': __version__, 'execution': 'offline', 'live_ready': False,
+            'installation_id': marker['installation_id'], 'generation': marker['generation'],
+            'account_id': account, 'rooms': rooms,
+            'catalog_set': resolved['set_id'] if resolved is not None else None,
+            'catalog_reference': resolved['reference'] if resolved is not None else None,
+            'binding': {'account': config['account'],
+                        'rooms': [{k: r[k] for k in ('alias', 'preset', 'catalog')} for r in config['rooms']]}}
+
+
+def pinned_keys(settings):
+    # Installation/account/transport paths remain pinned; gameplay tuning does not.
+    return set(settings) - EDITABLE_BASE - {
+        'max_length', 'min_passcount', 'pool_limit', 'max_map_age_years',
+    }
+
+
+def validate_room_data(data: dict, base: dict):
+    if not isinstance(data, dict):
+        raise ConfigError('runtime room configuration must be an object')
+    if not set(base) <= set(data):
+        raise ConfigError('runtime room configuration is missing managed fields')
+    # Native files are flat. Legacy nested Mania overrides could otherwise mask
+    # host-controlled catalog/account settings and a new native difficulty band.
+    if 'mania_settings' in data:
+        raise ConfigError('native runtime room preferences must use flat fields')
+    for key, value in data.items():
+        if key.startswith('_'):
+            raise ConfigError('private runtime keys cannot be stored in room configuration')
+        if key in pinned_keys(base) and (type(value) is not type(base[key]) or value != base[key]):
+            raise ConfigError('pinned runtime configuration changed; coordinated reconfiguration required')
+        if key not in base and (key.endswith(('_db', '_file', '_dir', '_path', '_env'))
+                                or key in {'access_token', 'refresh_token', 'client_secret', 'password'}):
+            raise ConfigError('undeclared runtime path or secret field')
+    from .config import LANGUAGES, number
+    if 'sr_min' in data or 'sr_max' in data:
+        low, high = data.get('sr_min', base['sr_min']), data.get('sr_max', base['sr_max'])
+        number(low, 0, 20, 'sr_min'); number(high, 0, 20, 'sr_max')
+        if low >= high:
+            raise ConfigError('runtime difficulty range must be ordered')
+    if data.get('default_response_language', base['default_response_language']) not in LANGUAGES:
+        raise ConfigError('unsupported runtime response language')
+    if 'auto_difficulty' in data and type(data['auto_difficulty']) is not bool:
+        raise ConfigError('auto_difficulty must be boolean')
+    if base['ruleset_id'] == 3 and data.get('auto_difficulty', False):
+        raise ConfigError('Mania requires fixed difficulty')
+
+
+class RuntimeConfigBridge:
+    """Private generated room files retain the existing live preference machinery."""
+
+    def __init__(self, root: Path, *, account_id=None):
+        self.root = checked_root(root)
+        self.account_id = account_id
+        self.initial = render(self.root, account_id=account_id)
+        self._cached_configs = None
+        self._cached_stamp = None
+
+    def stamp(self):
+        names = ['.poolrotater-host.json', 'config/host.json', STATE_FILE,
+                 f'{ROOM_DIRECTORY}/universal.json']
+        names += [f'{ROOM_DIRECTORY}/{r["alias"]}.json' for r in self.initial['rooms']]
+        paths = [contained(self.root, n) for n in names]
+        paths += [Path(r['settings']['farm_db'] or r['settings']['mania_db']) for r in self.initial['rooms']]
+        pointer = contained(self.root, POINTER)
+        paths.append(pointer)
+        if pointer.exists():
+            from .catalog_store import CatalogStore
+            store = CatalogStore.open(self.root)
+            for name in ('current.json', 'pending.json', 'binding.json', 'bootstrap.json'):
+                paths.append(store.path / name)
+            ref = store.current()
+            for identity in ref['modes'].values():
+                folder = store.path / 'versions' / identity
+                paths.append(folder); paths.extend(folder.iterdir())
+                paths.append(store.path / 'receipts' / (identity + '.json'))
+        result = []
+        for path in [self.root, *[contained(self.root, d) for d in DIRECTORIES],
+                     contained(self.root, ROOM_DIRECTORY)]:
+            try:
+                st = path.stat()
+                result.append((st.st_ino, st.st_mode, st.st_uid))
+            except FileNotFoundError:
+                result.append(None)
+        for path in paths:
+            try:
+                stat = path.stat()
+                result.append((stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_mode, stat.st_uid, stat.st_nlink))
+            except FileNotFoundError:
+                result.append(None)
+        return tuple(result)
+
+    def materialize(self) -> list[dict]:
+        current = render(self.root, account_id=self.account_id)
+        identity = ('installation_id', 'generation', 'account_id', 'binding')
+        if any(current[k] != self.initial[k] for k in identity):
+            raise ConfigError('installation, account or room topology changed; coordinated reconfiguration required')
+        # No fake worker or ledger is created until all catalogs pass preflight.
+        _, host = load(self.root)
+        if current['catalog_set'] is not None:
+            from rolling.worker import make_worker_pool
+            for room in current['rooms']:
+                if not make_worker_pool({**room['settings'], '_host_managed_catalogs': True}).maps:
+                    raise ConfigError('no eligible maps in managed difficulty range')
+        else:
+            for room in host['rooms']:
+                make_pool(self.root, room)
+        directory = contained(self.root, ROOM_DIRECTORY)
+        directory.mkdir(mode=0o700, exist_ok=True)
+        if directory.stat().st_mode & 0o077 or directory.stat().st_uid != self.root.stat().st_uid:
+            raise ConfigError('runtime configuration directory must be private')
+        state_path = contained(self.root, STATE_FILE)
+        with file_lease(contained(self.root, 'state/runtime-config.lock')), ExitStack() as locks:
+            previous = read_json(state_path) if state_path.exists() else None
+            if previous is not None:
+                if (not isinstance(previous, dict) or set(previous) != {'format', 'identity', 'bases'}
+                        or type(previous['format']) is not int or previous['format'] != 1
+                        or previous['identity'] != {k: current[k] for k in identity}
+                        or not isinstance(previous['bases'], dict)
+                        or set(previous['bases']) != {r['alias'] for r in current['rooms']}):
+                    raise ConfigError('runtime configuration binding changed; coordinated reconfiguration required')
+            plans = []
+            for room in current['rooms']:
+                path = contained(self.root, f'{ROOM_DIRECTORY}/{room["alias"]}.json')
+                locks.enter_context(file_lease(path.with_name(path.name + '.lock')))
+                base = room['settings']
+                old = previous['bases'].get(room['alias']) if previous else None
+                if path.exists() and old is None:
+                    raise ConfigError('refusing unrecognized existing runtime room configuration')
+                data = read_json(path) if path.exists() else copy.deepcopy(base)
+                if old is not None:
+                    additions = {'standard_dt_db', 'standard_catalog_binding'} if current['catalog_set'] else set()
+                    if (not isinstance(old, dict) or set(old) - set(base)
+                            or set(base) - set(old) - additions):
+                        raise ConfigError('runtime base schema changed; coordinated reconfiguration required')
+                    validate_room_data(data, old)
+                    for key, value in base.items():
+                        if key in pinned_keys(base) or old.get(key) != value:
+                            data[key] = value
+                validate_room_data(data, base)
+                plans.append((path, data, room))
+            shared = contained(self.root, f'{ROOM_DIRECTORY}/universal.json')
+            if shared.exists() and read_json(shared) != {}:
+                raise ConfigError('shared runtime overrides are unavailable in the offline host')
+            # Mark identity first, making an interrupted initial materialization resumable.
+            state = {'format': 1, 'identity': {k: current[k] for k in identity},
+                     'bases': {r['alias']: r['settings'] for r in current['rooms']}}
+            if previous is None:
+                atomic_json(state_path, state)
+            if not shared.exists():
+                atomic_json(shared, {})
+            for path, data, _ in plans:
+                if not path.exists() or read_json(path) != data:
+                    atomic_json(path, data)
+            if previous is not None and previous != state:
+                atomic_json(state_path, state)
+        self._materialized_set = current['catalog_set']
+        self._materialized_reference = current['catalog_reference']
+        return current['rooms']
+
+    def load_rooms(self) -> list[dict]:
+        if self._cached_configs is not None and self.stamp() == self._cached_stamp:
+            return copy.deepcopy(self._cached_configs)
+        before_stamp = self.stamp()
+        rooms = self.materialize()
+        # Full worker imports belong to the locked regression/runtime environment.
+        from run_multiroom import load_rooms
+        configs = load_rooms([r['config_path'] for r in rooms],
+                             contained(self.root, f'{ROOM_DIRECTORY}/universal.json'))
+        bases = {r['alias']: r['settings'] for r in rooms}
+        for cfg in configs:
+            base = bases[cfg['_instance_name']]
+            cfg.update(_host_root=str(self.root), _host_managed_catalogs=True,
+                       _host_offline=True, _host_installation_id=self.initial['installation_id'])
+            if self._materialized_set is not None:
+                cfg['_host_catalog_set'] = self._materialized_set
+                cfg['_host_catalog_reference'] = copy.deepcopy(self._materialized_reference)
+                cfg['_supervisor_overrides']['_host_catalog_set'] = self._materialized_set
+                cfg['_supervisor_overrides']['_host_catalog_reference'] = copy.deepcopy(self._materialized_reference)
+            cfg['_supervisor_overrides'].update({k: base[k] for k in pinned_keys(base)})
+            cfg['_supervisor_overrides'].update(_host_root=str(self.root), _host_managed_catalogs=True,
+                                                _host_offline=True)
+            if self.account_id is not None:
+                cfg['_authenticated_user_id'] = self.account_id
+        self._cached_configs = copy.deepcopy(configs)
+        # A concurrent reference publication forces refresh on the next call.
+        self._cached_stamp = before_stamp
+        return configs

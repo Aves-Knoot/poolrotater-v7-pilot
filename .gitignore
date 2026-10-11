@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.log
+*.zip
+*.whl
+release/
+rehearsal/
+.env
+secrets/
+state/
+build/
+dist/
+*.egg-info/
