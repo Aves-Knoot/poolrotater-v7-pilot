@@ -305,13 +305,13 @@ class ProviderRequestGate(PersistentRequestGate):
     def _offline(self):
         # Private fixed preparation is local filesystem work, never admission to
         # upstream execution. Invented qualification still requires isolation.
-        if self.execution != 'provider-disabled':
+        if self.execution not in ('provider-disabled', 'provider-pilot', 'provider-live-pilot'):
             super()._offline()
 
     def __init__(self, root, client_id, *, execution, client_profile_sha256,
                  minimum_interval=1.2, clock=clock_sample):
         import re
-        if execution not in ('provider-disabled', 'provider-fixture'):
+        if execution not in ('provider-disabled', 'provider-fixture', 'provider-pilot', 'provider-live-pilot'):
             raise AuthError('invalid_provider_execution')
         if (not isinstance(client_profile_sha256, str)
                 or not re.fullmatch('[a-f0-9]{64}', client_profile_sha256)):

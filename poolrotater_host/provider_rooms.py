@@ -19,7 +19,7 @@ from .layout import read_json
 
 def _authority(auth):
     if type(auth) is not ProviderOAuth: raise AuthError('qualified_provider_authority_required')
-    if auth.execution == 'provider-disabled': require_live_provider()
+    if auth.execution in ('provider-disabled', 'provider-pilot', 'provider-live-pilot'): require_live_provider(auth.execution)
     auth.require_authorization_available()
     if auth.execution == 'provider-fixture' and os.environ.get('POOLROTATER_PROVISIONING_SANDBOX') != '1':
         raise AuthError('installed_offline_fixture_required')
@@ -27,7 +27,7 @@ def _authority(auth):
 
 def _service(auth, backend):
     _authority(auth)
-    if auth.execution == 'provider-disabled':
+    if auth.execution in ('provider-disabled', 'provider-pilot', 'provider-live-pilot'):
         if backend is not None: raise AuthError('fixed_provider_backend_required')
         return
     from .testing.room_service import InventedRoomService
@@ -179,7 +179,7 @@ def provider_host_controller(root, release, *, authentication, api, hub):
     auth = authentication
     _authority(auth)
     from .installed_authorization import _runtime_guard
-    prepared = auth.execution == 'provider-disabled'
+    prepared = auth.execution in ('provider-disabled', 'provider-pilot', 'provider-live-pilot')
     runtime_guard = _runtime_guard(root, release, prepared=prepared)
     if (auth.root != root or type(api) is not ProviderRoomApi or type(hub) is not ProviderRoomHub
             or api.auth is not auth or hub.auth is not auth or api.backend is not hub.backend):

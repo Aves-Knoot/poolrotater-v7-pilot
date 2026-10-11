@@ -27,11 +27,12 @@ MAX_PACKET = 2 * 1024**2
 GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
 
-def boundary(port):
+def boundary(port, execution=None):
     if port is None:
-        require_live_provider()
+        require_live_provider(execution)
         return
-    if (os.environ.get('POOLROTATER_OFFLINE_SANDBOX') != '1'
+    if (execution == 'provider-live-pilot'
+            or os.environ.get('POOLROTATER_OFFLINE_SANDBOX') != '1'
             or type(port) is not int or not 0 < port <= 65535):
         raise AuthError('offline_verified_tls_required')
 
@@ -83,8 +84,8 @@ def send_packet(fd, value, deadline):
     finally: os.set_blocking(fd, True)
 
 
-def _upgrade(port, trust, bearer, token):
-    boundary(port)
+def _upgrade(port, trust, bearer, token, *, execution=None):
+    boundary(port, execution)
     host, target_port = (REFEREE_HOST, 443) if port is None else ('127.0.0.1', port)
     sock = None
     try:
@@ -134,7 +135,7 @@ def _upgrade(port, trust, bearer, token):
         raise
 
 
-def _worker(pipe, port, trust, bearer, parent_pid):
+def _worker(pipe, port, trust, bearer, parent_pid, execution=None):
     sock = None
     try:
         with open(os.devnull, 'wb') as null:
@@ -143,7 +144,7 @@ def _worker(pipe, port, trust, bearer, parent_pid):
         if ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
             raise AuthError('referee_child_setup_refused')
         if os.getppid() != parent_pid: raise AuthError('referee_parent_changed')
-        boundary(port)
+        boundary(port, execution)
         if type(trust) is not TrustSnapshot: raise AuthError('provider_trust_refused')
         request = prepare_referee(bearer)
         host, target_port = (REFEREE_HOST, 443) if port is None else ('127.0.0.1', port)
@@ -153,13 +154,14 @@ def _worker(pipe, port, trust, bearer, parent_pid):
             nonlocal cooldown
             if code == 429: cooldown = retry_after(headers)
         exchange = exchange_referee_upstream if port is None else exchange_fixture
-        code, value = exchange(connection, request, timeout=5, on_status=status)
+        kwargs = {'execution': execution} if port is None else {}
+        code, value = exchange(connection, request, timeout=5, on_status=status, **kwargs)
         send_packet(pipe.fileno(), {'kind':'negotiated','status':code,'data':value,'cooldown':cooldown}, time.monotonic()+5)
         if code != 200: return
         token = negotiation(value)
         command = receive_packet(pipe.fileno(), time.monotonic()+10)
         if command != {'kind':'upgrade'}: raise AuthError('referee_packet_refused')
-        sock, code, cooldown = _upgrade(port, trust, bearer, token)
+        sock, code, cooldown = _upgrade(port, trust, bearer, token, execution=execution)
         send_packet(pipe.fileno(), {'kind':'upgraded','status':code,'cooldown':cooldown}, time.monotonic()+5)
         if code != 101: return
         command = receive_packet(pipe.fileno(), time.monotonic()+10)
@@ -226,13 +228,15 @@ def _worker(pipe, port, trust, bearer, parent_pid):
 
 
 class ChildSession:
-    def __init__(self, port, trust, bearer):
-        boundary(port)
+    def __init__(self, port, trust, bearer, *, execution=None):
+        boundary(port, execution)
         self._lock = threading.Lock(); self._write = threading.Lock(); self.closed = False
         self._pidfd = None
         context = multiprocessing.get_context('spawn')
         self.pipe, child = context.Pipe(duplex=True)
-        self.process = context.Process(target=_worker, args=(child,port,trust,bearer,os.getpid()),
+        args = (child,port,trust,bearer,os.getpid())
+        if execution is not None: args += (execution,)
+        self.process = context.Process(target=_worker, args=args,
                                        name='referee-wire',daemon=True)
         try:
             mask = signal.pthread_sigmask(signal.SIG_BLOCK,(signal.SIGINT,signal.SIGTERM))

@@ -166,6 +166,12 @@ def provision(root, prefix, bundle, expected_sha256, *, uid=1000):
     # Administrative writes in this prototype can only target disposable tmpfs.
     if not prefix.is_relative_to('/runtime') or prefix == Path('/runtime') or not root.is_relative_to('/state'):
         raise ConfigError('provisioning writes are confined to fixture mounts')
+    return _provision(root, prefix, bundle, expected_sha256, uid=uid, execution='offline-fixture', reserve=0)
+
+
+def _provision(root, prefix, bundle, expected_sha256, *, uid, execution, reserve):
+    from .pilot_identity import installation_execution
+    installation_execution(execution)
     protected(prefix.parent)
     if prefix.exists(): protected(prefix)
     marker = _host_identity(root, uid)
@@ -181,7 +187,7 @@ def provision(root, prefix, bundle, expected_sha256, *, uid=1000):
         require_no_pending(prefix, marker['installation_id'])
         installation_path = prefix / 'installations' / (marker['installation_id'] + '.json')
         current = _control(installation_path, optional=True)
-        if current and any(current.get(k) != v for k,v in {**expected_pointer,'service_uid':uid,'host_root':str(root)}.items()):
+        if current and any(current.get(k) != v for k,v in {**expected_pointer,'service_uid':uid,'host_root':str(root), 'execution': execution}.items()):
             raise ConfigError('protected installation belongs to another root/generation/operator')
         with tempfile.TemporaryDirectory(prefix='package-',dir=prefix / '.staging') as directory:
             stage = Path(directory)
@@ -198,11 +204,11 @@ def provision(root, prefix, bundle, expected_sha256, *, uid=1000):
                     copied += len(chunk)
                     if copied > MAX_BUNDLE: raise ConfigError('runtime input grew beyond quota')
                     target.write(chunk)
-            spec = inspect(archive_path, expected_sha256)
+            spec = inspect(archive_path, expected_sha256, execution=execution)
             if spec['interpreter_sha256'] != digest('/usr/bin/python3.12'):
                 raise ConfigError('runtime interpreter differs from bundle target')
             required = sum(f['bytes'] for f in spec['files'].values()) + sum(w['expanded_bytes'] for w in spec['wheels']) + 32*1024**2
-            if shutil.disk_usage(prefix).free < required: raise ConfigError('insufficient fixture runtime space')
+            if shutil.disk_usage(prefix).free < reserve + required: raise ConfigError('insufficient fixture runtime space')
             with zipfile.ZipFile(archive_path) as archive:
                 for name in spec['files']:
                     destination = stage / name
@@ -215,7 +221,9 @@ def provision(root, prefix, bundle, expected_sha256, *, uid=1000):
                 from rolling.release import build_manifest
                 payload = stage / 'payload'
                 manifest = build_manifest(payload,spec['version'],environment / 'bin/python')
-                manifest['validation'] = {'tests':1,'offline_fixture':True,'scope':'verified local package; full M1/live gate open'}
+                manifest['validation'] = {'tests': 1, 'offline_fixture': execution == 'offline-fixture',
+                                          'execution': execution, 'scope': ('artifact integrity only; one-room live pilot capability, actual provider untested'
+                                                    if execution == 'pilot-live' else 'artifact integrity only; provider dispatch closed')}
                 _write(payload / 'release.json',manifest)
                 _seal(payload)
                 os.rename(payload,release)
@@ -227,7 +235,7 @@ def provision(root, prefix, bundle, expected_sha256, *, uid=1000):
             from rolling.release import load_release
             manifest = load_release(release)
             release_snapshot = snapshot(release)
-            proposal = {**expected_pointer,'execution':'offline-fixture','live_ready':False,'service_uid':uid,
+            proposal = {**expected_pointer,'execution':execution,'live_ready':False,'service_uid':uid,
                         'host_root':str(root),'release':str(release),'environment':str(environment),
                         'bundle_sha256':expected_sha256,'environment_id':spec['environment_id'],
                         'release_snapshot':release_snapshot}
@@ -248,7 +256,7 @@ def load_provisioned(root, *, release=None, prepared=False):
     if not prepared: fixture_only()
     if os.geteuid() == 0: raise ConfigError('protected runtime checks require the service identity')
     root = Path(root).absolute()
-    marker, _ = load(root)
+    marker, config = load(root)
     try:
         pointer = read_json(root / 'state/runtime-installation.json')
     except OSError:
@@ -262,9 +270,14 @@ def load_provisioned(root, *, release=None, prepared=False):
     record = _control(path)
     from .runtime_lifecycle import REGISTRATION_KEYS, require_no_pending, validate_runtime
     keys = REGISTRATION_KEYS
-    if (not isinstance(record,dict) or set(record) != keys or record['execution'] != 'offline-fixture' or record['live_ready'] is not False
+    if (not isinstance(record,dict) or set(record) != keys or record['execution'] not in ('offline-fixture', 'pilot-candidate', 'pilot-qualification', 'pilot-live') or record['live_ready'] is not False
             or any(record[k] != v for k,v in {**pointer,'service_uid':os.geteuid(),'host_root':str(root)}.items())):
         raise ConfigError('protected runtime registration mismatch')
+    from .pilot_identity import require_entry
+    require_entry(record['execution'], prepared=prepared)
+    expected_execution = 'offline' if record['execution'] == 'offline-fixture' else record['execution']
+    if config['execution'] != expected_execution:
+        raise ConfigError('host configuration execution differs from protected runtime')
     require_no_pending(prefix, marker['installation_id'])
     runtime = validate_runtime(record, prefix)
     expected_release, environment = runtime['release'], runtime['environment']

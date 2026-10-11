@@ -32,9 +32,11 @@ def _offline():
         raise AuthError('offline_verified_tls_required')
 
 
-def _boundary(port):
-    if port is None: require_live_provider()
-    else: _offline()
+def _boundary(port, execution=None):
+    if port is None: require_live_provider(execution)
+    else:
+        if execution == 'provider-live-pilot': raise AuthError('fixed_provider_required')
+        _offline()
 
 
 @dataclass(frozen=True)
@@ -150,7 +152,7 @@ _gates = {}  # Retain cooldown even when all adapters for this origin are discar
 _gates_lock = threading.Lock()
 
 
-def _worker(pipe, port, trust, request, timeout, parent_pid):
+def _worker(pipe, port, trust, request, timeout, parent_pid, execution=None):
     """Fixed child entry; no output except one bounded private response frame."""
     try:
         with open(os.devnull, 'wb') as null:
@@ -161,7 +163,7 @@ def _worker(pipe, port, trust, request, timeout, parent_pid):
         if ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
             raise AuthError('provider_child_setup_refused')
         if os.getppid() != parent_pid: raise AuthError('provider_parent_changed')
-        _boundary(port)
+        _boundary(port, execution)
         cooldown = 0.
         def status(code, headers):
             nonlocal cooldown
@@ -169,7 +171,8 @@ def _worker(pipe, port, trust, request, timeout, parent_pid):
         host, target_port = ('osu.ppy.sh', 443) if port is None else ('127.0.0.1', port)
         connection = http.client.HTTPSConnection(host, target_port, context=trust.context(), timeout=timeout)
         exchange = exchange_upstream if port is None else exchange_fixture
-        code, data = exchange(connection, request, timeout=timeout, on_status=status)
+        kwargs = {'execution': execution} if port is None else {}
+        code, data = exchange(connection, request, timeout=timeout, on_status=status, **kwargs)
         result = {'status': code, 'data': data, 'cooldown': cooldown}
     except AuthError as error: result = {'error': error.code}
     except Exception: result = {'error': 'provider_transport_uncertain'}
@@ -180,17 +183,19 @@ def _worker(pipe, port, trust, request, timeout, parent_pid):
     finally: pipe.close()
 
 
-def _owned_exchange(port, trust, request, deadline):
+def _owned_exchange(port, trust, request, deadline, *, execution=None):
     """Parent enforces deadline even while libc DNS or HTTP parsing blocks.
 
     No poll/join before unconditional kill: the unreaped child retains PID identity.
     Cleanup is an additional <=1 s reap allowance, not another request allowance.
     Interruption propagates only after child cleanup. The fixed child spawns none.
     """
-    _boundary(port)
+    _boundary(port, execution)
     context = multiprocessing.get_context('spawn')
     receive, send = context.Pipe(duplex=False)
-    process = context.Process(target=_worker, args=(send, port, trust, request, 5, os.getpid()), daemon=True)
+    args = (send, port, trust, request, 5, os.getpid())
+    if execution is not None: args += (execution,)
+    process = context.Process(target=_worker, args=args, daemon=True)
     try:
         mask = signal.pthread_sigmask(signal.SIG_BLOCK, (signal.SIGINT, signal.SIGTERM))
         try: process.start()
@@ -304,7 +309,7 @@ class _Permit:
         self.active = True; self.used = False
 
     def check(self):
-        _boundary(self.port)
+        _boundary(self.port, getattr(self.gate, 'execution', None))
         if not self.active or self.used or self.thread != threading.get_ident() or self.pid != os.getpid():
             raise AuthError('provider_admission_refused')
         if time.monotonic() >= self.deadline: raise AuthError('provider_deadline_exceeded')
@@ -326,7 +331,9 @@ class _Permit:
         self.used = True
         persistent = hasattr(self.gate, 'exchange_started')
         if persistent: self.gate.exchange_started()
-        try: value = _owned_exchange(self.port, self.trust, self.prepared, self.deadline)
+        try:
+            kwargs = {'execution': self.gate.execution} if self.port is None else {}
+            value = _owned_exchange(self.port, self.trust, self.prepared, self.deadline, **kwargs)
         except BaseException:
             if persistent: self.gate.uncertain()
             raise

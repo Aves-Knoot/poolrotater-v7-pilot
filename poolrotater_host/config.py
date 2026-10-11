@@ -52,8 +52,8 @@ def validate(config: dict) -> dict:
     fields(config, ('schema_version', 'execution', 'network', 'updates', 'account', 'rooms'), 'host')
     if type(config['schema_version']) is not int or config['schema_version'] != 1:
         raise ConfigError('unsupported configuration schema')
-    if config['execution'] != 'offline':
-        raise ConfigError('this development release supports offline execution only')
+    if config['execution'] not in ('offline', 'pilot-candidate', 'pilot-qualification', 'pilot-live'):
+        raise ConfigError('unsupported host execution identity')
     fields(config['network'], ('enabled', 'share_ratings', 'public_directory', 'share_chat'), 'network')
     if any(v is not False for v in config['network'].values()):
         raise ConfigError('network integrations are not implemented in the offline foundation')
@@ -74,6 +74,8 @@ def validate(config: dict) -> dict:
     rooms = config['rooms']
     if not isinstance(rooms, list) or not 1 <= len(rooms) <= 4:
         raise ConfigError('configure between one and four rooms')
+    if config['execution'] == 'pilot-live' and len(rooms) != 1:
+        raise ConfigError('live pilot requires exactly one room')
     aliases = set()
     for room in rooms:
         fields(room, ('alias', 'preset', 'sr_min', 'sr_max', 'language', 'catalog'), 'room')

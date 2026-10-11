@@ -26,9 +26,12 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
         def observer(phase, supervisor, workers):
             value = {'format': 1, 'execution': authentication.execution,
                      'phase': phase, 'pid': os.getpid(), 'uid': os.geteuid(),
+                     'installation_id': authentication.binding['installation_id'],
+                     'generation': authentication.binding['generation'],
                      'live_ready': False}
             if phase == 'running':
                 value.update(version=supervisor.manifest['version'],
+                             room_count=len(supervisor.configs),
                              worker_pids=[worker.process.pid for worker in workers])
             elif phase == 'stopped':
                 value.update(workers_reaped=True, closed_rooms=len(workers),
@@ -80,7 +83,10 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
 
 def run_fixed_provider_service(root, release):
     """Dormant fixed service; no secret/trust/transport/worker before permission."""
-    require_live_provider()
+    from .installed_authorization import _runtime_guard
+    from .pilot_identity import provider_execution
+    runtime = _runtime_guard(root, release, prepared=True)()
+    require_live_provider(provider_execution(runtime))
     from .installed_authorization import installed_provider_authentication
     from .provider_transport import TrustSnapshot
     auth = installed_provider_authentication(root, release, TrustSnapshot.system(prepared=True))

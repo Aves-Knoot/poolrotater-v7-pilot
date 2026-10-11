@@ -48,9 +48,10 @@ def _sync(path):
     finally: os.close(fd)
 
 
-def _identity(marker, root, uid, store, fixture):
+def _identity(marker, root, uid, store, fixture, *, execution='offline-fixture'):
+    extra = {} if execution == 'offline-fixture' else {'execution': execution}
     return {**marker, 'host_root': str(root), 'service_uid': uid,
-            'store': str(store), 'fixture': fixture}
+            'store': str(store), 'fixture': fixture, **extra}
 
 
 class CatalogStore:
@@ -85,8 +86,45 @@ class CatalogStore:
         return cls._initialize(Path(root).absolute(), parent / marker['installation_id'], marker, uid, trust, False)
 
     @classmethod
-    def _initialize(cls, root, store, marker, uid, trust, fixture):
-        binding = _identity(marker, root, uid, store, fixture)
+    def initialize_pilot(cls, instance, trust, expected_sha256):
+        from .pilot_installation import administrative_binding
+        from .pilot_identity import CANDIDATE
+        return cls._initialize_pilot(instance, trust, expected_sha256,
+                                     administrative_binding, administrative_binding(instance)[2]['execution'])
+
+    @classmethod
+    def _initialize_pilot(cls, instance, trust, expected_sha256, binding_loader, execution):
+        from .provisioning import protected
+        target, marker, record = binding_loader(instance)
+        if (type(trust) is not BootstrapTrust or trust.fixture is not False
+                or _hash(expected_sha256) != trust.identity):
+            raise ConfigError('pilot catalogs require independently confirmed nonfixture bootstrap trust')
+        prefix = target['prefix']; root = target['root']
+        parent = prefix / 'catalog-stores'
+        parent.mkdir(mode=0o755, exist_ok=True); protected(parent)
+        return cls._initialize(root, parent / marker['installation_id'], marker,
+                               record['service_uid'], trust, False, execution=execution)
+
+    @classmethod
+    def open_pilot_administrative(cls, instance):
+        from .pilot_installation import administrative_binding
+        from .pilot_identity import CANDIDATE
+        return cls._open_pilot_administrative(instance, administrative_binding, administrative_binding(instance)[2]['execution'])
+
+    @classmethod
+    def _open_pilot_administrative(cls, instance, binding_loader, execution):
+        from .provisioning import _control
+        target, marker, record = binding_loader(instance)
+        root = target['root']; store = target['prefix'] / 'catalog-stores' / marker['installation_id']
+        binding = _identity(marker, root, record['service_uid'], store, False, execution=execution)
+        if _control(root / POINTER, record['service_uid'], private=True) != binding:
+            raise ConfigError('pilot catalog pointer belongs to another installation')
+        result = cls(root, store, binding); result._check()
+        return result
+
+    @classmethod
+    def _initialize(cls, root, store, marker, uid, trust, fixture, *, execution='offline-fixture'):
+        binding = _identity(marker, root, uid, store, fixture, execution=execution)
         pointer = root / POINTER
         if os.path.lexists(pointer):
             # Do not adopt a preexisting directory or overwrite a different root.
@@ -119,13 +157,18 @@ class CatalogStore:
         root = Path(root).absolute(); marker, _ = load(root)
         pointer = contained(root, POINTER)
         binding = read_json(pointer)
-        fields(binding, ('format', 'installation_id', 'generation', 'host_root', 'service_uid', 'store', 'fixture'), 'catalog binding')
+        execution = binding.get('execution', 'offline-fixture') if isinstance(binding, dict) else None
+        from .pilot_identity import installation_execution
+        installation_execution(execution)
+        extra = () if execution == 'offline-fixture' else ('execution',)
+        fields(binding, ('format', 'installation_id', 'generation', 'host_root', 'service_uid', 'store', 'fixture', *extra), 'catalog binding')
         if type(binding['fixture']) is not bool or type(binding['service_uid']) is not int:
             raise ConfigError('invalid catalog ownership binding')
         store = Path(binding['store'])
-        if binding != _identity(marker, root, os.geteuid(), store, binding['fixture']):
+        if binding != _identity(marker, root, os.geteuid(), store, binding['fixture'], execution=execution):
             raise ConfigError('catalog installation/operator binding changed')
         if binding['fixture']:
+            if execution != 'offline-fixture': raise ConfigError('pilot catalogs require protected ownership')
             fixture_only()
             if store != root / 'catalogs/.managed' or os.path.lexists(root / 'state/runtime-installation.json'):
                 raise ConfigError('owned fixture cannot supply a provisioned host')
@@ -143,7 +186,7 @@ class CatalogStore:
             registration_path = prefix / 'installations' / (marker['installation_id'] + '.json')
             protected(registration_path); registration = _control(registration_path)
             expected = {**pointer, 'service_uid': os.geteuid(), 'host_root': str(root),
-                        'execution': 'offline-fixture', 'live_ready': False}
+                        'execution': execution, 'live_ready': False}
             if (not isinstance(registration, dict) or set(registration) != REGISTRATION_KEYS
                     or any(type(registration.get(k)) is not type(v) or registration.get(k) != v
                            for k, v in expected.items())):
@@ -207,7 +250,7 @@ class CatalogStore:
     @property
     def trust(self):
         with bounded_file(self.path / 'bootstrap.json', 65536) as f:
-            return BootstrapTrust(f.read(), fixture=True)
+            return BootstrapTrust(f.read(), fixture=self.binding.get('execution', 'offline-fixture') == 'offline-fixture')
 
     def _reference(self, modes, *, serial=0):
         body = {'format': 1, 'serial': serial, 'modes': modes, 'bootstrap_sha256': self.trust.identity}
@@ -265,7 +308,20 @@ class CatalogStore:
 
     def _writer(self):
         self._check()
-        if not self.fixture: _administrator(self.root, self.path.parents[1])
+        if not self.fixture:
+            if self.binding.get('execution') in ('pilot-candidate', 'pilot-live'):
+                # Reconstruct root-owned runtime and catalog authority before
+                # each administrative transaction. Never widen fixture mounts.
+                current = type(self).open_pilot_administrative(self.path.parents[1].name)
+                if current.root != self.root or current.path != self.path or current.binding != self.binding:
+                    raise ConfigError('pilot catalog writer belongs to another installation')
+            elif self.binding.get('execution') == 'pilot-qualification':
+                from .testing.pilot_qualification import open_catalogs
+                current = open_catalogs(self.path.parents[1].name)
+                if current.root != self.root or current.path != self.path or current.binding != self.binding:
+                    raise ConfigError('qualification catalog writer belongs to another installation')
+            else:
+                _administrator(self.root, self.path.parents[1])
         return file_lease(self.path / '.writer.lock')
 
     def stage(self, repository, modes):

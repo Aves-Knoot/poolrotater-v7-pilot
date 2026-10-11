@@ -22,7 +22,7 @@ def validate_runtime(record, prefix):
     prefix = protected(Path(prefix))
     if (not isinstance(record, dict) or set(record) != REGISTRATION_KEYS
             or type(record['format']) is not int or record['format'] != 1
-            or record['execution'] != 'offline-fixture' or record['live_ready'] is not False
+            or record['execution'] not in ('offline-fixture', 'pilot-candidate', 'pilot-qualification', 'pilot-live') or record['live_ready'] is not False
             or type(record['service_uid']) is not int or record['service_uid'] <= 0
             or record['prefix'] != str(prefix)
             or not all(isinstance(record[k], str) for k in
@@ -48,6 +48,9 @@ def validate_runtime(record, prefix):
         raise ConfigError('protected runtime environment changed')
     from rolling.release import environment_hash, load_release
     manifest = load_release(release)
+    if (record['execution'] != 'offline-fixture'
+            and manifest['validation'].get('execution') != record['execution']):
+        raise ConfigError('release execution differs from protected registration')
     if (release.name != manifest['version'] + '-' + record['bundle_sha256'][:16]
             or Path(manifest['python']).absolute() != environment / 'bin/python'
             or env_record['environment_hash'] != environment_hash(environment / 'bin/python')):

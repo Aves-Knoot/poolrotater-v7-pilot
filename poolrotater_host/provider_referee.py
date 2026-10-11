@@ -25,10 +25,12 @@ _ROSTER_EVENTS = frozenset(('UserJoined', 'UserLeft', 'UserKicked'))
 
 def referee_port(auth):
     """Closed destination selection; caller cannot supply an upstream origin."""
-    from .provider_preflight import FixedProviderTransport
+    from .provider_preflight import FixedProviderTransport, PilotProviderTransport, LivePilotTransport
     from .provider_transport import DeadlineFixtureTransport
     auth.require_authorization_available()
-    if auth.execution == 'provider-disabled' and type(auth.transport) is FixedProviderTransport:
+    if (auth.execution in ('provider-disabled', 'provider-pilot', 'provider-live-pilot')
+            and type(auth.transport) in (FixedProviderTransport, PilotProviderTransport, LivePilotTransport)
+            and auth.transport.execution == auth.execution):
         return None  # ChildSession repeats the fixed spectator release fence.
     if auth.execution == 'provider-fixture' and type(auth.transport) is DeadlineFixtureTransport:
         return auth.transport.port
@@ -85,7 +87,8 @@ class ProviderRefereeClient:
             gate.exchange_started()
             try:
                 if command is None:
-                    self._session = ChildSession(port, self.auth.transport.trust, self._token)
+                    kwargs = {'execution': self.auth.execution} if port is None else {}
+                    self._session = ChildSession(port, self.auth.transport.trust, self._token, **kwargs)
                 else: self._session.send(command, deadline)
                 value = self._session.receive(deadline, self._stop)
                 if value.get('kind') != kind: raise AuthError('referee_reply_refused')

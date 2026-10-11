@@ -66,6 +66,7 @@ def execute(authentication, action, *, mode='local', reauthorize=False,
     elif action == 'pacing-recover':
         authentication.recover_pacing(expected_state_sha256=pacing_state_sha256)
     result = authorization_diagnostic(authentication)
+    result['live_capable'] = authentication.execution == 'provider-live-pilot'
     result.update(provider_pacing=authentication.pacing_snapshot(), action=action,
                   operator_client_configured=True, provider_client_ownership_verified=False,
                   protected_runtime_checked=True, workers_started=0, start_allowed=False,
@@ -99,7 +100,9 @@ def run(root, release, action, *, credentials_stream=None, expected_user_id=None
         # credential with the diagnostic adapter or fall back to fixture TLS.
         from .provider_contract import require_live_provider
         from .provider_transport import TrustSnapshot
-        require_live_provider()
+        from .pilot_identity import provider_execution
+        runtime = _runtime_guard(root, release, prepared=True)()
+        require_live_provider(provider_execution(runtime))
         authentication = installed_provider_authentication(root, release,
             TrustSnapshot.system(prepared=True) if trust is None else trust, configuration)
     else:

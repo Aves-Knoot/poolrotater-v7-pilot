@@ -27,8 +27,8 @@ def _runtime_guard(root, release, *, prepared=False):
 
     def guard():
         try:
-            if prepared: load_provisioned(root, release=release, prepared=True)
-            else: load_provisioned(root, release=release)
+            if prepared: return load_provisioned(root, release=release, prepared=True)
+            else: return load_provisioned(root, release=release)
         except Exception: raise AuthError('installed_runtime_binding_requires_review') from None
 
     # Refuse foreign/candidate/mutated runtime before reading private authority.
@@ -47,33 +47,47 @@ def configure_installed_client(root, release, profile):
 
 
 def configure_installed_provider_client(root, release, profile):
-    return _configure_provider_client(root, profile, local_guard=_runtime_guard(root, release, prepared=True))
+    guard = _runtime_guard(root, release, prepared=True)
+    from .pilot_identity import provider_execution
+    return _configure_provider_client(root, profile, local_guard=guard,
+                                      execution=provider_execution(guard()))
 
 
 def installed_provider_state(root, release, *, initialize=False, configuration=None):
     """Protected local setup/status, without CA discovery or upstream permission."""
-    from .provider_preflight import FixedProviderTransport
-    return _provider_authentication(root, _runtime_guard(root, release, prepared=True),
-                                    FixedProviderTransport.local_state(configuration), initialize=initialize)
+    guard = _runtime_guard(root, release, prepared=True)
+    return _provider_authentication(root, guard,
+                                    _fixed_transport(guard()).local_state(configuration), initialize=initialize)
 
 
 def installed_provider_authentication(root, release, trust, configuration=None, *, initialize=False):
     """Bind an explicit fixed provider; every actual authorization stays disabled."""
-    from .provider_preflight import FixedProviderTransport
-    return _provider_authentication(root, _runtime_guard(root, release, prepared=True),
-                                    FixedProviderTransport(trust, configuration), initialize=initialize)
+    guard = _runtime_guard(root, release, prepared=True)
+    return _provider_authentication(root, guard,
+                                    _fixed_transport(guard())(trust, configuration), initialize=initialize)
+
+
+def _fixed_transport(runtime):
+    from .pilot_identity import provider_execution, PILOT_PROVIDER
+    from .provider_preflight import FixedProviderTransport, PilotProviderTransport, LivePilotTransport
+    execution = provider_execution(runtime)
+    if execution == 'provider-live-pilot': return LivePilotTransport
+    return PilotProviderTransport if execution == PILOT_PROVIDER else FixedProviderTransport
 
 
 def _provider_authentication(root, runtime_guard, transport, *, initialize=False):
     """One complete prepared namespace; reconstruction never initializes a ledger."""
     from .provider_authorization import ProviderOAuth
     from .provider_pacing import ProviderRequestGate
-    from .provider_preflight import FixedProviderTransport
+    from .provider_preflight import FixedProviderTransport, PilotProviderTransport, LivePilotTransport
     from .provider_transport import DeadlineFixtureTransport
 
     if type(initialize) is not bool: raise AuthError('invalid_provider_initialization_choice')
-    if type(transport) is FixedProviderTransport:
-        execution = 'provider-disabled'
+    if type(transport) in (FixedProviderTransport, PilotProviderTransport, LivePilotTransport):
+        execution = transport.execution
+        from .pilot_identity import provider_execution
+        if provider_execution(runtime_guard()) != execution:
+            raise AuthError('provider_installation_execution_mismatch')
         interval = transport.configuration.minimum_interval_seconds
     elif type(transport) is DeadlineFixtureTransport:
         execution = 'provider-fixture'

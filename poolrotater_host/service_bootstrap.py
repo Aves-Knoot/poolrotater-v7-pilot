@@ -79,13 +79,15 @@ def preflight(root, prefix, *, prepared=False):
     registration = _protected(prefix / 'installations' / (marker['installation_id'] + '.json'))
     record = _json(registration, 0)
     if (any(record.get(k) != v for k, v in {**expected, 'service_uid': os.geteuid(), 'host_root': str(root)}.items())
-            or record.get('execution') != 'offline-fixture' or record.get('live_ready') is not False):
+            or record.get('execution') not in ('offline-fixture', 'pilot-candidate', 'pilot-qualification', 'pilot-live') or record.get('live_ready') is not False):
         raise ValueError('foreign protected registration')
     transition = _json(prefix / 'transitions' / (marker['installation_id'] + '.json'), 0) if (
         prefix / 'transitions' / (marker['installation_id'] + '.json')).exists() else None
     if transition and transition.get('phase') == 'prepared': raise ValueError('pending transition')
     release = _code(record, prefix)
     sys.path.insert(0, str(release))
+    from poolrotater_host.pilot_identity import require_entry
+    require_entry(record['execution'], prepared=prepared)
     from poolrotater_host.provisioning import load_provisioned
     if prepared: return load_provisioned(root, release=release, prepared=True)
     return load_provisioned(root, release=release)
@@ -102,6 +104,7 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--check', action='store_true')
+    mode.add_argument('--pilot-check', action='store_true', help='check the protected pilot candidate without upstream I/O')
     mode.add_argument('--service', action='store_true')
     mode.add_argument('--provider-service', action='store_true',
                       help='prepared fixed provider service; upstream execution is disabled')
@@ -129,7 +132,7 @@ def main():
     parser.add_argument('--replace-pending', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verified-stage', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
-    prepared = bool(args.operator_authorization or args.provider_service)
+    prepared = bool(args.operator_authorization or args.provider_service or args.pilot_check)
     if not prepared and (os.environ.get('POOLROTATER_OFFLINE_SANDBOX') != '1'
             or os.environ.get('POOLROTATER_PROVISIONING_SANDBOX') != '1'):
         raise ValueError('isolated service fixture required')
@@ -157,11 +160,20 @@ def main():
         # Verified code, then the immutable release fence, before venv exec,
         # provider/private inputs, TLS, signals, processes or room activity.
         from poolrotater_host.provider_contract import require_live_provider
-        require_live_provider()
+        from poolrotater_host.pilot_identity import provider_execution
+        require_live_provider(provider_execution(runtime))
     if args.calculator_check and os.environ.get('POOLROTATER_CALCULATOR_QUALIFICATION') != '1':
         raise ValueError('dedicated native calculator fixture required')
-    if args.check:
-        print(json.dumps({'ok': True, 'uid': os.geteuid(), 'version': runtime['manifest']['version'], 'live_ready': False}))
+    if args.check or args.pilot_check:
+        if args.pilot_check and runtime['registration']['execution'] not in ('pilot-candidate', 'pilot-live'):
+            raise ValueError('pilot check requires a fresh candidate installation')
+        live = runtime['registration']['execution'] == 'pilot-live'
+        if live:
+            from poolrotater_host.provider_contract import require_live_provider
+            from poolrotater_host.pilot_identity import provider_execution
+            require_live_provider(provider_execution(runtime))
+        print(json.dumps({'ok': True, 'uid': os.geteuid(), 'version': runtime['manifest']['version'],
+                          'provider_dispatch_enabled': live, 'live_ready': False}))
         return
     if not args.verified_stage:
         env = {'PATH': str(runtime['environment'] / 'bin') + ':/usr/lib/dotnet:/usr/bin:/bin',

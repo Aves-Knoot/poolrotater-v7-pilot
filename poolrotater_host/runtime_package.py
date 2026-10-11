@@ -65,8 +65,12 @@ def source_names(root):
 
 
 def environment_id(spec):
+    execution = spec.get("execution", "offline-fixture")
+    from .pilot_identity import installation_execution
+    installation_execution(execution)
+    extra = {} if execution == "offline-fixture" else {"execution": execution}
     return hashlib.sha256(json_bytes({'target': spec['target'], 'interpreter_sha256': spec['interpreter_sha256'],
-                                     'wheels': spec['wheels']})).hexdigest()
+                                     'wheels': spec['wheels'], **extra})).hexdigest()
 
 
 def _regular(path):
@@ -77,12 +81,33 @@ def _regular(path):
 
 def build(root, cache, output, *, version='v7.0.0', catalog_cache=None):
     fixture_only()
+    return _build(root, cache, output, version=version, catalog_cache=catalog_cache, execution='offline-fixture')
+
+
+def build_pilot(root, cache, output, *, version='v7.0.0', catalog_cache):
+    # Candidate packaging is credential-free, with a distinct externally pinned digest.
+    return _build(root, cache, output, version=version, catalog_cache=catalog_cache, execution='pilot-candidate')
+
+
+def build_live_pilot(root, cache, output, *, catalog_cache):
+    from .live_release import VERSION, INSTALLATION
+    return _build(root, cache, output, version=VERSION, catalog_cache=catalog_cache, execution=INSTALLATION)
+
+
+def _build(root, cache, output, *, version, catalog_cache, execution):
+    from .pilot_identity import installation_execution
+    installation_execution(execution)
     root, cache, output = Path(root).absolute(), Path(cache).absolute(), Path(output).absolute()
     if not re.fullmatch(r'v7\.\d+\.\d+', version): raise ConfigError('use a complete v7 runtime version')
     if platform.system() != 'Linux' or platform.machine() != 'x86_64' or platform.python_version_tuple()[:2] != ('3', '12'):
         raise ConfigError('runtime build requires the reference Python/platform')
     required = pins((root / 'requirements-hashed.lock').read_text())
     generated = {}
+    from .live_release import INSTALLATION, VERSION, POLICY_NAME, policy_bytes
+    if execution == INSTALLATION:
+        if version != VERSION or catalog_cache is None:
+            raise ConfigError('live pilot requires its reviewed version and catalog dependency closure')
+        generated['payload/' + POLICY_NAME] = policy_bytes()
     caches = [cache]
     if catalog_cache is not None:
         optional = pins((root / 'catalog-requirements-hashed.lock').read_text())
@@ -135,7 +160,7 @@ def build(root, cache, output, *, version='v7.0.0', catalog_cache=None):
     for name, path in sorted(inputs.items()):
         files[name] = {'sha256': hashlib.sha256(path).hexdigest() if isinstance(path, bytes) else digest(path),
                        'bytes': len(path) if isinstance(path, bytes) else path.stat().st_size}
-    spec = {'format': 1, 'execution': 'offline-fixture', 'live_ready': False, 'version': version, 'target': TARGET,
+    spec = {'format': 1, 'execution': execution, 'live_ready': False, 'version': version, 'target': TARGET,
             'interpreter_sha256': digest('/usr/bin/python3.12'), 'wheels': wheel_rows, 'files': files,
             'external_prerequisites': ['system CPython 3.12 + venv/ensurepip', 'Ubuntu 24.04 system libraries',
                                        '.NET 8 Microsoft.NETCore.App for optional official PP calculator'],
@@ -173,8 +198,10 @@ def build(root, cache, output, *, version='v7.0.0', catalog_cache=None):
             'environment_id': spec['environment_id'], 'live_ready': False}
 
 
-def inspect(path, expected_sha256):
-    fixture_only()
+def inspect(path, expected_sha256, *, execution='offline-fixture'):
+    from .pilot_identity import installation_execution
+    installation_execution(execution)
+    if execution not in ('pilot-candidate', 'pilot-live'): fixture_only()
     path = Path(path)
     if not re.fullmatch(r'[a-f0-9]{64}', expected_sha256 or ''): raise ConfigError('trusted runtime digest required')
     st = _regular(path)
@@ -195,7 +222,7 @@ def inspect(path, expected_sha256):
             keys = {'format','execution','live_ready','version','target','interpreter_sha256','wheels','files',
                     'external_prerequisites','system_service_installed','catalogs_included','signed','environment_id'}
             if (not isinstance(spec, dict) or set(spec) != keys or type(spec['format']) is not int or spec['format'] != 1
-                    or spec['execution'] != 'offline-fixture' or spec['live_ready'] is not False
+                    or spec['execution'] != execution or spec['live_ready'] is not False
                     or any(spec[k] is not False for k in ('signed','system_service_installed','catalogs_included'))
                     or spec['target'] != TARGET or not re.fullmatch(r'v7\.\d+\.\d+', spec['version'])
                     or not isinstance(spec['files'], dict) or not isinstance(spec['wheels'], list)
@@ -203,13 +230,20 @@ def inspect(path, expected_sha256):
                 raise ConfigError('invalid runtime manifest contract')
             if set(names) != {'bundle.json', *spec['files']}:
                 raise ConfigError('runtime member inventory differs from manifest')
+            from .live_release import INSTALLATION, VERSION, POLICY_NAME, policy_bytes
+            policy_member = 'payload/' + POLICY_NAME
+            if execution == INSTALLATION:
+                if spec['version'] != VERSION or policy_member not in names or archive.read(policy_member) != policy_bytes():
+                    raise ConfigError('live pilot release policy differs from reviewed artifact')
+            elif policy_member in names:
+                raise ConfigError('non-live artifacts cannot carry a live policy')
             source_set = {n.removeprefix('payload/') for n in names if n.startswith('payload/')}
             if not set(ROOT_SOURCES) | {'requirements.txt', 'requirements-hashed.lock'} <= source_set:
                 raise ConfigError('missing runtime launcher/lock closure')
             for name in spec['files']:
                 if name.startswith('payload/'):
                     relative = name.removeprefix('payload/')
-                    if relative not in (*ROOT_SOURCES, 'requirements.txt', 'requirements-hashed.lock') and not (
+                    if relative not in (*ROOT_SOURCES, 'requirements.txt', 'requirements-hashed.lock', POLICY_NAME) and not (
                             relative.startswith(('bot/', 'rolling/', 'poolrotater_host/')) and relative.endswith('.py')):
                         raise ConfigError('runtime payload member outside allowlist')
                 elif not name.startswith('wheelhouse/') or not name.endswith('.whl'):

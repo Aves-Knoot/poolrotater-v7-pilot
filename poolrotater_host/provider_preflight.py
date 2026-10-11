@@ -84,6 +84,7 @@ class FixedProviderTransport:
     accepted as an offline OAuth fixture. Invented TLS qualifies shared machinery.
     """
     offline_fixture = False
+    execution = 'provider-disabled'
 
     def __init__(self, trust, configuration=None, *, gate=None, state_only=False):
         self.configuration = ProviderConfiguration() if configuration is None else configuration
@@ -112,19 +113,19 @@ class FixedProviderTransport:
     def require_authority(self, root, client_id, *, user_id=None):
         if self.gate is not None:
             from .provider_pacing import ProviderRequestGate
-            if type(self.gate) is not ProviderRequestGate or self.gate.execution != 'provider-disabled':
+            if type(self.gate) is not ProviderRequestGate or self.gate.execution != self.execution:
                 raise AuthError('qualified_live_gate_required')
             self.gate.require_authority(root, client_id, user_id=user_id)
 
     def bind_verified(self, user_id):
         from .provider_pacing import ProviderRequestGate
-        if type(self.gate) is not ProviderRequestGate or self.gate.execution != 'provider-disabled':
+        if type(self.gate) is not ProviderRequestGate or self.gate.execution != self.execution:
             raise AuthError('qualified_live_gate_required')
         self.gate.bind_verified(user_id)
 
     def _qualified_gate(self):
         from .provider_pacing import ProviderRequestGate
-        if (type(self.gate) is not ProviderRequestGate or self.gate.execution != 'provider-disabled'
+        if (type(self.gate) is not ProviderRequestGate or self.gate.execution != self.execution
                 or type(self.gate.interval) not in (int, float) or not math.isfinite(self.gate.interval)
                 or not self.configuration.minimum_interval_seconds <= self.gate.interval <= 60):
             raise AuthError('qualified_live_gate_required')
@@ -134,7 +135,7 @@ class FixedProviderTransport:
     def operation(self, method, path, *, form=None, bearer=None):
         # Fence BEFORE admission counters, durable intent, request preparation,
         # secret parsing, process creation, DNS or provider I/O.
-        require_live_provider()
+        require_live_provider(self.execution)
         self.configuration.__post_init__()
         if type(self.trust) is not TrustSnapshot: raise AuthError('provider_trust_refused')
         self._qualified_gate()
@@ -152,7 +153,7 @@ class FixedProviderTransport:
     @contextmanager
     def api_operation(self, method, path, *, bearer, params=None, json_body=None):
         # Keep the new API entry fenced before preparation, counters or I/O too.
-        require_live_provider()
+        require_live_provider(self.execution)
         from .provider_api_contract import prepare_api
         self.configuration.__post_init__()
         if type(self.trust) is not TrustSnapshot: raise AuthError('provider_trust_refused')
@@ -163,3 +164,17 @@ class FixedProviderTransport:
             permit = _Permit(None, self.trust, self.gate, request, deadline)
             try: yield permit
             finally: permit.active = False
+
+
+class PilotProviderTransport(FixedProviderTransport):
+    """Candidate-only fixed adapter; the same immutable release fence applies.
+
+    Its persisted client/OAuth/pacing/ownership execution differs from both
+    disabled preparation and invented TLS qualification. There is no enable flag.
+    """
+    execution = 'provider-pilot'
+
+
+class LivePilotTransport(FixedProviderTransport):
+    """Fixed origin, one-room release authority; never a fixture adapter."""
+    execution = 'provider-live-pilot'

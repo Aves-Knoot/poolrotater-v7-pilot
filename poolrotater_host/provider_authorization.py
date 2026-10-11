@@ -9,7 +9,7 @@ import os
 from .oauth import AuthError, OAuthAuthority
 from .provider_contract import require_live_provider
 from .provider_pacing import ProviderRequestGate
-from .provider_preflight import FixedProviderTransport
+from .provider_preflight import FixedProviderTransport, PilotProviderTransport, LivePilotTransport
 from .provider_transport import DeadlineFixtureTransport
 
 
@@ -24,8 +24,8 @@ class ProviderOAuth(OAuthAuthority):
                          redirect_uri=redirect_uri, client_profile_sha256=client_profile_sha256, **kwargs)
 
     def _require_transport(self, transport):
-        if type(transport) is FixedProviderTransport:
-            self.execution = 'provider-disabled'
+        if type(transport) in (FixedProviderTransport, PilotProviderTransport, LivePilotTransport):
+            self.execution = transport.execution
         elif type(transport) is DeadlineFixtureTransport:
             if os.environ.get('POOLROTATER_OFFLINE_SANDBOX') != '1':
                 raise AuthError('installed_offline_fixture_required')
@@ -36,9 +36,10 @@ class ProviderOAuth(OAuthAuthority):
     def require_authorization_available(self):
         # Exact transport classification and persisted execution cannot be changed
         # by swapping a flag or replacing the transport after construction.
-        if self.execution == 'provider-disabled':
-            require_live_provider()
-            if type(self.transport) is not FixedProviderTransport:
+        if self.execution in ('provider-disabled', 'provider-pilot', 'provider-live-pilot'):
+            require_live_provider(self.execution)
+            if (type(self.transport) not in (FixedProviderTransport, PilotProviderTransport, LivePilotTransport)
+                    or self.transport.execution != self.execution):
                 raise AuthError('qualified_provider_transport_required')
         elif (self.execution != 'provider-fixture'
                 or type(self.transport) is not DeadlineFixtureTransport
@@ -59,7 +60,8 @@ class ProviderOAuth(OAuthAuthority):
 
     def authorization_status(self):
         result = super().authorization_status()
-        return {**result, 'start_allowed': False, 'actual_provider_dispatch': False}
+        return {**result, 'start_allowed': False, 'actual_provider_dispatch': False,
+                'live_capable': self.execution == 'provider-live-pilot'}
 
     def pacing_snapshot(self):
         with self._transaction():

@@ -37,8 +37,8 @@ def negotiation(value):
     return token
 
 
-def exchange_referee_upstream(connection, request, *, timeout, on_status):
-    require_live_provider()
+def exchange_referee_upstream(connection, request, *, timeout, on_status, execution=None):
+    require_live_provider(execution)
     if (type(request) is not PreparedRefereeRequest or type(connection) is not http.client.HTTPSConnection
             or connection.host != REFEREE_HOST or connection.port != 443 or connection._tunnel_host is not None
             or connection._context.verify_mode != ssl.CERT_REQUIRED or not connection._context.check_hostname

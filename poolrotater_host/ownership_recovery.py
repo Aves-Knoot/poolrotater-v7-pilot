@@ -48,7 +48,7 @@ def validate_record(value, *, root, marker, uid):
         if (not isinstance(value, dict) or set(value) != {'format', 'execution', 'live_ready',
                 'transaction_id', 'phase', 'binding', 'before', 'after', 'before_sha256', 'after_sha256'}
                 or type(value['format']) is not int or value['format'] != 1
-                or value['execution'] not in ('offline-fixture', 'provider-fixture', 'provider-disabled')
+                or value['execution'] not in ('offline-fixture', 'provider-fixture', 'provider-disabled', 'provider-pilot', 'provider-live-pilot')
                 or value['live_ready'] is not False
                 or value['phase'] not in ('prepared', 'committed', 'aborted')):
             raise ValueError

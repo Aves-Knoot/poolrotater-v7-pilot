@@ -158,7 +158,7 @@ def operator_client_fingerprint(root, profile, *, execution='offline-fixture'):
 def _configure_client(root, profile, *, local_guard=None, execution='offline-fixture',
                       profile_path=PROFILE_PATH, lock_path='secrets/oauth.lock'):
     """Stopped, serialized, idempotent enrollment. No implicit repair or rotation."""
-    if execution != 'provider-disabled': _offline()
+    if execution not in ('provider-disabled', 'provider-pilot', 'provider-live-pilot'): _offline()
     if not isinstance(profile, OperatorClient): raise AuthError('invalid_client_input')
     if local_guard is not None and not callable(local_guard): raise AuthError('invalid_local_guard')
     # Validate layout before constructing paths or creating locks.
@@ -193,15 +193,15 @@ def configure_operator_client(root, profile, *, local_guard=None):
 
 
 def _configure_provider_client(root, profile, *, local_guard=None, execution='provider-disabled'):
-    if execution not in ('provider-disabled', 'provider-fixture'):
+    if execution not in ('provider-disabled', 'provider-fixture', 'provider-pilot', 'provider-live-pilot'):
         raise AuthError('invalid_provider_execution')
     return _configure_client(root, profile, local_guard=local_guard, execution=execution,
                              profile_path=PROVIDER_PROFILE_PATH, lock_path='secrets/provider-oauth.lock')
 
 
 def _load_provider_client(root, *, execution='provider-disabled'):
-    if execution != 'provider-disabled': _offline()
-    if execution not in ('provider-disabled', 'provider-fixture'):
+    if execution not in ('provider-disabled', 'provider-pilot', 'provider-live-pilot'): _offline()
+    if execution not in ('provider-disabled', 'provider-fixture', 'provider-pilot', 'provider-live-pilot'):
         raise AuthError('invalid_provider_execution')
     return _read(root, execution=execution, profile_path=PROVIDER_PROFILE_PATH)
 
@@ -211,7 +211,7 @@ def load_provider_client(root):
 
 
 def provider_client_fingerprint(root, profile, *, execution='provider-disabled'):
-    if execution not in ('provider-disabled', 'provider-fixture'):
+    if execution not in ('provider-disabled', 'provider-fixture', 'provider-pilot', 'provider-live-pilot'):
         raise AuthError('invalid_provider_execution')
     return operator_client_fingerprint(root, profile, execution=execution)
 

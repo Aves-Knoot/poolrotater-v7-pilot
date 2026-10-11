@@ -1,7 +1,7 @@
-"""Fixed provider wire contract; upstream execution remains explicitly disabled.
+"""Fixed provider wire contract; only a protected live-pilot release may execute.
 
-There is no live transport factory, credential loader, or authorization command.
-The exact provider endpoints and response checks can be qualified before a pilot.
+Candidate, rehearsal and qualification authority remains fenced independently of
+URLs, environment flags and credentials. Transport children repeat admission.
 """
 from dataclasses import dataclass, field
 import http.client
@@ -23,14 +23,10 @@ OWNED_PATH = '/api/v2/rooms?' + urlencode(
     {'mode': 'owned', 'type_group': 'realtime', 'limit': ROOM_LIMIT, 'sort': 'created'})
 
 
-def require_live_provider():
-    """Release fence, not an environment flag or operator-configurable switch.
-
-    Removing this fence requires separately qualified live authority/installation
-    bindings and an explicitly consenting operator. Fixture records cannot become
-    live authority simply by choosing a different URL or setting an environment.
-    """
-    raise AuthError('live_provider_disabled')
+def require_live_provider(execution=None):
+    """Artifact-specific fence. Legacy/candidate/qualification never dispatch."""
+    from .live_release import require
+    require(execution)
 
 
 @dataclass(frozen=True)
@@ -91,14 +87,14 @@ this is not a whole-operation DNS/process deadline for a future live adapter.
     return _exchange_checked(connection, request, timeout=timeout, on_status=on_status)
 
 
-def exchange_upstream(connection, request, *, timeout=5, on_status=None):
+def exchange_upstream(connection, request, *, timeout=5, on_status=None, execution=None):
     """Dormant fixed upstream route using the same qualified wire parser.
 
     The release fence is checked before connection/request inspection or I/O.
     Independent origin/TLS checks remain even after future fence implementation.
     No caller URL, tunnel, proxy, alternate port or insecure context is accepted.
     """
-    require_live_provider()
+    require_live_provider(execution)
     if (type(connection) is not http.client.HTTPSConnection
             or connection.host != 'osu.ppy.sh' or connection.port != 443
             or connection._tunnel_host is not None
