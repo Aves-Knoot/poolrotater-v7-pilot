@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "poolrotater-host"
-version = "7.0.0.dev25"
+version = "7.0.0.dev27"
 description = "Offline foundation for Distributed PoolRotater"
 readme = "README.md"
 requires-python = ">=3.12"

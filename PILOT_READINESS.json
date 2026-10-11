@@ -1,1 +1,1 @@
-{"format":1,"kind":"offline-pilot-rehearsal","live_ready":false,"publication_approved":false,"release_manifest_sha256":"a4df383573a0433d308a358810d3368cb21f945d1864a01e2c107897dc56c451","source_policy":"pending owner decision","version":"7.0.0.dev25"}
+{"format":1,"kind":"https-catalog-download-pilot","live_ready":false,"private_publication_authorized":true,"release_manifest_sha256":"5b4eb4921e03357010461145083011566276b457cdbf84dd42592c4a1c133e7b","source_policy":"private pilot only; public licensing pending","version":"7.0.0.dev27"}

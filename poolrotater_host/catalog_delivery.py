@@ -1,14 +1,16 @@
-"""Bounded conditional/resumable catalog delivery, explicit loopback fixtures only.
+"""Bounded conditional/resumable delivery with separate fixture and HTTPS entries.
 
 Transport caches have no installation authority. TUF verifies every returned
 target and metadata document again; conditional requests never extend expiry.
-No proxies, redirects, credentials, automatic retries or external origins.
+No proxies, redirects, credentials or automatic retries. Pilot HTTPS requires
+an explicit IP origin and independently digest-confirmed CA bytes.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
 import http.client
+import ipaddress
 import json
 import math
 import os
@@ -138,9 +140,7 @@ class FixtureOrigin:
                 started = time.monotonic()
                 remaining = lambda: max(.001, min(origin.timeout, origin.deadline - (time.monotonic() - started)))
                 if p.scheme == 'https':
-                    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                    context.minimum_version = ssl.TLSVersion.TLSv1_2
-                    context.load_verify_locations(cafile=str(origin.ca_file) if origin.ca_file else ssl.get_default_verify_paths().openssl_cafile)
+                    context = origin.tls_context()
                     connection = http.client.HTTPSConnection(p.hostname, p.port, timeout=remaining(), context=context)
                 else: connection = http.client.HTTPConnection(p.hostname, p.port, timeout=remaining())
                 response = None
@@ -222,6 +222,74 @@ class FixtureOrigin:
                 finally:
                     timer.cancel(); timer.join(timeout=1); connection.close()
         return Fetcher()
+
+    def tls_context(self):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_verify_locations(cafile=str(self.ca_file) if self.ca_file else ssl.get_default_verify_paths().openssl_cafile)
+        return context
+
+
+@dataclass(frozen=True)
+class HttpsOrigin(FixtureOrigin):
+    """Explicit pilot download permission, independent of room/provider authority.
+
+    IP-only origins avoid unbounded DNS resolution in this first network entry.
+    A manually confirmed CA digest anchors TLS; TUF bootstrap trust is separate.
+    CA bytes are snapshotted once, never rediscovered from environment or a server.
+    The cache is bound to both origin and CA, and cannot adopt a fixture cache.
+    """
+    ca_sha256: str | None = None
+    _ca_data: bytes = field(default=b'', init=False, repr=False, compare=False)
+
+    def __post_init__(self):
+        try:
+            p = urlsplit(self.url)
+            address = ipaddress.ip_address(p.hostname)
+            port = p.port
+            host = '[' + str(address) + ']' if address.version == 6 else str(address)
+            canonical = 'https://' + host + (':' + str(port) if port is not None else '') + '/'
+            valid = (p.scheme == 'https' and not p.username and not p.password
+                     and not p.query and not p.fragment and p.path == '/'
+                     and (port is None or 1 <= port <= 65535)
+                     and self.url == canonical and not address.is_unspecified
+                     and not address.is_multicast and not address.is_link_local)
+        except (ValueError, TypeError, AttributeError):
+            valid = False
+        if not valid:
+            raise ConfigError('explicit canonical credential-free HTTPS IP origin required')
+        if any(type(v) not in (float, int) or not math.isfinite(v) or not 0 < v <= 60
+               for v in (self.timeout, self.deadline)):
+            raise ConfigError('HTTPS delivery timeouts must be finite and bounded')
+        if (self.ca_file is None or not isinstance(self.ca_sha256, str)
+                or not re.fullmatch('[a-f0-9]{64}', self.ca_sha256)):
+            raise ConfigError('independently confirmed catalog CA digest required')
+        with bounded_file(self.ca_file, 256 * 1024) as handle:
+            data = handle.read()
+        if hashlib.sha256(data).hexdigest() != self.ca_sha256:
+            raise ConfigError('catalog CA digest mismatch')
+        object.__setattr__(self, '_ca_data', data)
+        try:
+            self.tls_context()
+        except (ssl.SSLError, UnicodeError, ValueError):
+            raise ConfigError('invalid catalog CA certificate') from None
+        object.__setattr__(self, 'cache', Path(self.cache).absolute())
+        _private_directory(self.cache, create=True)
+        with file_lease(self.cache / '.lease'):
+            binding = self.cache / 'origin.json'
+            expected = {'format': 1, 'execution': 'https-catalog-download',
+                        'origin': self.url, 'ca_sha256': self.ca_sha256}
+            if binding.exists():
+                if _json(binding) != expected:
+                    raise ConfigError('delivery cache origin or TLS trust changed')
+            else:
+                atomic_json(binding, expected)
+
+    def tls_context(self):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_verify_locations(cadata=self._ca_data.decode('ascii'))
+        return context
 
 
 def _etag(value):
