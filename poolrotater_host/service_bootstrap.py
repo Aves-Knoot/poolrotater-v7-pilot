@@ -108,6 +108,8 @@ def main():
     mode.add_argument('--service', action='store_true')
     mode.add_argument('--provider-service', action='store_true',
                       help='prepared fixed provider service; upstream execution is disabled')
+    mode.add_argument('--ownership-local-status', action='store_true',
+                      help='read local journal and recovery receipt without provider requests')
     mode.add_argument('--ownership-recovery', choices=('review', 'clear', 'resume'),
                       help='explicit stopped room ownership recovery; no room mutations')
     mode.add_argument('--calculator-check', action='store_true', help=argparse.SUPPRESS)
@@ -140,7 +142,7 @@ def main():
     parser.add_argument('--decision', choices=('complete', 'abort'))
     parser.add_argument('--verified-stage', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
-    prepared = bool(args.operator_authorization or args.provider_service or args.pilot_check or args.ownership_recovery)
+    prepared = bool(args.operator_authorization or args.provider_service or args.pilot_check or args.ownership_recovery or args.ownership_local_status)
     if not args.ownership_recovery and any((args.journal_sha256, args.room_alias,
             args.created_room_id, args.confirm_lost_creation, args.transaction_id, args.decision)):
         raise ValueError('ownership choices require explicit recovery')
@@ -198,6 +200,7 @@ def main():
                    '--root', str(args.root), '--verified-stage']
         if args.service: command += ['--service']
         elif args.provider_service: command += ['--provider-service']
+        elif args.ownership_local_status: command += ['--ownership-local-status']
         elif args.ownership_recovery:
             command += ['--ownership-recovery', args.ownership_recovery]
             for option, value in (('--journal-sha256', args.journal_sha256),
@@ -230,6 +233,10 @@ def main():
                 command += ['--pacing-state-sha256', args.pacing_state_sha256]
         else: command += ['--probe-candidate', str(args.probe_candidate)]
         os.execve(command[0], command, env)
+    if args.ownership_local_status:
+        from poolrotater_host.installed_room_recovery import local_status
+        print(json.dumps(local_status(args.root)))
+        return
     if args.ownership_recovery:
         from poolrotater_host.installed_room_recovery import run as recover_rooms
         print(json.dumps(recover_rooms(args.root, runtime['release'], args.ownership_recovery,

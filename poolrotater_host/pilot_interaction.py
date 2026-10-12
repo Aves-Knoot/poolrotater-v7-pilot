@@ -2,6 +2,7 @@
 import json
 import os
 import selectors
+import signal
 import subprocess
 import time
 from urllib.parse import parse_qsl, urlsplit
@@ -54,11 +55,21 @@ def run(command, *, env, identity, notice, timeout=90):
     cleanup and the installed account/owner transactions retain uncertainty.
     """
     if not callable(notice): raise ConfigError('private operator notice required')
-    child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, env=env, cwd='/tmp', preexec_fn=identity)
+    from .process_target import OwnedChild, require_child_platform
+    require_child_platform()
+    child = None; target = None
     deadline = time.monotonic() + timeout
     result = None; noticed = False; pending = bytearray(); totals = {'stdout': 0, 'stderr': 0}
     try:
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, (signal.SIGINT, signal.SIGTERM))
+        try:
+            def child_identity():
+                if identity is not None: identity()
+                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, env=env, cwd='/tmp', preexec_fn=child_identity)
+            target = OwnedChild(child.pid)
+        finally: signal.pthread_sigmask(signal.SIG_SETMASK, mask)
         with selectors.DefaultSelector() as selector:
             selector.register(child.stdout, selectors.EVENT_READ, 'stdout')
             selector.register(child.stderr, selectors.EVENT_READ, 'stderr')
@@ -96,7 +107,12 @@ def run(command, *, env, identity, notice, timeout=90):
     except Exception:
         raise ConfigError('pilot authorization incomplete; inspect private status before retry') from None
     finally:
-        if child.poll() is None:
-            child.kill()
-        child.wait(timeout=2)
-        child.stdout.close(); child.stderr.close()
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, (signal.SIGINT, signal.SIGTERM))
+        try:
+            if target is not None:
+                target.kill()
+                child.wait(timeout=2)
+        finally:
+            if target is not None: target.close()
+            if child is not None: child.stdout.close(); child.stderr.close()
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)

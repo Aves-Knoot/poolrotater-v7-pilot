@@ -27,7 +27,8 @@ FIELDS = {'format', 'phase', 'transition_id', 'before', 'after', 'intent_before'
           'intent_after', 'bootstrap_before', 'bootstrap_after', 'unit_before', 'unit_after'}
 COORDINATED_SHARED = frozenset(('poolrotater_host/__init__.py',
     'poolrotater_host/runtime_config.py', 'poolrotater_host/provisioning.py',
-    'poolrotater_host/runtime_lifecycle.py', 'poolrotater_host/service_bootstrap.py'))
+    'poolrotater_host/runtime_lifecycle.py', 'poolrotater_host/service_bootstrap.py',
+    'rolling/supervisor.py'))
 
 
 def require_repair_compatible(before, after):
@@ -63,7 +64,7 @@ def _code(path):
 
 def _record(value, prefix, installation_id):
     try:
-        if (type(value) is not dict or set(value) != FIELDS or value['format'] != 1
+        if (type(value) is not dict or set(value) not in (FIELDS, FIELDS | {'predecessor_transition'}) or value['format'] != 1
                 or type(value['format']) is not int
                 or value['phase'] not in ('prepared', 'committed', 'aborted')
                 or str(uuid.UUID(value['transition_id'])) != value['transition_id']): raise ValueError
@@ -85,6 +86,19 @@ def _record(value, prefix, installation_id):
             if unit is not None and (type(unit) is not str or len(unit) > 16384): raise ValueError
         expected_intent = {**value['intent_before'], 'bundle_sha256': after['bundle_sha256']}
         if value['intent_after'] != expected_intent: raise ValueError
+        previous = value.get('predecessor_transition')
+        if previous is not None:
+            if (type(previous) is not dict or set(previous) != {
+                    'format','installation_id','generation','transition_id','operation','phase','before','after'}
+                    or type(previous['format']) is not int or previous['format'] != 1
+                    or previous['phase'] not in ('committed','aborted')
+                    or previous['operation'] not in ('activate','rollback')
+                    or previous['installation_id'] != installation_id
+                    or previous['generation'] != before['generation']
+                    or previous['transition_id'] == value['transition_id']
+                    or previous['after' if previous['phase']=='committed' else 'before'] != before):
+                raise ValueError
+            if str(uuid.UUID(previous['transition_id'])) != previous['transition_id']: raise ValueError
         return value
     except (KeyError, TypeError, ValueError, AttributeError):
         raise ConfigError('invalid or foreign pilot upgrade record') from None
@@ -169,6 +183,29 @@ def _transition(value, phase):
             'operation':'activate', 'phase':phase, 'before':value['before'], 'after':value['after']}
 
 
+def _archive_previous(prefix, installation_id, value, transition, current):
+    """Retain the exact terminal pair before replacing the active upgrade ledger.
+
+    An interrupted archive leaves the old ledger authoritative. Existing history
+    must match byte-for-byte data; never overwrite a conflicting receipt.
+    """
+    if value is None: return
+    _record(value, prefix, installation_id)
+    if (value['phase'] not in ('committed', 'aborted')
+            or transition != _transition(value, value['phase'])
+            or current != value['after' if value['phase'] == 'committed' else 'before']):
+        raise ConfigError('pilot upgrade previous journal and transition differ')
+    parent = prefix / 'upgrade-history'
+    parent.mkdir(mode=0o755, exist_ok=True)
+    protected(parent)
+    path = parent / (value['transition_id'] + '.json')
+    receipt = {'format':1, 'upgrade':value, 'transition':transition}
+    previous = _control(path, optional=True, maximum=1024*1024)
+    if previous is not None and previous != receipt:
+        raise ConfigError('pilot upgrade retained history changed')
+    if previous is None: _write(path, receipt)
+
+
 def _finish(target, marker, path, value, decision):
     prefix = target['prefix']
     _record(value, prefix, marker['installation_id'])
@@ -180,8 +217,11 @@ def _finish(target, marker, path, value, decision):
     intent = _control(prefix / 'pilot-install.json')
     if intent not in (value['intent_before'], value['intent_after']): raise ConfigError('upgrade intent changed')
     transition = read_transition(prefix, marker['installation_id'])
-    if transition is not None and transition not in (_transition(value, 'prepared'), _transition(value, chosen_phase)):
+    predecessor = value.get('predecessor_transition')
+    if transition is not None and transition not in (_transition(value, 'prepared'), _transition(value, chosen_phase), predecessor):
         raise ConfigError('upgrade transition changed')
+    if transition == predecessor and transition is not None and (current != value['before'] or value['phase'] != 'prepared'):
+        raise ConfigError('upgrade predecessor differs from registered starting point')
     if transition is None and (current != value['before'] or value['phase'] != 'prepared'):
         raise ConfigError('upgrade transition missing')
     raw = _code(prefix / 'bootstrap.py')
@@ -202,7 +242,8 @@ def _finish(target, marker, path, value, decision):
     require_repair_compatible(manifests['before'], manifests['after'])
     if _control(prefix / NAME, maximum=512*1024) != value:
         raise ConfigError('upgrade journal changed')
-    if transition is None: _write(transition_path(prefix, marker['installation_id']), _transition(value, 'prepared'))
+    if transition is None or (predecessor is not None and transition == predecessor):
+        _write(transition_path(prefix, marker['installation_id']), _transition(value, 'prepared'))
     side = 'after' if decision == 'complete' else 'before'
     desired_raw = bytes.fromhex(value['bootstrap_' + side])
     if raw != desired_raw: _replace_code(prefix / 'bootstrap.py', desired_raw)
@@ -241,6 +282,7 @@ def upgrade(instance, bundle, expected_sha256, *, from_sha256, recover=None, tra
     with _locked(instance) as (target, marker, path, current):
         prefix = target['prefix']
         value = _control(prefix / NAME, optional=True, maximum=512*1024)
+        if value is not None: _record(value, prefix, marker['installation_id'])
         if recover is not None:
             if value is None: raise ConfigError('pilot upgrade transaction missing')
             _record(value, prefix, marker['installation_id'])
@@ -275,6 +317,12 @@ def upgrade(instance, bundle, expected_sha256, *, from_sha256, recover=None, tra
                 or original_bootstrap != _code(Path(current['release']) / 'poolrotater_host/service_bootstrap.py')):
             raise ConfigError('pilot upgrade original bootstrap differs')
         original_unit = _unit_bytes(target)
+        predecessor = read_transition(prefix, marker['installation_id'])
+        value_before_staging = value
+        if predecessor is not None and (
+                predecessor['phase'] not in ('committed','aborted')
+                or predecessor['after' if predecessor['phase']=='committed' else 'before'] != current):
+            raise ConfigError('pilot upgrade previous transition differs from registered runtime')
         staged = _provision(target['root'], prefix, Path(bundle), expected_sha256,
                             uid=current['service_uid'], execution='pilot-live', reserve=RESERVE, stage_bootstrap=True)
         if staged['status'] != 'candidate_staged': raise ConfigError('upgrade candidate was not staged')
@@ -289,8 +337,15 @@ def upgrade(instance, bundle, expected_sha256, *, from_sha256, recover=None, tra
                  'bootstrap_before':original_bootstrap.hex(), 'bootstrap_after':replacement.hex(),
                  'unit_before':original_unit,
                  'unit_after':unit_text(instance) if original_unit is not None else None}
+        if predecessor is not None: value['predecessor_transition'] = predecessor
         _record(value, prefix, marker['installation_id'])
         with file_lease(prefix / '.provision.lock'):
             if _control(path) != current: raise ConfigError('upgrade runtime changed during staging')
+            previous_value = _control(prefix / NAME, optional=True, maximum=512*1024)
+            if previous_value != value_before_staging:
+                raise ConfigError('pilot upgrade predecessor journal changed during staging')
+            if read_transition(prefix, marker['installation_id']) != predecessor:
+                raise ConfigError('pilot upgrade predecessor transition changed during staging')
+            _archive_previous(prefix, marker['installation_id'], previous_value, predecessor, current)
             _write(prefix / NAME, value)
             return _finish(target, marker, path, value, 'complete')

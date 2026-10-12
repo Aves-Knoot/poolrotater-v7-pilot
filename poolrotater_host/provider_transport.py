@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 
 from .oauth import AuthError
 from .provider_contract import exchange_fixture, exchange_upstream, prepare, require_live_provider
+from .process_target import OwnedChild, require_child_platform
 
 MAX_TRUST = 2 * 1024**2
 MAX_IPC = 8 * 1024**2  # Bounded JSON re-encoding of the <=1 MiB provider reply.
@@ -191,14 +192,18 @@ def _owned_exchange(port, trust, request, deadline, *, execution=None):
     Interruption propagates only after child cleanup. The fixed child spawns none.
     """
     _boundary(port, execution)
+    require_child_platform()
     context = multiprocessing.get_context('spawn')
     receive, send = context.Pipe(duplex=False)
     args = (send, port, trust, request, 5, os.getpid())
     if execution is not None: args += (execution,)
     process = context.Process(target=_worker, args=args, daemon=True)
+    target = None
     try:
         mask = signal.pthread_sigmask(signal.SIG_BLOCK, (signal.SIGINT, signal.SIGTERM))
-        try: process.start()
+        try:
+            process.start()
+            target = OwnedChild(process.pid)
         finally: signal.pthread_sigmask(signal.SIG_SETMASK, mask)
         send.close()
         remaining = deadline - time.monotonic()
@@ -232,12 +237,14 @@ def _owned_exchange(port, trust, request, deadline, *, execution=None):
         try:
             send.close(); receive.close()
             if process.pid is not None:
-                try: os.kill(process.pid, signal.SIGKILL)
-                except ProcessLookupError: pass
+                if target is None: raise AuthError('provider_child_cleanup_uncertain')
+                target.kill()
                 process.join(timeout=1)
                 if process.exitcode is None: raise AuthError('provider_child_cleanup_uncertain')
             process.close()
-        finally: signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        finally:
+            if target is not None: target.close()
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
 
 
 class DeadlineFixtureTransport:

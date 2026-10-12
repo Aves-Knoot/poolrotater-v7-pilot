@@ -229,6 +229,8 @@ def _worker(pipe, port, trust, bearer, parent_pid, execution=None):
 
 class ChildSession:
     def __init__(self, port, trust, bearer, *, execution=None):
+        from .process_target import OwnedChild, require_child_platform
+        require_child_platform()
         boundary(port, execution)
         self._lock = threading.Lock(); self._write = threading.Lock(); self.closed = False
         self._pidfd = None
@@ -242,13 +244,17 @@ class ChildSession:
             mask = signal.pthread_sigmask(signal.SIG_BLOCK,(signal.SIGINT,signal.SIGTERM))
             try:
                 self.process.start()
-                self._pidfd = os.pidfd_open(self.process.pid)
+                self._target = OwnedChild(self.process.pid)
+                self._pidfd = self._target.fd
             finally: signal.pthread_sigmask(signal.SIG_SETMASK,mask)
         except BaseException:
             if self.process.pid is not None:
-                if self.process.exitcode is None: self.process.kill()
+                if self._pidfd is not None: self._target.kill()
                 self.process.join(timeout=1)
-            self.pipe.close();self.process.close();raise
+            self.pipe.close()
+            if self._pidfd is not None: self._target.close();self._pidfd=None
+            if self.process.pid is None or self.process.exitcode is not None: self.process.close()
+            raise
         finally: child.close()
 
     def receive(self, deadline, stop=None):
@@ -270,11 +276,10 @@ class ChildSession:
             mask = signal.pthread_sigmask(signal.SIG_BLOCK,(signal.SIGINT,signal.SIGTERM))
             try:
                 if self.process.pid is not None:
-                    try: signal.pidfd_send_signal(self._pidfd,signal.SIGKILL)
-                    except ProcessLookupError: pass
+                    self._target.kill()
                     self.process.join(timeout=1)
                     if self.process.exitcode is None: raise AuthError('referee_child_cleanup_uncertain')
                 self.pipe.close();self.process.close()
-                if self._pidfd is not None:os.close(self._pidfd);self._pidfd=None
+                if self._pidfd is not None:self._target.close();self._pidfd=None
                 self.closed=True
             finally: signal.pthread_sigmask(signal.SIG_SETMASK,mask)

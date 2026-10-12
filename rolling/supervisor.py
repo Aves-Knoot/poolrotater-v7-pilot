@@ -40,6 +40,7 @@ class Worker:
     manifest: dict
     broker: Broker
     process: object = None
+    signal_target: object = None
     peer: object = None
     prepared: threading.Event = field(default_factory=threading.Event)
     status: dict = field(default_factory=dict)
@@ -197,6 +198,8 @@ class RollingSupervisor:
             raise ValueError("unsupported worker event")
 
     def spawn(self, alias, release):
+        from poolrotater_host.process_target import OwnedChild, require_child_platform
+        require_child_platform()
         if self.runtime_validator is not None:
             self.runtime_validator(release)
         manifest = load_release(release)
@@ -229,11 +232,15 @@ class RollingSupervisor:
         logdir.mkdir(parents=True, exist_ok=True)
         try:
             with (logdir / f"{alias}-{generation}.log").open("ab", buffering=0) as output:
-                worker.process = subprocess.Popen(
-                    [manifest["python"], "-B", str(worker.release / "run_room_worker.py"), "--fd", str(child.fileno())],
-                    cwd=self.runtime, env=env, pass_fds=(child.fileno(),),
-                    stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
-                    start_new_session=True)
+                mask = signal.pthread_sigmask(signal.SIG_BLOCK, (signal.SIGINT, signal.SIGTERM))
+                try:
+                    worker.process = subprocess.Popen(
+                        [manifest["python"], "-B", str(worker.release / "run_room_worker.py"), "--fd", str(child.fileno())],
+                        cwd=self.runtime, env=env, pass_fds=(child.fileno(),),
+                        stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                        start_new_session=True)
+                    worker.signal_target = OwnedChild(worker.process.pid)
+                finally: signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             worker.peer = broker.peer = Peer(parent, handler=broker.handle,
                 on_event=lambda n, v: self._event(worker, n, v), name=alias + "-" + generation[:8])
             worker.peer.start()
@@ -244,8 +251,10 @@ class RollingSupervisor:
             if worker.peer is not None:
                 worker.peer.close()
             if worker.process and worker.process.poll() is None:
-                worker.process.terminate()
+                if worker.signal_target is None: raise RuntimeError('unverified worker cleanup refused')
+                worker.signal_target.send(signal.SIGTERM)
                 worker.process.wait(timeout=10)
+            if worker.signal_target is not None: worker.signal_target.close()
             broker.retire()
             self.handles.pop(generation, None)
             raise
@@ -318,12 +327,14 @@ class RollingSupervisor:
         try:
             worker.process.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            worker.process.terminate()
+            if worker.signal_target is None: raise RuntimeError('unverified worker cleanup refused')
+            worker.signal_target.send(signal.SIGTERM)
             try:
                 worker.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                worker.process.kill()
+                worker.signal_target.kill()
                 worker.process.wait(timeout=5)
+        if worker.signal_target is not None: worker.signal_target.close()
         worker.peer.close()
         worker.broker.retire()
         self.handles.pop(worker.broker.generation, None)

@@ -1,4 +1,4 @@
-# Repair an existing dev1 pilot installation
+# Repair an existing dev1 or dev2 pilot installation
 
 Use the replacement installer archive supplied by the maintainer. This procedure
 keeps the same instance, dedicated UID, account/client configuration, authorization,
@@ -17,16 +17,20 @@ record; the archive digest and runtime digest are different.
 
 ```bash
 kit_directory=/absolute/path/to/extracted/replacement
-old_runtime_sha=5637ca212115ee50bfa4f1b9d6d287dca9a3bf7785ec9b1c771459016a7cda8d
-new_runtime_sha=REPLACE_WITH_MAINTAINER_RUNTIME_SHA256
+old_runtime_sha=e4bc5bf8fe8d70e3b859cc92f5b126048f53e7b5bc73b31e2661a8d9cd664bad
+new_runtime_sha=d75450d2d2f06f131dcc9b84b0951be0c471d85c90f82ae440b1e0e113f06ec2
 sudo /usr/bin/python3.12 -I -S "$kit_directory/install.py" \
   --instance first --bundle "$kit_directory/runtime.zip" \
   --sha256 "$new_runtime_sha" --live-pilot \
   --upgrade-from-sha256 "$old_runtime_sha"
 ```
 
-The old digest above identifies the published dev1 runtime. If your installed
-digest differs, stop and ask the maintainer. Do not substitute a guessed digest.
+The old digest above identifies the published dev2 runtime. This is the expected
+starting point for the existing tester whose recovery already committed. For an
+installation still on published dev1, the independently recorded old runtime digest
+is `5637ca212115ee50bfa4f1b9d6d287dca9a3bf7785ec9b1c771459016a7cda8d`.
+Use that value only after confirming the installation is still dev1. If your
+installed digest differs from both, stop and ask the maintainer. Do not guess.
 Use your existing instance name instead of `first` if applicable. No preset or
 account change belongs in this transaction.
 
@@ -63,7 +67,31 @@ an ordinary retry never guesses which code/bootstrap should become active. If no
 transaction exists, or files/bindings differ, stop and return the redacted error.
 Do not edit the protected records or bootstrap.
 
-## 2. Recover the failed room creation
+## 2. Check already committed recovery, or recover a failed creation
+
+If the existing recovery for room 4666258 already reported `phase: committed`,
+do not run ownership-clear again. After the code upgrade, run `status`, `support`
+and a fresh `ownership-review`. The expected local status is `room_phase: stopped`,
+`ownership_recovery_phase: committed`, and `ownership_status_source:
+journal_and_receipt`. A retained `last_service_room_phase: recovery_required` is
+historical diagnostic data from the dead run, not current ownership authority.
+The fresh review should report room1 as `local_clean`; it intentionally retains
+`start_allowed: false` because review itself never grants a startup permit.
+
+```bash
+sudo /usr/bin/python3.12 -I -S "$pilot_release/poolrotater_host/pilot_admin_entry.py" \
+  --instance first support
+sudo /usr/bin/python3.12 -I -S "$pilot_release/poolrotater_host/pilot_admin_entry.py" \
+  --instance first ownership-review
+```
+
+If review refuses, return the redacted `failure_code` and `failure_stage` along
+with `support`. Retain state and hold startup. Do not share token/profile/journal
+files. The old catch-all hid prefixed AuthError codes; this repair reads the stable
+allowlisted code and labels authority/review/recovery stages. The exact cause of
+the external dev2 refusal remains unverified until this fresh result is available.
+
+For recovery that has not already committed, use the following steps.
 
 These commands use your existing local authorization for fresh authenticated
 identity/client checks and read-only room API requests. They never send referee
@@ -116,7 +144,26 @@ Completing obtains fresh ended evidence again. `--decision abort` restores the
 original uncertain journal; it does not resolve the room or permit startup.
 Do not send the full private receipt, profile, token files or journal to others.
 
-## 3. Separate supervised retry
+## 3. Systemd failure accounting and separate supervised retry
+
+An existing `service_state: failed` with MainPID0 is allowed for stopped recovery.
+`systemctl reset-failed` is not required to commit recovery and cannot clear an
+ownership journal or recovery transaction. A fresh start normally resets the
+failed state. If systemd specifically refuses it with `start-limit-hit`, reset only
+the dedicated pilot unit with `sudo systemctl reset-failed
+poolrotater-v7-pilot-first.service` after confirming its exact installed unit name.
+Do not target the production bot unit. Resetting failure accounting never bypasses
+the application startup guards.
+
+The original MakeRoom fix accepts a documented RoomJoinedResponse without a
+top-level user_id only when the authenticated caller is among its referees and
+a separate fresh room API detail confirms the expected account owns that exact
+room. Conflicting creator evidence, absent referee membership, changed connection
+generation or failed ownership evidence still refuses, without replaying MakeRoom.
+It also uses a pilot label instead of an offline room name. This confirms the
+format case covered by invented contract tests; it does not claim actual gameplay
+acceptance.
+
 
 After a committed upgrade and recovery, return redacted `support` and the recovery
 result to the maintainer. Agree on a one-room observation window and follow the

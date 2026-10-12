@@ -284,6 +284,9 @@ def run(sock, release):
             lifecycle.handle("stop")
         signal.signal(signal.SIGINT, stop)
         signal.signal(signal.SIGTERM, stop)
+        # The supervisor blocks these only while pinning child ownership. Masks
+        # survive exec; restore delivery once this child's handlers are ready.
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, (signal.SIGINT, signal.SIGTERM))
         bot.run()
         peer.emit("exited", lifecycle.status(bot))
         return 0

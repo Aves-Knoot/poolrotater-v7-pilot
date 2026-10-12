@@ -1,4 +1,28 @@
-# PoolRotater 7.0.1.dev2 — one-room live pilot candidate
+# PoolRotater 7.0.1.dev5 — pilot safety and recovery repair
+
+Existing dev2 testers: download the attached `poolrotater-7.0.1.dev5-live-pilot.zip`
+installer asset, not GitHub's automatically generated source ZIP. Follow
+`REPAIR_UPGRADE.md` to upgrade the same instance while its service is stopped.
+Keep authorization, catalogs, journals and the already committed recovery for
+room 4666258. Do not repeat ownership-clear or reauthorize. Return redacted
+status, support and fresh ownership-review results before arranging a room test.
+
+The installer is the exact validated preparation artifact. Internal unpublished
+or validation-pending fields describe its frozen preparation checkpoint; the
+GitHub release records later validation and publication without changing it.
+Only this bounded dev2 repair is included; M3/M4 are separate development work.
+Full real-database transfer/load testing and live gameplay acceptance remain
+outstanding. This diagnostic upgrade preserves existing catalogs and performs
+no new catalog download.
+
+## Retained preparation and installation reference
+
+# PoolRotater 7.0.1.dev5 — unpublished dev2 safety/recovery repair
+
+Existing dev2 operators: follow REPAIR_UPGRADE.md first. Keep your existing instance, authorization, catalogs and recovery files. The repair starts no service and clears no ownership state automatically. This kit retains dev2 storage and dependency contracts; M3/M4 functionality is not included. Catalog-volume acceptance remains separate; the historical pilot catalog origin below serves sampled exports, not full databases.
+
+The following installation reference is retained from the dev2 kit.
+
 
 This unpublished candidate is separate from **7.0.0.dev27**, which only checks
 HTTPS database downloads. The new kit can authorize your own account and run one

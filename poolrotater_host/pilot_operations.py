@@ -296,6 +296,16 @@ def status(instance):
             from .service_diagnostics import FAILURE_CODES
             if type(observed.get('failure_code')) is str and observed['failure_code'] in FAILURE_CODES:
                 result['failure_code']=observed['failure_code']
+        elif not state['MainPID']:
+            historical = _service_observation(target, record, state, historical=True)
+            if historical is not None:
+                result['last_service_room_phase'] = historical['phase']
+                result['service_observation_current'] = False
+            if record['execution'] == 'pilot-live':
+                ownership = _service_command(target, record, ['--ownership-local-status'])
+                result.update({key: ownership[key] for key in (
+                    'room_phase', 'ownership_recovery_phase', 'ownership_status_source', 'failure_code')
+                    if key in ownership})
     result['operator_client_configured'] = os.path.lexists(target['root'] / 'secrets/provider-operator-client.json')
     if result['operator_client_configured']: result['authorization'] = operator(instance, 'status')
     if os.path.lexists(target['root'] / 'state/catalog-installation.json'):
@@ -307,7 +317,7 @@ def status(instance):
     return result
 
 
-def _service_observation(target, record, state):
+def _service_observation(target, record, state, *, historical=False):
     """Read service-owned diagnostics; never adopt them as ownership authority."""
     path = target['root'] / 'state/provider-service.json'
     if not os.path.lexists(path): return None
@@ -321,7 +331,7 @@ def _service_observation(target, record, state):
             or value.get('phase') not in ('running', 'stopped', 'recovery_required')
             or type(value.get('pid')) is not int or value['pid'] <= 0):
         raise ConfigError('pilot service observer belongs to another runtime')
-    if state['MainPID'] and state['MainPID'] != value['pid']: return None
+    if not historical and (not state['MainPID'] or state['MainPID'] != value['pid']): return None
     return value
 
 
@@ -331,6 +341,9 @@ def _wait_ready(target, record, *, timeout=75):
         state = _service_state(target['root'].name)
         observed = _service_observation(target, record, state)
         if state['ActiveState'] not in ('active', 'activating') or not state['MainPID']:
+            # Failure diagnostics are historical here; they can explain exit but
+            # may never be adopted as current ownership/startup authority.
+            if observed is None: observed = _service_observation(target, record, state, historical=True)
             from .service_diagnostics import FAILURE_CODES
             code=observed.get('failure_code') if observed else None
             if type(code) is not str or code not in FAILURE_CODES:code='service_failed'
@@ -399,7 +412,7 @@ def support(instance):
     # Copy only bounded counters, not ledger/profile/authority structures.
     counts = {key: pacing[key] for key in ('attempted', 'dispatched', 'rate_limited')
               if type(pacing.get(key)) is int and 0 <= pacing[key] < 2**63}
-    return {'kind': 'live-pilot-support' if value['execution'] == 'pilot-live' else 'pilot-candidate-support',
+    result = {'kind': 'live-pilot-support' if value['execution'] == 'pilot-live' else 'pilot-candidate-support',
             'ok': value['ok'], 'version': value.get('version'), 'execution': value['execution'],
             'live_capable': value['provider_dispatch_enabled'], 'live_ready': False,
             'actual_room_acceptance_verified': False,
@@ -416,3 +429,8 @@ def support(instance):
             'pacing_counters': counts, 'catalog_modes': value.get('catalog_modes', []),
             'catalog_recovery_required': value.get('catalog_recovery_required', False),
             'local_collection_or_analysis': False}
+
+    for key in ('last_service_room_phase', 'service_observation_current',
+                'ownership_recovery_phase', 'ownership_status_source', 'failure_code'):
+        if key in value: result[key] = value[key]
+    return result
