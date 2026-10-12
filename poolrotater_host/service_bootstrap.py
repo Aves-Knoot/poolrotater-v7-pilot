@@ -108,6 +108,8 @@ def main():
     mode.add_argument('--service', action='store_true')
     mode.add_argument('--provider-service', action='store_true',
                       help='prepared fixed provider service; upstream execution is disabled')
+    mode.add_argument('--ownership-recovery', choices=('review', 'clear', 'resume'),
+                      help='explicit stopped room ownership recovery; no room mutations')
     mode.add_argument('--calculator-check', action='store_true', help=argparse.SUPPRESS)
     mode.add_argument('--probe-candidate', type=Path, help=argparse.SUPPRESS)
     mode.add_argument('--authorization-fixture', choices=('status', 'authorize', 'cancel', 'timeout',
@@ -130,9 +132,18 @@ def main():
     parser.add_argument('--pacing-state-sha256', help=argparse.SUPPRESS)
     parser.add_argument('--reauthorize', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--replace-pending', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--journal-sha256')
+    parser.add_argument('--room-alias')
+    parser.add_argument('--created-room-id', type=int)
+    parser.add_argument('--confirm-lost-creation', action='store_true')
+    parser.add_argument('--transaction-id')
+    parser.add_argument('--decision', choices=('complete', 'abort'))
     parser.add_argument('--verified-stage', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
-    prepared = bool(args.operator_authorization or args.provider_service or args.pilot_check)
+    prepared = bool(args.operator_authorization or args.provider_service or args.pilot_check or args.ownership_recovery)
+    if not args.ownership_recovery and any((args.journal_sha256, args.room_alias,
+            args.created_room_id, args.confirm_lost_creation, args.transaction_id, args.decision)):
+        raise ValueError('ownership choices require explicit recovery')
     if not prepared and (os.environ.get('POOLROTATER_OFFLINE_SANDBOX') != '1'
             or os.environ.get('POOLROTATER_PROVISIONING_SANDBOX') != '1'):
         raise ValueError('isolated service fixture required')
@@ -187,6 +198,13 @@ def main():
                    '--root', str(args.root), '--verified-stage']
         if args.service: command += ['--service']
         elif args.provider_service: command += ['--provider-service']
+        elif args.ownership_recovery:
+            command += ['--ownership-recovery', args.ownership_recovery]
+            for option, value in (('--journal-sha256', args.journal_sha256),
+                    ('--room-alias', args.room_alias), ('--created-room-id', args.created_room_id),
+                    ('--transaction-id', args.transaction_id), ('--decision', args.decision)):
+                if value is not None: command += [option, str(value)]
+            if args.confirm_lost_creation: command += ['--confirm-lost-creation']
         elif args.calculator_check: command += ['--calculator-check']
         elif args.operator_authorization or args.operator_authorization_fixture:
             if args.operator_authorization:
@@ -212,6 +230,13 @@ def main():
                 command += ['--pacing-state-sha256', args.pacing_state_sha256]
         else: command += ['--probe-candidate', str(args.probe_candidate)]
         os.execve(command[0], command, env)
+    if args.ownership_recovery:
+        from poolrotater_host.installed_room_recovery import run as recover_rooms
+        print(json.dumps(recover_rooms(args.root, runtime['release'], args.ownership_recovery,
+            journal_sha256=args.journal_sha256, alias=args.room_alias, room_id=args.created_room_id,
+            confirm_lost_creation=args.confirm_lost_creation,
+            transaction_id=args.transaction_id, decision=args.decision)))
+        return
     if args.operator_authorization:
         from poolrotater_host.installed_operator_workflow import run as operator_authorization
         def private_notice(session):
@@ -258,5 +283,6 @@ if __name__ == '__main__':
     try: main()
     except Exception as error:
         # Control file values, token bodies and exception strings never reach stderr.
-        print('offline service refused: ' + type(error).__name__, file=sys.stderr)
+        label = 'pilot service' if '--provider-service' in sys.argv else 'offline service'
+        print(label + ' refused: ' + type(error).__name__, file=sys.stderr)
         raise SystemExit(2)

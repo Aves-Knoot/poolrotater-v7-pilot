@@ -23,7 +23,16 @@ def main():
     parser.add_argument('--sha256', required=True)
     parser.add_argument('--preset', action='append')
     parser.add_argument('--live-pilot', action='store_true', help='require the separately reviewed one-room live artifact')
+    parser.add_argument('--upgrade-from-sha256', help='explicit existing runtime digest; preserve the same instance/state')
+    upgrade = parser.add_mutually_exclusive_group()
+    upgrade.add_argument('--upgrade-recover', choices=('complete', 'abort'))
+    upgrade.add_argument('--upgrade-status', action='store_true')
+    parser.add_argument('--transaction-id')
     args = parser.parse_args()
+    if (args.upgrade_from_sha256 is not None and (not args.live_pilot or args.preset is not None)
+            or (args.upgrade_from_sha256 is None and (args.upgrade_recover or args.upgrade_status or args.transaction_id))
+            or bool(args.upgrade_recover) != bool(args.transaction_id)):
+        raise ValueError('upgrade requires explicit live artifact and existing digest; no preset changes')
     import re
     if not re.fullmatch('[a-f0-9]{64}', args.sha256): raise ValueError('explicit trusted digest required')
     with tempfile.TemporaryDirectory(prefix='prv7-install-') as directory:
@@ -59,8 +68,14 @@ def main():
                     import shutil
                     shutil.copyfileobj(source, target, length=1024**2)
         sys.path.insert(0, str(stage / 'payload'))
-        from poolrotater_host.pilot_installation import install
-        result = install(args.instance, pinned, args.sha256, presets=args.preset, live_pilot=args.live_pilot)
+        if args.upgrade_from_sha256 is not None:
+            from poolrotater_host.pilot_upgrade import upgrade
+            result = upgrade(args.instance, pinned, args.sha256, from_sha256=args.upgrade_from_sha256,
+                             recover='status' if args.upgrade_status else args.upgrade_recover,
+                             transaction_id=args.transaction_id)
+        else:
+            from poolrotater_host.pilot_installation import install
+            result = install(args.instance, pinned, args.sha256, presets=args.preset, live_pilot=args.live_pilot)
         print(json.dumps(result, indent=2))
 
 

@@ -169,7 +169,8 @@ def provision(root, prefix, bundle, expected_sha256, *, uid=1000):
     return _provision(root, prefix, bundle, expected_sha256, uid=uid, execution='offline-fixture', reserve=0)
 
 
-def _provision(root, prefix, bundle, expected_sha256, *, uid, execution, reserve):
+def _provision(root, prefix, bundle, expected_sha256, *, uid, execution, reserve,
+               stage_bootstrap=False):
     from .pilot_identity import installation_execution
     installation_execution(execution)
     protected(prefix.parent)
@@ -239,7 +240,10 @@ def _provision(root, prefix, bundle, expected_sha256, *, uid, execution, reserve
                         'host_root':str(root),'release':str(release),'environment':str(environment),
                         'bundle_sha256':expected_sha256,'environment_id':spec['environment_id'],
                         'release_snapshot':release_snapshot}
-            install_bootstrap(prefix, release / 'poolrotater_host/service_bootstrap.py')
+            if not stage_bootstrap:
+                install_bootstrap(prefix, release / 'poolrotater_host/service_bootstrap.py')
+            elif current is None:
+                raise ConfigError('coordinated upgrade staging requires an existing installation')
             store_candidate(prefix, proposal)
             if current and current['bundle_sha256'] != expected_sha256:
                 return {'status':'candidate_staged','release':str(release),'environment':str(environment),'live_ready':False}

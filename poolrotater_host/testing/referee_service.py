@@ -103,6 +103,10 @@ class RefereeFixture:
                         body=args[0]
                         result=self.backend.make_authenticated(bearer,body['name'],body['beatmap_id'],body['ruleset_id'])
                     else:result=self.backend.invoke_authenticated(bearer,method,args)
+                    # Official RoomJoinedResponse has no top-level creator.
+                    # Keep explicit corrupt-owner faults for refusal coverage.
+                    if method in ('MakeRoom','JoinRoom') and type(result) is dict and result.get('user_id')==99:
+                        result={k:v for k,v in result.items() if k!='user_id'}
                     if self.stopped.wait(self.completion_delay):return True
                     self.send({'type':3,'invocationId':identity,'result':result})
         except Exception:

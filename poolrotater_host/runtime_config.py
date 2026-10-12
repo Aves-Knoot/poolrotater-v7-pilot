@@ -33,13 +33,15 @@ def render(root: Path, *, account_id=None) -> dict:
             raise ConfigError('account identity does not match expected_user_id')
     account = account_id if account_id is not None else expected
     resolved = resolved_catalogs(root)
+    live = config['execution'] == 'pilot-live'
     rooms = []
     for room in config['rooms']:
         alias = room['alias']
         spec = PRESETS[room['preset']]
         catalog = str(contained(root, room['catalog']))
         settings = {
-            'version': 'v7.0.0', 'room_name': f'PoolRotater offline | {alias}',
+            'version': __version__ if live else 'v7.0.0',
+            'room_name': f'PoolRotater {"pilot" if live else "offline"} | {alias}',
             'room_count': len(config['rooms']), 'discord_control_room_alias': alias,
             'ruleset_id': spec['ruleset'], 'mania_keys': spec['keys'] or 4,
             'auto_difficulty': spec['auto_difficulty'],

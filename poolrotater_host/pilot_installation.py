@@ -106,8 +106,8 @@ def _publish_intent(prefix, intent):
 
 
 @contextmanager
-def _stopped(root, uid):
-    """No journal reset/adoption; coordinate with authorization and workers."""
+def _quiescent(root, uid):
+    """Hold the existing owner lock without resolving or modifying room state."""
     path = root / 'state/owner.lock'
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
@@ -117,6 +117,28 @@ def _stopped(root, uid):
             raise ConfigError('invalid pilot owner lock')
         try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError: raise ConfigError('pilot installation must be stopped') from None
+        yield
+    finally: os.close(fd)
+
+
+def require_no_service_processes(uid):
+    """Root-only check for surviving dedicated-UID children, including old units."""
+    if os.geteuid() != 0 or type(uid) is not int or uid <= 0:
+        raise ConfigError('dedicated process check requires administrator')
+    for directory in Path('/proc').iterdir():
+        if not directory.name.isdigit(): continue
+        try:
+            fields = dict(line.split(':', 1) for line in (directory / 'status').read_text().splitlines() if ':' in line)
+        except (FileNotFoundError, ProcessLookupError): continue
+        except OSError: raise ConfigError('cannot verify stopped pilot processes') from None
+        if uid in [int(value) for value in fields['Uid'].split()] and not fields['State'].strip().startswith('Z'):
+            raise ConfigError('dedicated pilot processes still running; wait for cleanup')
+
+
+@contextmanager
+def _stopped(root, uid):
+    """No journal reset/adoption; coordinate with authorization and workers."""
+    with _quiescent(root, uid):
         journal = root / 'state/rolling/ownership.json'
         if os.path.lexists(journal):
             from .reconciliation import _journal
@@ -133,7 +155,6 @@ def _stopped(root, uid):
             if recovery['phase'] == 'prepared':
                 raise ConfigError('pilot ownership recovery is pending')
         yield
-    finally: os.close(fd)
 
 
 def install(instance, bundle, expected_sha256, *, presets=None, live_pilot=False):

@@ -71,6 +71,14 @@ def execute(authentication, action, *, mode='local', reauthorize=False,
                   operator_client_configured=True, provider_client_ownership_verified=False,
                   protected_runtime_checked=True, workers_started=0, start_allowed=False,
                   actual_room_testing=False, live_ready=False)
+    if result['live_capable']:
+        result['authorization_completed'] = result['pending_phase'] == 'complete' and result['token_phase'] == 'ready'
+        result['startup_verification_required'] = True
+        result['provider_client_ownership_verified'] = None
+        result['verification_scope'] = 'authorization_checks_expected_identity; startup_rechecks_identity_client_scopes_and_room_ownership'
+        if result['authorization_completed'] and result['next_action'] == 'verify_owner_before_use':
+            result['next_action'] = 'start_performs_fresh_owner_verification; retain_state_if_ownership_recovery_required'
+        result['start_allowed_reason'] = 'startup_admission_not_evaluated_by_local_status'
     if instructions is not None: result['instructions'] = instructions
     return result
 

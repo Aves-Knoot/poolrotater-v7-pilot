@@ -20,6 +20,7 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
     _authority(authentication)
     root = Path(root)
     stop = threading.Event()
+    failure = None
     if observer is not None and not callable(observer):
         raise ConfigError('invalid provider service observer')
     if observer is None:
@@ -36,6 +37,8 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
             elif phase == 'stopped':
                 value.update(workers_reaped=True, closed_rooms=len(workers),
                              referee_child_reaped=hub.client._session is None)
+            elif phase == 'recovery_required':
+                value['failure_code'] = failure or 'service_failed'
             atomic_json(root / 'state/provider-service.json', value)
     previous = {number: signal.signal(number, lambda *_: stop.set())
                 for number in (signal.SIGTERM, signal.SIGINT)}
@@ -74,7 +77,9 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
         if any(worker.process.poll() is None for worker in workers):
             raise ConfigError('provider cleanup incomplete')
         observer('stopped', supervisor, workers)
-    except Exception:
+    except Exception as error:
+        from .service_diagnostics import failure_code
+        failure = failure_code(error)
         if acquired: observer('recovery_required', supervisor, workers)
         raise
     finally:

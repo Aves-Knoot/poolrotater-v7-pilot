@@ -83,6 +83,8 @@ def require_no_pending(prefix, installation_id):
     value = read_transition(prefix, installation_id)
     if value and value['phase'] == 'prepared':
         raise ConfigError('runtime transition requires explicit offline recovery')
+    from .pilot_upgrade import require_settled
+    require_settled(prefix, installation_id)
 
 
 def store_candidate(prefix, proposal):

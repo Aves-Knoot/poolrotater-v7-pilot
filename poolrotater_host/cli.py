@@ -25,7 +25,8 @@ def main(argv=None):
     download.add_argument('--destination', required=True, type=Path)
     download.add_argument('--mode', required=True, choices=('standard', 'mania4', 'mania7'))
     for action in ('install', 'check', 'status', 'support', 'unit', 'configure', 'authorize', 'cancel',
-                   'recover', 'pacing-recover', 'catalog-import', 'catalog-recover', 'start', 'stop', 'remove'):
+                   'recover', 'pacing-recover', 'catalog-import', 'catalog-recover', 'start', 'stop', 'remove',
+                   'ownership-review', 'ownership-clear', 'ownership-resume'):
         command = commands.add_parser('pilot-' + action, help='explicit protected pilot ' + action)
         command.add_argument('--instance', required=True)
         if action == 'install':
@@ -43,6 +44,14 @@ def main(argv=None):
             command.add_argument('--reauthorize', action='store_true')
             command.add_argument('--replace-pending', action='store_true')
         if action == 'pacing-recover': command.add_argument('--pacing-state-sha256', required=True)
+        if action == 'ownership-clear':
+            command.add_argument('--journal-sha256', required=True)
+            command.add_argument('--room-alias')
+            command.add_argument('--created-room-id', type=int)
+            command.add_argument('--confirm-lost-creation', action='store_true')
+        if action == 'ownership-resume':
+            command.add_argument('--transaction-id', required=True)
+            command.add_argument('--decision', choices=('complete', 'abort'), required=True)
         if action == 'catalog-import':
             source = command.add_mutually_exclusive_group(required=True)
             source.add_argument('--repository', type=Path)
@@ -70,6 +79,12 @@ def main(argv=None):
                 result = getattr(pilot, action.replace('-', '_'))(args.instance)
             elif action == 'unit': result = pilot.install_unit(args.instance)
             elif action == 'remove': result = pilot.remove_unit(args.instance)
+            elif action.startswith('ownership-'):
+                result = pilot.ownership(args.instance, action.removeprefix('ownership-'),
+                    journal_sha256=getattr(args, 'journal_sha256', None),
+                    alias=getattr(args, 'room_alias', None), room_id=getattr(args, 'created_room_id', None),
+                    confirm_lost_creation=getattr(args, 'confirm_lost_creation', False),
+                    transaction_id=getattr(args, 'transaction_id', None), decision=getattr(args, 'decision', None))
             elif action in ('start', 'stop'): result = pilot.lifecycle(args.instance, action)
             elif action == 'catalog-import':
                 if (args.origin is None) != (args.ca_file is None and args.ca_sha256 is None):

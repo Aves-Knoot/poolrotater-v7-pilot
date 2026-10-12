@@ -58,7 +58,9 @@ def _snapshot(value, user_id, room_id=None):
     if (type(value) is not dict or type(value.get('room_id')) is not int
             or not 0 < value['room_id'] < 10**19
             or (room_id is not None and value['room_id'] != room_id)
-            or type(value.get('user_id')) is not int or value['user_id'] != user_id
+            # RoomJoinedResponse identifies the caller in referees, not a
+            # top-level user_id. Keep rejecting conflicting legacy evidence.
+            or ('user_id' in value and (type(value['user_id']) is not int or value['user_id'] != user_id))
             or type(value.get('chat_channel_id')) is not int or value['chat_channel_id'] <= 0
             or type(value.get('players')) is not list
             or len(value['players']) > 1000
@@ -111,7 +113,27 @@ class ProviderRoomHub:
         value = self.client.make_room(*args, **kwargs)
         if generation != self._connect_generation:
             raise HubInvocationUncertain('referee_generation_changed')
-        return _snapshot(value, self.auth._active)
+        return self._checked_snapshot(value, generation)
+
+    def _checked_snapshot(self, value, generation, room_id=None):
+        """Validate referee membership and independent API creator evidence.
+
+        No mutation is replayed if either response is uncertain. A missing
+        top-level creator in the referee contract never weakens ownership checks.
+        """
+        from bot.hub import HubInvocationUncertain
+        snapshot = _snapshot(value, self.auth._active, room_id)
+        try:
+            code, detail = _fetch(self.auth, '/api/v2/rooms/' + str(snapshot['room_id']))
+            if code != 200: raise AuthError('ownership_room_evidence_unavailable')
+            evidence = _room(detail, self.auth._active, snapshot['room_id'])
+            if not evidence['active'] or evidence['ended']:
+                raise AuthError('ownership_room_evidence_refused')
+        except Exception:
+            raise HubInvocationUncertain('referee_room_owner_requires_review') from None
+        if generation != self._connect_generation:
+            raise HubInvocationUncertain('referee_generation_changed')
+        return snapshot
 
     def invoke(self, method, args, **kwargs):
         from bot.hub import HubInvocationUncertain
@@ -121,7 +143,7 @@ class ProviderRoomHub:
         value = self.client.invoke(method, args, **kwargs)
         if generation != self._connect_generation:
             raise HubInvocationUncertain('referee_generation_changed')
-        return _snapshot(value, self.auth._active, int(args[0])) if method == 'JoinRoom' else value
+        return self._checked_snapshot(value, generation, int(args[0])) if method == 'JoinRoom' else value
 
 
 class ProviderRoomApi:

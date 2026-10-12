@@ -24,9 +24,30 @@ def _bounded(value, maximum):
         raise AuthError('ownership_recovery_record_too_large')
 
 
-def cleared(before):
+def identified(before, candidates=None):
+    """Explicit operator association, never inferred from a listing or title.
+
+    Only one lost initial creation is supported. The original journal remains
+    the transaction's before state; this projection is only for fresh API reads.
+    """
+    projected = copy.deepcopy(before)
+    if candidates is None: return projected
+    if type(candidates) is not dict or len(candidates) != 1:
+        raise AuthError('ownership_creation_candidate_required')
+    for alias, rid in candidates.items():
+        state = projected['rooms'].get(alias)
+        if (type(alias) is not str or type(rid) is not int or not 0 < rid < 10**19
+                or type(state) is not dict or state.get('room_id') is not None
+                or state.get('operation') != 'make_pending'
+                or state.get('ownership_unknown') is not True):
+            raise AuthError('ownership_creation_candidate_refused')
+        state.update(room_id=rid, operation='close_pending')
+    return projected
+
+
+def cleared(before, candidates=None):
     """Only previously identified owned/closing rooms can become locally closed."""
-    after = copy.deepcopy(before)
+    after = identified(before, candidates)
     count = 0
     for state in after['rooms'].values():
         if state.get('room_id') is not None:
@@ -45,8 +66,9 @@ def cleared(before):
 def validate_record(value, *, root, marker, uid):
     """Pure structural/binding validation, also used by the root switch guard."""
     try:
-        if (not isinstance(value, dict) or set(value) != {'format', 'execution', 'live_ready',
-                'transaction_id', 'phase', 'binding', 'before', 'after', 'before_sha256', 'after_sha256'}
+        fields = {'format', 'execution', 'live_ready', 'transaction_id', 'phase',
+                  'binding', 'before', 'after', 'before_sha256', 'after_sha256'}
+        if (not isinstance(value, dict) or set(value) not in (fields, fields | {'creation_candidates'})
                 or type(value['format']) is not int or value['format'] != 1
                 or value['execution'] not in ('offline-fixture', 'provider-fixture', 'provider-disabled', 'provider-pilot', 'provider-live-pilot')
                 or value['live_ready'] is not False
@@ -68,11 +90,14 @@ def validate_record(value, *, root, marker, uid):
             if not re.fullmatch('[a-f0-9]{64}', b['client_profile_sha256']): raise ValueError
         aliases = set(value['before']['rooms'])
         if _journal(value['before'], aliases) != value['before']: raise ValueError
-        if _journal(value['after'], aliases) != cleared(value['before']): raise ValueError
+        candidates = value.get('creation_candidates')
+        if 'creation_candidates' in value and (candidates is None or value['execution'] not in
+                                               ('provider-fixture', 'provider-live-pilot')): raise ValueError
+        if _journal(value['after'], aliases) != cleared(value['before'], candidates): raise ValueError
         for journal in (value['before'], value['after']): _bounded(journal, 65536)
         if any(value[k+'_sha256'] != digest(value[k]) for k in ('before', 'after')): raise ValueError
         return value
-    except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError, AuthError):
         raise ConfigError('ownership recovery record is invalid or belongs to another installation') from None
 
 
@@ -112,12 +137,15 @@ class OfflineOwnershipRecovery(OfflineOwnershipReview):
                              {r['alias'] for r in config['rooms']})
         except FileNotFoundError: raise AuthError('ownership_journal_missing') from None
 
-    def _eligible(self, account, before):
-        report = self._inspect(account, journal=before)
-        if (report['untracked_unconfirmed_room_ids'] or any(r['result'] not in
+    def _eligible(self, account, before, candidates=None):
+        if candidates is not None and self.execution not in ('provider-fixture', 'provider-live-pilot'):
+            raise AuthError('ownership_creation_candidate_refused')
+        report = self._inspect(account, journal=identified(before, candidates))
+        if ((candidates is not None and report['listing_at_limit'])
+                or report['untracked_unconfirmed_room_ids'] or any(r['result'] not in
                 ('confirmed_ended', 'local_clean') for r in report['rooms'])):
             raise AuthError('ownership_recovery_unresolved')
-        return cleared(before)
+        return cleared(before, candidates)
 
     def _write(self, path, value):
         # Keep the ordinary bounded readers applicable after replacing a compact file.
@@ -131,7 +159,7 @@ class OfflineOwnershipRecovery(OfflineOwnershipReview):
                 'transaction_id': record['transaction_id'], 'phase': record['phase'],
                 'recovery_applied': record['phase'] == 'committed', 'start_allowed': False}
 
-    def apply(self, *, expected_journal_sha256):
+    def apply(self, *, expected_journal_sha256, creation_candidates=None):
         """Expected digest selects local state; fresh provider reads authorize it."""
         if not isinstance(expected_journal_sha256, str) or not re.fullmatch('[a-f0-9]{64}', expected_journal_sha256):
             raise AuthError('ownership_recovery_expected_digest_required')
@@ -142,13 +170,15 @@ class OfflineOwnershipRecovery(OfflineOwnershipReview):
             before = self._ledger()
             if digest(before) != expected_journal_sha256: raise AuthError('ownership_journal_changed')
             _bounded(before, 65536)
-            after = self._eligible(account, before)
+            after = self._eligible(account, before, creation_candidates)
             _bounded(after, 65536)
             if self._binding(account) != binding or self._ledger() != before:
                 raise AuthError('ownership_recovery_binding_changed')
             record = {'format': 1, 'execution': self.execution, 'live_ready': False,
                       'transaction_id': str(uuid.uuid4()), 'phase': 'prepared', 'binding': binding,
                       'before': before, 'after': after, 'before_sha256': digest(before), 'after_sha256': digest(after)}
+            if creation_candidates is not None:
+                record['creation_candidates'] = copy.deepcopy(creation_candidates)
             path = contained(self.root, RECOVERY_PATH)
             self._write(path, record)
             # Close the gap after persisting intent; never overwrite intervening state.
@@ -167,7 +197,7 @@ class OfflineOwnershipRecovery(OfflineOwnershipReview):
         current = self._ledger()
         if current not in (record['before'], record['after']): raise AuthError('ownership_journal_changed')
         if self._read() != record: raise AuthError('ownership_recovery_record_changed')
-        if action == 'complete': self._eligible(account, record['before'])
+        if action == 'complete': self._eligible(account, record['before'], record.get('creation_candidates'))
         if (self._binding(account) != record['binding'] or self._ledger() != current
                 or self._read() != record): raise AuthError('ownership_recovery_binding_changed')
         target = record['after'] if action == 'complete' else record['before']

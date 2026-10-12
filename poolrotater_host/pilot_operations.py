@@ -44,7 +44,7 @@ ExecStart=/usr/bin/python3.12 -I -S {target['prefix']}/bootstrap.py --root {targ
 {isolation}Restart=no
 KillMode=mixed
 KillSignal=SIGTERM
-SendSIGKILL=no
+SendSIGKILL=yes
 TimeoutStopSec=90
 UMask=0077
 Nice=15
@@ -181,6 +181,29 @@ def check(instance):
             'live_ready': False, 'provider_dispatch_enabled': record['execution'] == 'pilot-live'}
 
 
+def ownership(instance, action, *, journal_sha256=None, alias=None, room_id=None,
+              confirm_lost_creation=False, transaction_id=None, decision=None):
+    if action not in ('review', 'clear', 'resume'):
+        raise ConfigError('invalid stopped ownership action')
+    target, _, record = administrative_binding(instance)
+    if record['execution'] != 'pilot-live':
+        raise ConfigError('ownership operator commands require reviewed live pilot')
+    _unit(instance)
+    state = _service_state(instance)
+    if state['MainPID'] or state['ActiveState'] not in ('inactive', 'failed') or state['UnitFileState'] != 'disabled':
+        raise ConfigError('ownership recovery requires disabled/stopped pilot service')
+    from .pilot_installation import require_no_service_processes
+    require_no_service_processes(record['service_uid'])
+    arguments = ['--ownership-recovery', action]
+    for option, value in (('--journal-sha256', journal_sha256), ('--room-alias', alias),
+                         ('--created-room-id', room_id), ('--transaction-id', transaction_id), ('--decision', decision)):
+        if value is not None: arguments += [option, str(value)]
+    if confirm_lost_creation: arguments += ['--confirm-lost-creation']
+    # The service helper holds verified_owner itself; no root-held owner lock
+    # may cross this spawn and deadlock its fresh account/evidence checks.
+    return _service_command(target, record, arguments, timeout=120)
+
+
 def operator(instance, action, *, credentials_stream=None, expected_user_id=None,
              redirect_uri=None, mode='local', pacing_state_sha256=None,
              notice=None, reauthorize=False, replace_pending=False):
@@ -268,7 +291,11 @@ def status(instance):
         state = _service_state(instance)
         result.update(service_state=state['ActiveState'], service_enabled=state['UnitFileState'] == 'enabled')
         observed = _service_observation(target, record, state)
-        if observed is not None: result['room_phase'] = observed['phase']
+        if observed is not None:
+            result['room_phase'] = observed['phase']
+            from .service_diagnostics import FAILURE_CODES
+            if type(observed.get('failure_code')) is str and observed['failure_code'] in FAILURE_CODES:
+                result['failure_code']=observed['failure_code']
     result['operator_client_configured'] = os.path.lexists(target['root'] / 'secrets/provider-operator-client.json')
     if result['operator_client_configured']: result['authorization'] = operator(instance, 'status')
     if os.path.lexists(target['root'] / 'state/catalog-installation.json'):
@@ -302,9 +329,12 @@ def _wait_ready(target, record, *, timeout=75):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         state = _service_state(target['root'].name)
-        if state['ActiveState'] not in ('active', 'activating') or not state['MainPID']:
-            raise ConfigError('pilot startup failed; inspect status without repeating room creation')
         observed = _service_observation(target, record, state)
+        if state['ActiveState'] not in ('active', 'activating') or not state['MainPID']:
+            from .service_diagnostics import FAILURE_CODES
+            code=observed.get('failure_code') if observed else None
+            if type(code) is not str or code not in FAILURE_CODES:code='service_failed'
+            raise ConfigError('pilot startup failed: '+code+'; inspect status without repeating room creation')
         if observed is not None:
             if observed['phase'] == 'recovery_required':
                 raise ConfigError('pilot startup requires stopped ownership review')

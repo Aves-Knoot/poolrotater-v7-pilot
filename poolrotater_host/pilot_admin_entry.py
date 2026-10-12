@@ -74,7 +74,8 @@ def main():
     parser.add_argument('--instance', required=True)
     parser.add_argument('--verified-stage', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('action', choices=('check', 'status', 'support', 'unit', 'configure', 'authorize',
-        'cancel', 'recover', 'pacing-recover', 'catalog-import', 'catalog-recover', 'start', 'stop', 'remove'))
+        'cancel', 'recover', 'pacing-recover', 'catalog-import', 'catalog-recover', 'start', 'stop', 'remove',
+        'ownership-review', 'ownership-clear', 'ownership-resume'))
     args, rest = parser.parse_known_args()
     release = verified_release(args.instance)
     sys.path.insert(0, str(release))

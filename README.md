@@ -1,4 +1,4 @@
-# PoolRotater 7.0.1.dev1 — one-room live pilot candidate
+# PoolRotater 7.0.1.dev2 — one-room live pilot candidate
 
 This unpublished candidate is separate from **7.0.0.dev27**, which only checks
 HTTPS database downloads. The new kit can authorize your own account and run one
@@ -109,6 +109,13 @@ callback port/firewall rule is needed. The flow never opens a browser or SSH its
 
 After success, inspect status and explicitly start the dedicated unit:
 
+Configuration only stores your local client profile: absent tokens and
+`begin_authorization` are normal. Successful authorization returns a ready token.
+Local status does not run startup admission: `start_allowed: false` means that
+fresh identity/client/scopes/catalog/ownership checks still happen on explicit
+start. It does not mean OAuth failed. A reported ownership recovery requirement
+must be resolved before any new startup; a ready token cannot clear it.
+
 ```sh
 sudo /usr/bin/python3.12 -I -S "$pilot_release/poolrotater_host/pilot_admin_entry.py" --instance first status
 sudo /usr/bin/python3.12 -I -S "$pilot_release/poolrotater_host/pilot_admin_entry.py" --instance first start
@@ -121,6 +128,15 @@ pilot is reviewed. Follow `ONE_ROOM_CHECKLIST.md`. No automatic restart or boot
 enablement is part of this first pilot.
 
 ## Failure, recovery and removal
+
+Dev1 reported a room-response parsing failure after MakeRoom. If your existing
+installation has `make_pending` / unknown ownership, keep it stopped and retain
+its state for review. Seeing no room in the client does not independently settle
+that journal. Do not bypass it by deleting state, using another instance/account
+installation or blindly retrying start. The replacement provides a separate
+same-instance repair upgrade and explicit stopped ownership recovery; follow
+`REPAIR_UPGRADE.md` after the maintainer qualifies the replacement kit. The actual
+tester installation still requires its own fresh recovery evidence.
 
 Inspect `status` after an interrupted command; never repeat start to resolve an
 unknown creation. `cancel` closes a waiting authorization attempt. `recover`
@@ -147,6 +163,10 @@ recovery data, catalogs, code and service UID. Destructive purge is a separate
 deliberate operation. It cannot erase uncertainty to make startup succeed.
 
 ## Upgrade from dev27 or another installation
+
+For the published **7.0.1.dev1 live pilot**, use `REPAIR_UPGRADE.md` to preserve
+the existing instance, authorization, catalogs and uncertain ownership journal.
+Do not use the fresh-install command above against that installed instance.
 
 Dev27 has no installed live service/authorization. Keep its downloaded rehearsal
 directory separate and install this release into a fresh instance. Do not copy its
