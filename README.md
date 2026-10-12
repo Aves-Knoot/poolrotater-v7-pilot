@@ -1,4 +1,4 @@
-# PoolRotater 7.0.1.dev6 — full-catalog single-room pilot
+# PoolRotater 7.0.1.dev7 — multiplayer chat-access repair
 
 Download the installer asset, not GitHub's source ZIP. Verify its published archive
 SHA256 before extraction. The kit includes the pinned runtime and public catalog
@@ -6,12 +6,39 @@ trust, not databases or operator secrets. Installing/upgrading starts no service
 and creates no room. One standard-auto room is the default; other presets are
 explicit choices, and this pilot rejects multiple rooms.
 
-## Existing dev5 tester
+## Existing dev6 tester
 
 Follow REPAIR_UPGRADE.md section1 and2A. Preserve the same first instance, account
 configuration, authorization, catalogs and committed recovery. Do not reinstall,
 reauthorize or repeat ownership-clear. Then follow SINGLE_ROOM_TEST.md for full
 catalog verification and the separately scheduled one-room test.
+
+This repair replaces the generic public-channel PUT join with a GET access check
+for chat membership established by MakeRoom/JoinRoom. It checks the wrapped channel
+ID and permission to send messages. A refusal still closes the created room;
+it does not bypass upstream permissions or replay creation. HTTP refusals now
+include only their numeric status and a reviewed failure code. Live OAuth errors
+use the label `OAuth`, without the old `offline` prefix.
+
+A service can fail while its room closes cleanly. With the service stopped,
+`room_phase` comes from the ownership journal and recovery receipt; historical
+service failure is reported separately as `last_service_phase: failed`,
+`last_service_failure_code` and, when available, `last_service_failure_http_status`.
+Systemd may retain `service_state: failed`; that does not imply an open room.
+Historical observations are never adopted as ownership authority. Old dev6
+failure records may lack HTTP status; upgrading cannot reconstruct that value.
+The historical cumulative uncertain counter likewise cannot identify a past call.
+
+For the cleanly closed dev6 room 4676871, preserve the current instance and run a
+fresh read-only ownership review after upgrade. Do not reauthorize or repeat
+ownership-clear when the journal is already clean. This repair starts no service.
+Actual gameplay acceptance remains pending the next explicit one-room test.
+
+The repair also fixes the supervisor's maintenance schema read of protected
+catalogs under the dedicated service account. Only sealed versions with a matching
+verified catalog receipt use immutable SQLite reads; mutable ratings and other
+operator databases retain their owner-safe reader. The donor lifecycle check runs
+maintenance before stopping, rather than stopping immediately when startup is ready.
 
 ## Complete prepared databases
 
@@ -49,7 +76,7 @@ After extracting and checking the independent archive digest:
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --live-pilot --instance first \
-  --bundle runtime.zip --sha256 e4db2fbe600ccc14ad323ba2d6ded80840718744613ff5de876a9765890219ab
+  --bundle runtime.zip --sha256 a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932
 ```
 
 Use the exact release path printed by the installer as pilot_release. This creates

@@ -43,7 +43,12 @@ class InventedRoomService(RuntimeHub):
             operation = 'chat_messages' if method == 'GET' else 'chat_send'
             args = [int(match[1])] + ([body['message']] if method == 'POST' else [])
         match = re.fullmatch(r'/chat/channels/([0-9]+)/users/([0-9]+)', target)
-        if match and method == 'PUT': operation, args = 'chat_join', [int(match[1]), int(match[2])]
+        if match and method == 'PUT':
+            self.provider.calls.append({'method':method, 'path':path, 'form':body,
+                                        'bearer':bearer, 'headers':dict(headers)})
+            return 403, {}
+        match = re.fullmatch(r'/chat/channels/([0-9]+)', target)
+        if match and method == 'GET': operation, args = 'chat_join', [int(match[1]), 99]
         if method == 'POST' and target == '/chat/ack': operation = 'chat_ack'
         match = re.fullmatch(r'/(beatmaps|beatmapsets)/([0-9]+)', target)
         if match and method == 'GET': operation, args = match[1][:-1], [int(match[2])]
@@ -60,6 +65,8 @@ class InventedRoomService(RuntimeHub):
         value = self.api_authenticated(bearer, operation, args, kwargs)
         if operation == 'chat_ack': value = {'silences':[]}
         if operation == 'room_item_scores': value = {'scores':[]}
+        if operation == 'chat_join':
+            value = {'channel': {**value, 'current_user_attributes': {'can_message': True}}, 'users': []}
         return 200, value
 
     def fault(self, operation, when='after'):

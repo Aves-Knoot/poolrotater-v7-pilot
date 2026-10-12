@@ -32,10 +32,9 @@ def prepare_api(method, path, *, bearer, params=None, json_body=None):
     best = re.fullmatch(r'/api/v2/users/(' + ID + r')/scores/best', path)
     simple = re.fullmatch(r'/api/v2/(beatmaps|beatmapsets)/' + ID, path)
     scores = re.fullmatch(r'/api/v2/rooms/' + ID + r'/playlist/' + ID + r'/scores', path)
-    join = re.fullmatch(r'/api/v2/chat/channels/' + ID + r'/users/' + ID, path)
-    allowed = (method == 'GET' and (message or user or best or simple or scores)
-               or method == 'POST' and (message or path == '/api/v2/chat/ack')
-               or method == 'PUT' and join)
+    channel = re.fullmatch(r'/api/v2/chat/channels/' + ID, path)
+    allowed = (method == 'GET' and (channel or message or user or best or simple or scores)
+               or method == 'POST' and (message or path == '/api/v2/chat/ack'))
     if not allowed: raise AuthError('provider_api_endpoint_refused')
     if method == 'GET' and message:
         if set(query) not in ({'limit'}, {'limit', 'since'}):
@@ -67,7 +66,7 @@ def prepare_api(method, path, *, bearer, params=None, json_body=None):
     headers = {'Accept': 'application/json', 'Accept-Encoding': 'identity',
                'Connection': 'close', 'x-api-version': API_VERSION,
                'Authorization': 'Bearer ' + _secret(bearer)}
-    if method in ('POST', 'PUT'): headers['Content-Type'] = 'application/json'
+    if method == 'POST': headers['Content-Type'] = 'application/json'
     full_path = path + ('?' + urlencode(sorted(query.items())) if query else '')
     return PreparedApiRequest(method, full_path, headers, body, 1024**2)
 

@@ -292,15 +292,25 @@ def status(instance):
         result.update(service_state=state['ActiveState'], service_enabled=state['UnitFileState'] == 'enabled')
         observed = _service_observation(target, record, state)
         if observed is not None:
-            result['room_phase'] = observed['phase']
+            result['service_phase'] = observed['phase']
+            result['room_phase'] = 'not-observed' if observed['phase'] == 'failed' else observed['phase']
             from .service_diagnostics import FAILURE_CODES
             if type(observed.get('failure_code')) is str and observed['failure_code'] in FAILURE_CODES:
                 result['failure_code']=observed['failure_code']
+                status = observed.get('failure_http_status')
+                if type(status) is int and 100 <= status <= 599: result['failure_http_status'] = status
         elif not state['MainPID']:
             historical = _service_observation(target, record, state, historical=True)
             if historical is not None:
-                result['last_service_room_phase'] = historical['phase']
+                result['last_service_phase'] = historical['phase']
+                if historical['phase'] != 'failed': result['last_service_room_phase'] = historical['phase']
                 result['service_observation_current'] = False
+                from .service_diagnostics import FAILURE_CODES
+                code = historical.get('failure_code')
+                if type(code) is str and code in FAILURE_CODES:
+                    result['last_service_failure_code'] = code
+                    status = historical.get('failure_http_status')
+                    if type(status) is int and 100 <= status <= 599: result['last_service_failure_http_status'] = status
             if record['execution'] == 'pilot-live':
                 ownership = _service_command(target, record, ['--ownership-local-status'])
                 result.update({key: ownership[key] for key in (
@@ -336,7 +346,7 @@ def _service_observation(target, record, state, *, historical=False):
             or value.get('uid') != record['service_uid']
             or value.get('installation_id') != record['installation_id']
             or value.get('generation') != record['generation']
-            or value.get('phase') not in ('running', 'stopped', 'recovery_required')
+            or value.get('phase') not in ('running', 'stopped', 'recovery_required', 'failed')
             or type(value.get('pid')) is not int or value['pid'] <= 0):
         raise ConfigError('pilot service observer belongs to another runtime')
     if not historical and (not state['MainPID'] or state['MainPID'] != value['pid']): return None
@@ -355,8 +365,17 @@ def _wait_ready(target, record, *, timeout=75):
             from .service_diagnostics import FAILURE_CODES
             code=observed.get('failure_code') if observed else None
             if type(code) is not str or code not in FAILURE_CODES:code='service_failed'
-            raise ConfigError('pilot startup failed: '+code+'; inspect status without repeating room creation')
+            status = observed.get('failure_http_status') if observed else None
+            suffix = f' (HTTP {status})' if type(status) is int and 100 <= status <= 599 else ''
+            raise ConfigError('pilot startup failed: '+code+suffix+'; inspect status without repeating room creation')
         if observed is not None:
+            if observed['phase'] == 'failed':
+                from .service_diagnostics import FAILURE_CODES
+                code = observed.get('failure_code')
+                if type(code) is not str or code not in FAILURE_CODES: code = 'service_failed'
+                status = observed.get('failure_http_status')
+                suffix = f' (HTTP {status})' if type(status) is int and 100 <= status <= 599 else ''
+                raise ConfigError('pilot startup failed: '+code+suffix+'; inspect status without repeating room creation')
             if observed['phase'] == 'recovery_required':
                 raise ConfigError('pilot startup requires stopped ownership review')
             if observed['phase'] == 'running':
@@ -443,6 +462,8 @@ def support(instance):
             'catalog_recovery_required': value.get('catalog_recovery_required', False),
             'local_collection_or_analysis': False}
     for key in ('last_service_room_phase', 'service_observation_current',
-                'ownership_recovery_phase', 'ownership_status_source', 'failure_code'):
+                'ownership_recovery_phase', 'ownership_status_source', 'failure_code',
+                'service_phase', 'failure_http_status', 'last_service_phase',
+                'last_service_failure_code', 'last_service_failure_http_status'):
         if key in value: result[key] = value[key]
     return result

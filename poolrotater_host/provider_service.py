@@ -20,7 +20,7 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
     _authority(authentication)
     root = Path(root)
     stop = threading.Event()
-    failure = None
+    failure = {}
     if observer is not None and not callable(observer):
         raise ConfigError('invalid provider service observer')
     if observer is None:
@@ -37,8 +37,10 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
             elif phase == 'stopped':
                 value.update(workers_reaped=True, closed_rooms=len(workers),
                              referee_child_reaped=hub.client._session is None)
-            elif phase == 'recovery_required':
-                value['failure_code'] = failure or 'service_failed'
+            elif phase == 'failed':
+                value.update(failure or {'failure_code': 'service_failed'})
+                value['workers_reaped'] = all(worker.process.poll() is not None for worker in workers)
+                value['referee_child_reaped'] = hub.client._session is None
             atomic_json(root / 'state/provider-service.json', value)
     previous = {number: signal.signal(number, lambda *_: stop.set())
                 for number in (signal.SIGTERM, signal.SIGINT)}
@@ -52,8 +54,8 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
             for alias in supervisor.configs:
                 if stop.is_set(): break
                 worker = supervisor.prepare(alias, release)
-                supervisor.activate(worker)
                 workers.append(worker)
+                supervisor.activate(worker)
             if not stop.is_set(): observer('running', supervisor, workers)
             while not stop.wait(.5) and not supervisor.stopping.is_set():
                 # Use the native maintenance cadence: room recreation needs
@@ -78,9 +80,9 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
             raise ConfigError('provider cleanup incomplete')
         observer('stopped', supervisor, workers)
     except Exception as error:
-        from .service_diagnostics import failure_code
-        failure = failure_code(error)
-        if acquired: observer('recovery_required', supervisor, workers)
+        from .service_diagnostics import failure_details
+        failure = failure_details(error)
+        if acquired: observer('failed', supervisor, workers)
         raise
     finally:
         for number, handler in previous.items(): signal.signal(number, handler)

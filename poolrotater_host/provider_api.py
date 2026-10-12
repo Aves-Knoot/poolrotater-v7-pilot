@@ -4,6 +4,7 @@ No httpx client or legacy limiter is constructed. Importing this module stays
 stdlib-only for the preview wheel; typed methods are loaded in the full runtime.
 """
 import math
+import logging
 import re
 import threading
 
@@ -47,6 +48,7 @@ class ProviderApiClient:
             try:
                 if name == 'usage_report': return self.usage_report()
                 if name == 'configure_rate_limit': return self.configure_rate_limit(*args, **kwargs)
+                if name == 'chat_join': return self.chat_join(*args, **kwargs)
                 if name == 'configure_profile_cache':
                     return self.configure_profile_cache(*args, **kwargs)
                 if check is not None and not check(): raise AuthError('room_api_authority_changed')
@@ -71,8 +73,6 @@ class ProviderApiClient:
         # Validate before a refresh could make a request on behalf of bad input.
         prepare_api(method, full, bearer='request-validation', params=params, json_body=body)
         mutation = method != 'GET'
-        join = re.fullmatch(r'/api/v2/chat/channels/' + ID + r'/users/(' + ID + r')', full)
-        if join and int(join[1]) != self.auth._active: raise AuthError('provider_api_user_mismatch')
         if before is not None:
             if not callable(before): raise AuthError('provider_api_arguments_refused')
             try: before()
@@ -97,7 +97,7 @@ class ProviderApiClient:
                     raise AuthError('provider_api_mutation_uncertain')
                 if code in (200, 201, 204):
                     sequence = bool(re.fullmatch(r'/api/v2/users/' + ID + r'/scores/best', full)
-                                    or method == 'GET' and full.startswith('/api/v2/chat/channels/'))
+                                    or method == 'GET' and bool(re.fullmatch(r'/api/v2/chat/channels/' + ID + r'/messages', full)))
                     invalid = (code == 201 and not mutation or
                                code != 204 and not self._valid_reply(full, method, value, sequence, params) or
                                code == 204 and full != '/api/v2/chat/ack')
@@ -110,10 +110,13 @@ class ProviderApiClient:
                 if not mutation and attempt == 0:
                     self.auth.invalidate_access_token(token)
                     continue
-                raise AuthError('provider_api_unauthorized')
-            if code == 429: raise AuthError('provider_api_rate_limited')
+                raise AuthError('provider_api_unauthorized', http_status=code)
+            if code == 429: raise AuthError('provider_api_rate_limited', http_status=code)
             if code == 404 and not mutation: return None
-            if code not in (200, 201, 204): raise AuthError('provider_api_unavailable')
+            if code not in (200, 201, 204):
+                operation = 'chat_channel_access' if re.fullmatch(r'/api/v2/chat/channels/' + ID, full) else 'typed_api'
+                logging.getLogger(__name__).warning('provider %s %s refused: HTTP %d', method, operation, code)
+                raise AuthError('provider_api_unavailable', http_status=code)
             if code == 204: return {}
             return value
 
@@ -121,21 +124,46 @@ class ProviderApiClient:
     def _valid_reply(path, method, value, sequence, params):
         if type(value) is not (list if sequence else dict): return False
         if sequence: return len(value) <= params['limit']
+        channel_match = re.fullmatch(r'/api/v2/chat/channels/(' + ID + r')', path)
+        if channel_match:
+            channel = value.get('channel')
+            if type(channel) is not dict or type(channel.get('channel_id')) is not int or channel['channel_id'] != int(channel_match[1]):
+                return False
+            attributes = channel.get('current_user_attributes')
+            return type(attributes) is dict and type(attributes.get('can_message')) is bool
         match = re.fullmatch(r'/api/v2/(beatmaps|beatmapsets)/(' + ID + r')', path)
         if not match: match = re.fullmatch(r'/api/v2/users/(' + ID + r')/(osu|taiko|fruits|mania)', path)
         if match:
             expected = int(match[2] if match[1] in ('beatmaps', 'beatmapsets') else match[1])
             return type(value.get('id')) is int and value['id'] == expected
-        match = re.fullmatch(r'/api/v2/chat/channels/(' + ID + r')/(messages|users/' + ID + r')', path)
+        match = re.fullmatch(r'/api/v2/chat/channels/(' + ID + r')/messages', path)
         if match:
             channel = int(match[1])
-            if method == 'PUT': return type(value.get('channel_id')) is int and value['channel_id'] == channel
             message_id = value.get('message_id')
             return (type(message_id) is int and 0 < message_id < 10**19
                     and ('channel_id' not in value or type(value['channel_id']) is int and value['channel_id'] == channel))
         if re.fullmatch(r'/api/v2/rooms/' + ID + r'/playlist/' + ID + r'/scores', path):
             return type(value.get('scores')) is list and len(value['scores']) <= 1000
         return True
+
+    def chat_join(self, channel_id, user_id):
+        """Check referee chat membership established by MakeRoom/JoinRoom.
+
+        Lazer multiplayer membership is not joined through the generic public
+        channel PUT endpoint. GET returns a channel wrapper and checks membership
+        upstream; never bypass a refusal or replay a room mutation to repair it.
+        """
+        if type(user_id) is not int or user_id != self.auth._active:
+            raise AuthError('provider_api_user_mismatch')
+        if type(channel_id) is not int or not 0 < channel_id < 10**19:
+            raise AuthError('provider_api_endpoint_refused')
+        result = self._req('GET', f'/chat/channels/{channel_id}')
+        if result is None:
+            raise AuthError('provider_chat_access_unavailable', http_status=404)
+        channel = result['channel']
+        if channel['current_user_attributes']['can_message'] is not True:
+            raise AuthError('provider_chat_cannot_message')
+        return channel
 
     def configure_profile_cache(self, seconds):
         from bot.api import OsuApi

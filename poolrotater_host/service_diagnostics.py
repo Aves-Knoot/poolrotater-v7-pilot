@@ -1,4 +1,5 @@
 """Closed diagnostic vocabulary; never forward private exception text."""
+import re
 FAILURE_CODES = frozenset(('referee_snapshot_requires_review',
     'referee_room_owner_requires_review', 'referee_generation_changed',
     'ownership_listing_unavailable', 'ownership_listing_refused',
@@ -146,9 +147,20 @@ AUTHORITY_FAILURE_CODES = frozenset((
     'verified_owner_required',
 ))
 FAILURE_CODES = FAILURE_CODES | AUTHORITY_FAILURE_CODES
+FAILURE_CODES = FAILURE_CODES | frozenset((
+    'provider_api_unavailable', 'provider_api_unauthorized', 'provider_api_rate_limited',
+    'provider_api_mutation_uncertain', 'provider_api_reply_refused',
+    'provider_api_user_mismatch', 'provider_api_endpoint_refused',
+    'provider_chat_access_unavailable', 'provider_chat_cannot_message',
+))
 
 
 def failure_code(error):
+    return failure_details(error)['failure_code']
+
+
+def failure_details(error):
+    """Recover only reviewed codes/numeric status, including exact RPC strings."""
     seen=set();pending=[error]
     while pending and len(seen)<32:
         item=pending.pop()
@@ -158,9 +170,18 @@ def failure_code(error):
         # AuthError.args carries a prose prefix; its stable code is separate.
         # Reading only args hid stopped-review errors as service_failed.
         if isinstance(item, AuthError) and type(item.code) is str and item.code in FAILURE_CODES:
-            return item.code
+            result = {'failure_code': item.code}
+            status = getattr(item, 'http_status', None)
+            if type(status) is int and 100 <= status <= 599: result['failure_http_status'] = status
+            return result
         if (type(getattr(item,'args',None)) is tuple and len(item.args)==1
                 and type(item.args[0]) is str and item.args[0] in FAILURE_CODES):
-            return item.args[0]
+            return {'failure_code': item.args[0]}
+        if type(getattr(item, 'args', None)) is tuple and len(item.args) == 1 and type(item.args[0]) is str:
+            match = re.fullmatch(r'(?:offline )?OAuth: ([a-z_]+)(?: \[HTTP ([1-5][0-9]{2})\])?', item.args[0])
+            if match and match[1] in FAILURE_CODES:
+                result = {'failure_code': match[1]}
+                if match[2]: result['failure_http_status'] = int(match[2])
+                return result
         pending.extend(e for e in (item.__cause__,item.__context__) if isinstance(e,BaseException))
-    return 'service_failed'
+    return {'failure_code': 'service_failed'}

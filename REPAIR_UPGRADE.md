@@ -17,17 +17,19 @@ record; the archive digest and runtime digest are different.
 
 ```bash
 kit_directory=/absolute/path/to/extracted/replacement
-old_runtime_sha=d75450d2d2f06f131dcc9b84b0951be0c471d85c90f82ae440b1e0e113f06ec2
-new_runtime_sha=e4db2fbe600ccc14ad323ba2d6ded80840718744613ff5de876a9765890219ab
+old_runtime_sha=e4db2fbe600ccc14ad323ba2d6ded80840718744613ff5de876a9765890219ab
+new_runtime_sha=a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932
 sudo /usr/bin/python3.12 -I -S "$kit_directory/install.py" \
   --instance first --bundle "$kit_directory/runtime.zip" \
   --sha256 "$new_runtime_sha" --live-pilot \
   --upgrade-from-sha256 "$old_runtime_sha"
 ```
 
-The old digest above identifies the published dev5 runtime. This is the expected
+The old digest above identifies the published dev6 runtime. This is the expected
 starting point for the existing tester whose recovery already committed and whose
-fresh ownership-review passed. For an installation still on dev2, use
+fresh ownership-review passed. For an installation still on dev5, use
+`d75450d2d2f06f131dcc9b84b0951be0c471d85c90f82ae440b1e0e113f06ec2`
+only after confirming that installed version. For an installation still on dev2, use
 `e4bc5bf8fe8d70e3b859cc92f5b126048f53e7b5bc73b31e2661a8d9cd664bad`
 only after confirming that installed version. For an
 installation still on published dev1, the independently recorded old runtime digest
@@ -72,7 +74,7 @@ Do not edit the protected records or bootstrap.
 
 ## 2. Check already committed recovery, or recover a failed creation
 
-### 2A. Recovery already committed — existing dev5 tester
+### 2A. Recovery already committed or journal clean — existing dev6 tester
 
 If the existing recovery for room 4666258 already reported `phase: committed`,
 do not run ownership-clear again. After the code upgrade, run `status`, `support`
@@ -80,6 +82,9 @@ and a fresh `ownership-review`. The expected local status is `room_phase: stoppe
 `ownership_recovery_phase: committed`, and `ownership_status_source:
 journal_and_receipt`. A retained `last_service_room_phase: recovery_required` is
 historical diagnostic data from the dead run, not current ownership authority.
+For dev6's cleanly closed room 4676871, no additional ownership-clear is needed.
+The service's old `recovery_required` observation may describe its failure rather
+than the clean journal. New runs report service `failed` separately from ownership.
 The fresh review should report room1 as `local_clean`; it intentionally retains
 `start_allowed: false` because review itself never grants a startup permit.
 

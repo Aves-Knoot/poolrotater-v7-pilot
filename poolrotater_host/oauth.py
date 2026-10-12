@@ -30,9 +30,13 @@ PENDING_PHASES = {'waiting', 'exchange_pending', 'verifying', 'complete', 'cance
 
 class AuthError(ConfigError):
     """Stable error codes; never expose server bodies, credentials or callbacks."""
-    def __init__(self, code):
+    def __init__(self, code, *, http_status=None):
         self.code = code
-        super().__init__('offline OAuth: ' + code)
+        if http_status is not None and (type(http_status) is not int or not 100 <= http_status <= 599):
+            raise ValueError('invalid diagnostic HTTP status')
+        self.http_status = http_status
+        suffix = '' if http_status is None else f' [HTTP {http_status}]'
+        super().__init__('OAuth: ' + code + suffix)
 
 
 def _secret(value, maximum=16384):

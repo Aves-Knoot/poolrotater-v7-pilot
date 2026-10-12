@@ -1,6 +1,6 @@
 # Full catalogs and a supervised one-room test
 
-Existing dev5 tester: first upgrade using REPAIR_UPGRADE.md section1 and2A. Keep
+Existing dev6 tester: first upgrade using REPAIR_UPGRADE.md section1 and2A. Keep
 the committed recovery; do not repeat ownership-clear or authorize. Start only
 within the agreed one-room observation window, with consenting participants.
 

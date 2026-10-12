@@ -148,6 +148,7 @@ class ProviderRoomHub:
 
 class ProviderRoomApi:
     offline_fixture = False
+    chat_access_guard = True
 
     def __init__(self, auth, backend=None):
         _service(auth, backend)

@@ -29,6 +29,21 @@ COORDINATED_SHARED = frozenset(('poolrotater_host/__init__.py',
     'poolrotater_host/runtime_config.py', 'poolrotater_host/provisioning.py',
     'poolrotater_host/runtime_lifecycle.py', 'poolrotater_host/service_bootstrap.py',
     'rolling/supervisor.py'))
+CHAT_ACCESS_BROKER_REPAIR = (
+    '2b5f1bc54a24b1967cd60e7517bf7e50367caeb0835911a628f4bc414f2a9f19',
+    'ebb0b9190b3cc256873446379bdb3e0ab341e773fe361e2dfa011bdc2eabdf13',
+)
+CHAT_ACCESS_SHARED_REPAIRS = {
+    'rolling/broker.py': CHAT_ACCESS_BROKER_REPAIR,
+    'poolrotater_host/oauth.py': (
+        '057557b712655c0df54be148356753c4ad62db5dfdd3904683b2eb6703be4ece',
+        '64972f4a092e4ad5b6c686d00fd147e1c14c7d2a7462650f9b480b2a91ac3b30',
+    ),
+    'rolling/state.py': (
+        '28cfbc256048954c2dc6f42009f67e251e2228ab2e2db09522e33df508c62bc2',
+        '88b23d4f1fb76928d91015e576595a7a60f4d9a914a41d9a349fbf1a01e0d8aa',
+    ),
+}
 
 
 def require_repair_compatible(before, after):
@@ -50,6 +65,11 @@ def require_repair_compatible(before, after):
             or before['shared'].keys() != after['shared'].keys()):
         raise ConfigError('pilot repair shared inventory changed')
     for key in before['shared']:
+        # Only the exact published -> reviewed chat guard / OAuth diagnostics
+        # are accepted here. Do not authorize arbitrary shared code changes or
+        # relax occupied rolling compatibility. _locked requires stopped workers.
+        if key in CHAT_ACCESS_SHARED_REPAIRS and (before['shared'][key], after['shared'][key]) == CHAT_ACCESS_SHARED_REPAIRS[key]:
+            continue
         if key not in COORDINATED_SHARED and before['shared'][key] != after['shared'][key]:
             raise ConfigError('pilot repair unreviewed shared component changed')
 

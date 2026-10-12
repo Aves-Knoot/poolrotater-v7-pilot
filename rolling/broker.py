@@ -226,7 +226,7 @@ class Broker:
             if name in ("chat_join", "chat_send", "chat_messages"):
                 if not args or int(args[0]) != self.channel or not self.hub.owned:
                     raise ValueError("chat channel ownership mismatch")
-                if name in ("chat_send", "chat_messages"):
+                if name != "chat_join" or getattr(self.owner.api, "chat_access_guard", False) is True:
                     channel = self.channel
                     kwargs["_authority_check"] = lambda: self.active and not self.fenced and self.channel == channel and bool(self.hub.owned)
             if name in ("room", "room_probe", "room_item_scores") and int(args[0]) not in self.hub.owned:
