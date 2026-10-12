@@ -77,7 +77,7 @@ def execute(authentication, action, *, mode='local', reauthorize=False,
         result['provider_client_ownership_verified'] = None
         result['verification_scope'] = 'authorization_checks_expected_identity; startup_rechecks_identity_client_scopes_and_room_ownership'
         if result['authorization_completed'] and result['next_action'] == 'verify_owner_before_use':
-            result['next_action'] = 'start_performs_fresh_owner_verification; retain_state_if_ownership_recovery_required'
+            result['next_action'] = 'start_performs_fresh_identity_client_scopes_and_room_ownership_checks'
         result['start_allowed_reason'] = 'startup_admission_not_evaluated_by_local_status'
     if instructions is not None: result['instructions'] = instructions
     return result

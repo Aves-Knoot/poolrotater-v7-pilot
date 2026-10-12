@@ -1,4 +1,4 @@
-# Repair an existing dev1 or dev2 pilot installation
+# Upgrade an existing pilot installation to the single-room release
 
 Use the replacement installer archive supplied by the maintainer. This procedure
 keeps the same instance, dedicated UID, account/client configuration, authorization,
@@ -17,20 +17,23 @@ record; the archive digest and runtime digest are different.
 
 ```bash
 kit_directory=/absolute/path/to/extracted/replacement
-old_runtime_sha=e4bc5bf8fe8d70e3b859cc92f5b126048f53e7b5bc73b31e2661a8d9cd664bad
-new_runtime_sha=d75450d2d2f06f131dcc9b84b0951be0c471d85c90f82ae440b1e0e113f06ec2
+old_runtime_sha=d75450d2d2f06f131dcc9b84b0951be0c471d85c90f82ae440b1e0e113f06ec2
+new_runtime_sha=e4db2fbe600ccc14ad323ba2d6ded80840718744613ff5de876a9765890219ab
 sudo /usr/bin/python3.12 -I -S "$kit_directory/install.py" \
   --instance first --bundle "$kit_directory/runtime.zip" \
   --sha256 "$new_runtime_sha" --live-pilot \
   --upgrade-from-sha256 "$old_runtime_sha"
 ```
 
-The old digest above identifies the published dev2 runtime. This is the expected
-starting point for the existing tester whose recovery already committed. For an
+The old digest above identifies the published dev5 runtime. This is the expected
+starting point for the existing tester whose recovery already committed and whose
+fresh ownership-review passed. For an installation still on dev2, use
+`e4bc5bf8fe8d70e3b859cc92f5b126048f53e7b5bc73b31e2661a8d9cd664bad`
+only after confirming that installed version. For an
 installation still on published dev1, the independently recorded old runtime digest
 is `5637ca212115ee50bfa4f1b9d6d287dca9a3bf7785ec9b1c771459016a7cda8d`.
 Use that value only after confirming the installation is still dev1. If your
-installed digest differs from both, stop and ask the maintainer. Do not guess.
+installed digest differs from these known versions, stop and ask the maintainer. Do not guess.
 Use your existing instance name instead of `first` if applicable. No preset or
 account change belongs in this transaction.
 
@@ -69,6 +72,8 @@ Do not edit the protected records or bootstrap.
 
 ## 2. Check already committed recovery, or recover a failed creation
 
+### 2A. Recovery already committed — existing dev5 tester
+
 If the existing recovery for room 4666258 already reported `phase: committed`,
 do not run ownership-clear again. After the code upgrade, run `status`, `support`
 and a fresh `ownership-review`. The expected local status is `room_phase: stopped`,
@@ -90,6 +95,11 @@ with `support`. Retain state and hold startup. Do not share token/profile/journa
 files. The old catch-all hid prefixed AuthError codes; this repair reads the stable
 allowlisted code and labels authority/review/recovery stages. The exact cause of
 the external dev2 refusal remains unverified until this fresh result is available.
+
+After a clean review, continue with SINGLE_ROOM_TEST.md. Sections 2B below apply
+only to an unresolved older installation; the existing tester skips them.
+
+### 2B. Unresolved recovery — older installations only
 
 For recovery that has not already committed, use the following steps.
 

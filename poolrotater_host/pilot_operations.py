@@ -310,10 +310,18 @@ def status(instance):
     if result['operator_client_configured']: result['authorization'] = operator(instance, 'status')
     if os.path.lexists(target['root'] / 'state/catalog-installation.json'):
         from .catalog_store import CatalogStore
-        catalogs = CatalogStore.open_pilot_administrative(instance).status()
+        catalogs = CatalogStore.open_pilot_administrative(instance).inspect()
         result.update(catalog_set=catalogs['reference']['set_id'],
                       catalog_modes=sorted(catalogs['reference']['modes']),
                       catalog_recovery_required=catalogs['recovery_required'])
+        result['catalog_rows'] = {mode: {item['name']: item['tables']
+            for item in manifest['files']} for mode, manifest in catalogs['manifests'].items()}
+    authorization = result.get('authorization', {})
+    if authorization.get('authorization_completed'):
+        if result.get('room_phase') == 'recovery_required':
+            authorization['next_action'] = 'resolve_ownership_recovery_before_start'
+        elif result.get('catalog_recovery_required'):
+            authorization['next_action'] = 'resolve_catalog_recovery_before_start'
     return result
 
 
@@ -410,7 +418,7 @@ def support(instance):
     authorization = value.get('authorization', {})
     pacing = authorization.get('provider_pacing', {}).get('counters', {})
     # Copy only bounded counters, not ledger/profile/authority structures.
-    counts = {key: pacing[key] for key in ('attempted', 'dispatched', 'rate_limited')
+    counts = {key: pacing[key] for key in ('attempted', 'dispatched', 'replies', 'uncertain', 'rate_limited')
               if type(pacing.get(key)) is int and 0 <= pacing[key] < 2**63}
     result = {'kind': 'live-pilot-support' if value['execution'] == 'pilot-live' else 'pilot-candidate-support',
             'ok': value['ok'], 'version': value.get('version'), 'execution': value['execution'],
@@ -426,10 +434,14 @@ def support(instance):
             'pending_phase': authorization.get('pending_phase', 'absent'),
             'token_phase': authorization.get('token_phase', 'absent'),
             'next_action': authorization.get('next_action', 'configure_operator_client'),
+            'start_allowed': False,
+            'start_allowed_reason': authorization.get('start_allowed_reason',
+                'startup_admission_not_evaluated_by_local_status'),
+            'startup_verification_required': authorization.get('startup_verification_required', True),
             'pacing_counters': counts, 'catalog_modes': value.get('catalog_modes', []),
+            'catalog_rows': value.get('catalog_rows', {}),
             'catalog_recovery_required': value.get('catalog_recovery_required', False),
             'local_collection_or_analysis': False}
-
     for key in ('last_service_room_phase', 'service_observation_current',
                 'ownership_recovery_phase', 'ownership_status_source', 'failure_code'):
         if key in value: result[key] = value[key]

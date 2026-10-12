@@ -599,7 +599,12 @@ class CatalogStore:
 
     def import_local(self, repository, modes):
         with self.stopped():
-            self.stage(repository, modes)
+            before = self.current()
+            staged = self.stage(repository, modes)
+            # An authenticated unchanged set has no candidate transaction.
+            # Do not attempt commit or rewrite recovery/activation history.
+            if staged == before:
+                return before
             return self.commit()
 
 
