@@ -1,0 +1,194 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PoolRotater M4 ratings extension",
+    "version": "1.0.0",
+    "description": "Explicit migrated hub, dedicated scoped host network credentials. Immutable capture, canonical state and verified aggregate snapshots. No provider credentials or remote admin."
+  },
+  "paths": {
+    "/v1/events/batches": {
+      "post": {
+        "description": "Up to500 immutable events, 512KiB uncompressed JSON. Per-event durable acknowledgment, independent of batch ID. Authentication requires ratings-submit; observe-only quarantines. A malformed event does not block later events. Accepted means durable ingestion, not aggregate inclusion.",
+        "security": [
+          {
+            "networkBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../schemas/ratings.v1.schema.json#/$defs/Batch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bounded outcomes indexed to submitted events; event_id/phase/reason/revision/watermark; processing_watermark; aggregate_inclusion_confirmed:false"
+          },
+          "401": {
+            "description": "Missing/expired credentials"
+          },
+          "403": {
+            "description": "Scope/policy/revocation refusal"
+          },
+          "413": {
+            "description": "Body too large"
+          },
+          "429": {
+            "description": "Global request quota; Retry-After"
+          },
+          "503": {
+            "description": "Storage/migration unavailable; retry same event IDs"
+          }
+        }
+      }
+    },
+    "/v1/ratings/state-query": {
+      "post": {
+        "description": "Up to100 event IDs already handled for this host. Resolves only their player/map keys. Unknown or foreign event IDs return known:false, not arbitrary voter enumeration. ratings-query is granted only to contributing hosts. 64KiB request bound.",
+        "security": [
+          {
+            "networkBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../schemas/ratings.v1.schema.json#/$defs/StateQuery"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-event known state, revision/rating/suppression for permitted keys"
+          },
+          "401": {
+            "description": "Credential refusal"
+          },
+          "403": {
+            "description": "Scope/policy refusal"
+          },
+          "503": {
+            "description": "Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/ratings/stream-state": {
+      "post": {
+        "description": "Authenticated ratings-query scope, closed previous_host_id. Returns same-stream high-water and exact epoch/identity. Replacement replay requires an explicit root-local link to a revoked matching operator/account/installation/generation. No remote lineage administration.",
+        "security": [
+          {
+            "networkBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok/protocol_version/host_id/server_epoch/installation_id/generation/last_sequence"
+          },
+          "403": {
+            "description": "Scope/policy/revocation refusal"
+          },
+          "409": {
+            "description": "Unreviewed lineage"
+          }
+        }
+      }
+    },
+    "/v1/ratings/snapshots/current": {
+      "get": {
+        "description": "Current complete canonical manifest. Requires ratings-read. Up to100000 maps and200 pages. Watermarks are processing and policy floors, not upload confirmations.",
+        "security": [
+          {
+            "networkBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified canonical aggregate data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/ratings.v1.schema.json#/$defs/SnapshotManifest"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Scope/policy/revocation refusal"
+          },
+          "503": {
+            "description": "Unavailable or pending migration/policy"
+          }
+        }
+      }
+    },
+    "/v1/ratings/snapshot-page": {
+      "get": {
+        "description": "Immutable verified page. Requires ratings-read. Exact content_id SHA256 and index query parameters. Up to500 sorted maps and512KiB. Unknown/pruned versions require refetching current manifest.",
+        "security": [
+          {
+            "networkBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified canonical aggregate data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/ratings.v1.schema.json#/$defs/SnapshotPage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Scope/policy/revocation refusal"
+          },
+          "503": {
+            "description": "Unavailable or pending migration/policy"
+          },
+          "404": {
+            "description": "Unknown/pruned immutable version"
+          }
+        },
+        "parameters": [
+          {
+            "name": "content_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          {
+            "name": "index",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 199
+            }
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "networkBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "M3 host network credential with explicit M4 scopes, never an osu! OAuth token."
+      }
+    }
+  }
+}

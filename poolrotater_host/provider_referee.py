@@ -84,7 +84,7 @@ class ProviderRefereeClient:
         deadline = time.monotonic()+5
         with gate.admission(deadline):
             self._boundary()
-            gate.exchange_started()
+            gate.exchange_started(kind='referee')
             try:
                 if command is None:
                     kwargs = {'execution': self.auth.execution} if port is None else {}

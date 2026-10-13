@@ -74,8 +74,6 @@ def validate(config: dict) -> dict:
     rooms = config['rooms']
     if not isinstance(rooms, list) or not 1 <= len(rooms) <= 4:
         raise ConfigError('configure between one and four rooms')
-    if config['execution'] == 'pilot-live' and len(rooms) != 1:
-        raise ConfigError('live pilot requires exactly one room')
     aliases = set()
     for room in rooms:
         fields(room, ('alias', 'preset', 'sr_min', 'sr_max', 'language', 'catalog'), 'room')

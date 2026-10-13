@@ -63,6 +63,7 @@ def public_room_links(room_id: int, join_base_url: str = "") -> tuple[str, str]:
 # advertised as moderator commands by LobbyBot.  Admin-only commands are
 # rejected at the Discord edge so they never enter the lobby command queue.
 _DISCORD_MOD_COMMANDS = frozenset({
+    "kick", "ban", "unban", "bans",
     "help", "commands", "pp",
     "settings", "start", "abort", "forceskip", "softrestart",
     "usercommands", "silence", "voteskip", "ppannounce", "aichat",

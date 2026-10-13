@@ -23,6 +23,11 @@ def authorization_diagnostic(authentication):
     except Exception:
         return {'ok': False, 'execution': authentication.execution, 'live_ready': False,
                 'next_action': 'review_private_state_or_stop_owner'}
+    return diagnostic_phases(result)
+
+
+def diagnostic_phases(result):
+    """Format already-checked local phases; no authority construction or I/O."""
     phase = result['pending_phase']
     if result['candidate_recovery_available']:
         action = 'recover_candidate_identity'

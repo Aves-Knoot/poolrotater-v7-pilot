@@ -1,6 +1,8 @@
 """Closed diagnostic vocabulary; never forward private exception text."""
 import re
-FAILURE_CODES = frozenset(('referee_snapshot_requires_review',
+FAILURE_CODES = frozenset(('invalid_provider_budget_loader', 'provider_budget_requires_review',
+    'provider_budget_changed', 'owner_provider_budget_required', 'owner_provider_budget_mismatch',
+    'owner_provider_budget_requires_completed_adoption', 'referee_snapshot_requires_review',
     'referee_room_owner_requires_review', 'referee_generation_changed',
     'ownership_listing_unavailable', 'ownership_listing_refused',
     'provider_existing_rooms_require_review', 'referee_unauthorized',
@@ -34,6 +36,12 @@ FAILURE_CODES = frozenset(('referee_snapshot_requires_review',
 
 # Reviewed literal local/provider authority codes; never accept arbitrary text.
 AUTHORITY_FAILURE_CODES = frozenset((
+    'invalid_provider_budget_loader',
+    'provider_budget_requires_review',
+    'provider_budget_changed',
+    'owner_provider_budget_required',
+    'owner_provider_budget_mismatch',
+    'owner_provider_budget_requires_completed_adoption',
     'access_token_rejected',
     'account_in_use',
     'account_permission_denied',

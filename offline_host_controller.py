@@ -59,14 +59,28 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
             # The administrator uses this same owner lease for a stopped switch.
             # Recheck after acquisition to close a preflight/activation race.
             runtime_validator(release)
+        if os.path.lexists(contained(root, 'state/owner-migration.json')):
+            from poolrotater_host.provider_budget import require_owner_adoption
+            gate_factory = getattr(authentication, '_require_gate', None)
+            require_owner_adoption(root, gate_factory() if callable(gate_factory) else None)
         # Identity verification and ownership precede configuration/store/room creation.
-        bridge = RuntimeConfigBridge(root, account_id=account_id)
+        capabilities = ('provider_chat_websocket',) if callable(getattr(api, 'create_chat_websocket', None)) else ()
+        bridge = RuntimeConfigBridge(root, account_id=account_id, integration_capabilities=capabilities)
         directory = contained(root, 'state/rolling')
         directory.mkdir(mode=0o700, exist_ok=True)
         if directory.stat().st_uid != os.geteuid() or directory.stat().st_mode & 0o077:
             raise ConfigError('runtime ownership directory must be private')
         from rolling.supervisor import RollingSupervisor
-        supervisor = RollingSupervisor(bridge.load_rooms(), api, hub, queue.Queue(), None,
+        rooms = bridge.load_rooms()
+        chat = None
+        if any(room.get('chat_websocket_enabled') is True for room in rooms):
+            factory = getattr(api, 'create_chat_websocket', None)
+            if not callable(factory):
+                raise ConfigError('configured chat websocket requires its qualified provider adapter')
+            chat = factory(rooms)
+            if chat is None:
+                raise ConfigError('configured chat websocket was not constructed')
+        supervisor = RollingSupervisor(rooms, api, hub, queue.Queue(), chat,
                                        release, root, health_seconds=.15, startup_timeout=35,
                                        config_loader=bridge.load_rooms,
                                        settings_path=contained(root, 'config/supervisor.json'),
@@ -77,6 +91,9 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
         try:
             hub.connect()
             supervisor.shared.start_dispatch()
+            supervisor.discord.start()
+            if supervisor.chat_websocket:
+                supervisor.chat_websocket.start()
             yield supervisor
         finally:
             supervisor.stopping.set()
@@ -100,6 +117,8 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
                         errors.append(exc)
                 supervisor.write_status(force=True)
             finally:
+                if supervisor.chat_websocket:
+                    supervisor.chat_websocket.stop()
                 supervisor.discord.stop()
                 for modlog in supervisor.modlogs.values():
                     modlog.stop(timeout=1)

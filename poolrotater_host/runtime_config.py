@@ -16,13 +16,15 @@ from .config import ConfigError, PRESETS, contained
 from .layout import atomic_json, checked_root, file_lease, load, read_json
 from .layout import DIRECTORIES
 from .catalog_store import resolved_catalogs, settings_for, POINTER
+from .owner_settings import GAMEPLAY_KEYS, RECORD as GAMEPLAY_RECORD, load_overrides, validate_settings
+from . import owner_integrations
 
 EDITABLE_BASE = {'sr_min', 'sr_max', 'auto_difficulty', 'default_response_language'}
 STATE_FILE = 'state/runtime-config.json'
 ROOM_DIRECTORY = 'config/rooms'
 
 
-def render(root: Path, *, account_id=None) -> dict:
+def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=None) -> dict:
     root = checked_root(root)
     marker, config = load(root)
     expected = config['account']['expected_user_id']
@@ -32,11 +34,21 @@ def render(root: Path, *, account_id=None) -> dict:
         if expected is not None and account_id != expected:
             raise ConfigError('account identity does not match expected_user_id')
     account = account_id if account_id is not None else expected
-    resolved = resolved_catalogs(root)
+    if room_alias is not None and room_alias not in {room['alias'] for room in config['rooms']}:
+        raise ConfigError('unknown configured room')
+    resolved = resolved_catalogs(root, room_alias=room_alias, reference=catalog_reference)
     live = config['execution'] == 'pilot-live'
+    from .ratings.migration import capture_enabled
+    prepared_ratings = capture_enabled(root)
+    from .ratings.reader import profile as rating_profile
+    reader=rating_profile(root)
+    gameplay = load_overrides(root, marker, config)
+    integrations = owner_integrations.load(root, marker, config)
     rooms = []
     for room in config['rooms']:
         alias = room['alias']
+        if room_alias is not None and alias != room_alias:
+            continue
         spec = PRESETS[room['preset']]
         catalog = str(contained(root, room['catalog']))
         settings = {
@@ -54,6 +66,9 @@ def render(root: Path, *, account_id=None) -> dict:
             'max_length': 240, 'min_passcount': 1000, 'pool_limit': 200,
             'max_map_age_years': 0,
             'ratings_db': str(contained(root, 'state/controller-ratings.db')),
+            'ratings_schema_prepared': prepared_ratings,
+            'ratings_reader_mode':reader['mode'],'ratings_reader_root':str(root),
+            'ratings_reader_epoch':reader['server_epoch'],
             'api_rate_db': str(contained(root, 'state/controller-api-rate.db')),
             'process_control_db': str(contained(root, 'state/controller-process-control.db')),
             'lazer_coordinator_db': str(contained(root, 'state/controller-lazer-coordinator.db')),
@@ -78,11 +93,13 @@ def render(root: Path, *, account_id=None) -> dict:
             'discord_invite_url': '', 'discord_invite_reminder_seconds': 0,
             'ai_enabled': False, 'ai_api_key_env': 'POOLROTATER_DISABLED_AI',
             'ai_context_file': '', 'map_pp_display_enabled': False,
-            'hard_restart_interval_minutes': 0,
             'allowed_mods': [], 'required_mods': [], 'freestyle': False,
         }
         if resolved is not None:
             settings.update(settings_for(room, resolved))
+        if room['alias'] in gameplay:
+            settings.update(gameplay[room['alias']]['settings'])
+        settings.update(owner_integrations.settings(root, integrations, room['alias']))
         rooms.append({'alias': alias, 'preset': room['preset'],
                       'config_path': str(contained(root, f'{ROOM_DIRECTORY}/{alias}.json')),
                       'settings': settings})
@@ -95,9 +112,21 @@ def render(root: Path, *, account_id=None) -> dict:
                         'rooms': [{k: r[k] for k in ('alias', 'preset', 'catalog')} for r in config['rooms']]}}
 
 
+def render_room(root: Path, alias, *, account_id=None, catalog_reference=None, catalog_set=None):
+    """Worker-local reload without broadening its installed SQLite authority."""
+    if catalog_reference is not None:
+        if not isinstance(catalog_reference, dict) or catalog_reference.get('set_id') != catalog_set:
+            raise ConfigError('worker catalog reference/set mismatch')
+    elif catalog_set is not None:
+        raise ConfigError('worker pinned catalog reference is missing')
+    native = render(root, account_id=account_id, room_alias=alias,
+                    catalog_reference=catalog_reference)
+    return native['rooms'][0]
+
+
 def pinned_keys(settings):
     # Installation/account/transport paths remain pinned; gameplay tuning does not.
-    return set(settings) - EDITABLE_BASE - {
+    return set(settings) - EDITABLE_BASE - GAMEPLAY_KEYS - {
         'max_length', 'min_passcount', 'pool_limit', 'max_map_age_years',
     }
 
@@ -131,21 +160,25 @@ def validate_room_data(data: dict, base: dict):
         raise ConfigError('auto_difficulty must be boolean')
     if base['ruleset_id'] == 3 and data.get('auto_difficulty', False):
         raise ConfigError('Mania requires fixed difficulty')
+    preset = ('mania-' + str(base['mania_keys']) + 'k') if base['ruleset_id'] == 3 else 'standard-auto'
+    validate_settings({k: v for k, v in data.items() if k in GAMEPLAY_KEYS}, preset=preset)
 
 
 class RuntimeConfigBridge:
     """Private generated room files retain the existing live preference machinery."""
 
-    def __init__(self, root: Path, *, account_id=None):
+    def __init__(self, root: Path, *, account_id=None, integration_capabilities=()):
         self.root = checked_root(root)
         self.account_id = account_id
+        self.integration_capabilities = frozenset(integration_capabilities)
         self.initial = render(self.root, account_id=account_id)
         self._cached_configs = None
         self._cached_stamp = None
 
     def stamp(self):
-        names = ['.poolrotater-host.json', 'config/host.json', STATE_FILE,
-                 f'{ROOM_DIRECTORY}/universal.json']
+        names = ['.poolrotater-host.json', 'config/host.json', STATE_FILE, GAMEPLAY_RECORD,
+                 owner_integrations.RECORD, owner_integrations.ENVIRONMENT_FILE,
+                 f'{ROOM_DIRECTORY}/universal.json', 'state/rating-migration.json']
         names += [f'{ROOM_DIRECTORY}/{r["alias"]}.json' for r in self.initial['rooms']]
         paths = [contained(self.root, n) for n in names]
         paths += [Path(r['settings']['farm_db'] or r['settings']['mania_db']) for r in self.initial['rooms']]
@@ -178,6 +211,8 @@ class RuntimeConfigBridge:
         return tuple(result)
 
     def materialize(self) -> list[dict]:
+        from .owner_migration import admission as owner_admission
+        owner_admission(self.root)
         current = render(self.root, account_id=self.account_id)
         identity = ('installation_id', 'generation', 'account_id', 'binding')
         if any(current[k] != self.initial[k] for k in identity):
@@ -216,7 +251,29 @@ class RuntimeConfigBridge:
                     raise ConfigError('refusing unrecognized existing runtime room configuration')
                 data = read_json(path) if path.exists() else copy.deepcopy(base)
                 if old is not None:
-                    additions = {'standard_dt_db', 'standard_catalog_binding'} if current['catalog_set'] else set()
+                    additions = {'standard_dt_db', 'standard_catalog_binding',
+                                 'mania_convert_validation_db'} if current['catalog_set'] else set()
+                    if room['alias'] in load_overrides(self.root, *load(self.root)):
+                        additions.update(GAMEPLAY_KEYS)
+                    if owner_integrations.load(self.root, *load(self.root)) is not None:
+                        additions.update(owner_integrations.INTEGRATION_KEYS)
+                        additions.update(owner_integrations.PATHS)
+                    if base['ratings_schema_prepared']:
+                        # Only a completed stopped ledger migration allows the
+                        # new managed storage field on an existing runtime base.
+                        additions.add('ratings_schema_prepared')
+                        additions.update(('ratings_reader_mode','ratings_reader_root','ratings_reader_epoch'))
+                    # Previous pilot bridges injected this unused spelling.
+                    # The native controller consumes hard_restart_interval_seconds;
+                    # accept only the exact old inert zero, never erase an edit.
+                    if 'hard_restart_interval_minutes' in old and 'hard_restart_interval_minutes' not in base:
+                        if (type(old['hard_restart_interval_minutes']) is not int
+                                or old['hard_restart_interval_minutes'] != 0
+                                or type(data.get('hard_restart_interval_minutes')) is not int
+                                or data['hard_restart_interval_minutes'] != 0):
+                            raise ConfigError('obsolete pilot field changed; coordinated review required')
+                        old=copy.deepcopy(old);old.pop('hard_restart_interval_minutes')
+                        data.pop('hard_restart_interval_minutes')
                     if (not isinstance(old, dict) or set(old) - set(base)
                             or set(base) - set(old) - additions):
                         raise ConfigError('runtime base schema changed; coordinated reconfiguration required')
@@ -246,6 +303,11 @@ class RuntimeConfigBridge:
         return current['rooms']
 
     def load_rooms(self) -> list[dict]:
+        from .owner_migration import admission as owner_admission
+        owner_admission(self.root)
+        marker, host = load(self.root)
+        owner_integrations.admission(self.root, owner_integrations.load(self.root, marker, host),
+                                     capabilities=self.integration_capabilities)
         if self._cached_configs is not None and self.stamp() == self._cached_stamp:
             return copy.deepcopy(self._cached_configs)
         before_stamp = self.stamp()

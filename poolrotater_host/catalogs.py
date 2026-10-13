@@ -45,6 +45,14 @@ def inspect_catalog(path: Path, preset: str) -> dict:
 
 
 def make_pool(root: Path, room: dict, *, ratings: Path | None = None, resolved=None):
+    from .ratings.reader import profile,NetworkReader
+    from .ratings import reader as ratings_reader
+    read_profile=profile(root)
+    if read_profile['mode']=='network':
+        from .network.contracts import require
+        require(ratings_reader.NETWORK_CONSUMPTION_QUALIFIED,'ratings_shadow_qualification_required')
+        reader=NetworkReader(root,server_epoch=read_profile['server_epoch'])
+    else:reader=None
     # Imports are deferred: setup/config/status do not need the legacy runtime.
     from bot.pool import MapPool
     from bot.mania_pool import ManiaPool
@@ -58,7 +66,7 @@ def make_pool(root: Path, room: dict, *, ratings: Path | None = None, resolved=N
         spec = PRESETS[room['preset']]
         options = dict(sr_min=room['sr_min'], sr_max=room['sr_max'], max_length=240,
                        min_passcount=1000, max_map_age_years=0, limit=200,
-                       ratings_db=str(ratings) if ratings is not None else None)
+                       ratings_db=str(ratings) if ratings is not None else None,ratings_reader=reader)
         if spec['ruleset'] == 3:
             pool = ManiaPool(cfg['mania_db'], mania_keys=spec['keys'],
                              mania_farm_enabled=cfg['mania_farm_enabled'], mania_farm_db=cfg['mania_farm_db'], **options)
@@ -78,7 +86,7 @@ def make_pool(root: Path, room: dict, *, ratings: Path | None = None, resolved=N
     spec = PRESETS[room['preset']]
     options = dict(sr_min=room['sr_min'], sr_max=room['sr_max'], max_length=240,
                    min_passcount=1000, max_map_age_years=0, limit=200,
-                   ratings_db=str(ratings) if ratings is not None else None)
+                   ratings_db=str(ratings) if ratings is not None else None,ratings_reader=reader)
     if spec['ruleset'] == 3:
         pool = ManiaPool(str(path), mania_keys=spec['keys'], mania_farm_enabled=False, mania_farm_db='', **options)
     else:

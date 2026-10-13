@@ -25,6 +25,8 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+from .exclusions import ExclusionList
+from .moderation import BanStore
 from statistics import median
 
 from .pool import (AUTO_SR_AUTO_MIN_CAP, AUTO_SR_FLOOR, AUTO_SR_HALF_WIDTH,
@@ -141,6 +143,10 @@ _COMMAND_HELP_ALIASES = {
     "average": "ok", "alright": "ok",
 }
 _MOD_COMMAND_HELP = {
+    "kick": ("kick <username|id>", "Remove a player from this room; they may rejoin."),
+    "ban": ("ban <username|id> [30m|24h|7d] [| reason]", "Exclude a player from all four rooms; permanent unless a duration is supplied."),
+    "unban": ("unban <username|id>", "Remove a persistent project ban."),
+    "bans": ("bans [page]", "List persistent project bans."),
     "settings": ("settings", "Show current room settings."),
     "abort": ("abort", "Stop the current match."),
     "forceskip": ("forceskip", "Skip the current map without a vote."),
@@ -640,7 +646,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         self.discord_reports = DiscordReports(cfg.get("ratings_db", "state/ratings.db"), ruleset_id=mode)
 
         self.ready: set[int] = set()          # user ids currently readied
-        self.ratings = RatingStore(cfg.get("ratings_db", "ratings.db"))
+        from poolrotater_host.ratings.reader import for_settings as rating_reader
+        self.rating_reader=rating_reader(cfg)
+        self.pool.ratings_reader=self.rating_reader
+        self.ratings = RatingStore(cfg.get("ratings_db", "ratings.db"),
+                                   initialize=not cfg.get("ratings_schema_prepared", False),reader=self.rating_reader)
         self._init_player_languages()
         # Keep persistent per-player PP gains in the same SQLite file as
         # ratings/performance evidence, but in a separate table. This starts
@@ -648,6 +658,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         # room + playlist item + user so a score report can never count twice.
         self.pp_stats = PPStatsStore(cfg.get("ratings_db", "ratings.db"), ruleset_id=mode)
         self.last_played_map = None           # what map feedback refers to
+        self._rating_context = {}
         self._rating_window_until = 0.0
         self._rating_prompt_pending = False
         # MatchCompleted and playlist promotion are separate referee events and
@@ -838,10 +849,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         path = self._config_path
         try:
             if self.cfg.get('_host_root'):
-                from poolrotater_host.runtime_config import render
+                from poolrotater_host.runtime_config import render_room
                 from poolrotater_host.layout import read_json
-                native = render(Path(self.cfg['_host_root']), account_id=self.cfg.get('_authenticated_user_id'))
-                native_room = next(r for r in native['rooms'] if r['alias'] == self.cfg['_instance_name'])
+                native_room = render_room(Path(self.cfg['_host_root']), self.cfg['_instance_name'],
+                    account_id=self.cfg.get('_authenticated_user_id'),
+                    catalog_reference=self.cfg.get('_host_catalog_reference'),
+                    catalog_set=self.cfg.get('_host_catalog_set'))
                 if path != Path(native_room['config_path']):
                     raise ValueError('unexpected host-managed configuration path')
             if path.exists():
@@ -2640,6 +2653,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 min_passcount=int(desired.get("min_passcount", self.pool.min_passcount)),
                 limit=int(desired.get("pool_limit", self.pool.limit)),
                 ratings_db=str(self.cfg.get("ratings_db", "state/ratings.db")),
+                ratings_reader=getattr(self,'rating_reader',None),
                 stream_enabled=bool(desired.get("stream_enabled", True)),
                 stream_share=float(desired.get("stream_share", 0.5)),
                 stream_min_score=float(desired.get("stream_min_score", 0.5)),
@@ -3153,9 +3167,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         try:
             if self.cfg.get('_host_root'):
                 from poolrotater_host.layout import read_json
-                from poolrotater_host.runtime_config import render, validate_room_data
-                native = render(Path(self.cfg['_host_root']), account_id=self.cfg.get('_authenticated_user_id'))
-                room = next(r for r in native['rooms'] if r['alias'] == self.cfg['_instance_name'])
+                from poolrotater_host.runtime_config import render_room, validate_room_data
+                room = render_room(Path(self.cfg['_host_root']), self.cfg['_instance_name'],
+                    account_id=self.cfg.get('_authenticated_user_id'),
+                    catalog_reference=self.cfg.get('_host_catalog_reference'),
+                    catalog_set=self.cfg.get('_host_catalog_set'))
                 if self._config_path != Path(room['config_path']):
                     raise ValueError('unexpected host-managed configuration path')
                 room_data = read_json(self._config_path)
@@ -4158,6 +4174,15 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         is_moderator = self._is_moderator(user_id)
         is_privileged = is_moderator  # admins inherit moderator permissions
 
+        if self._is_project_banned(user_id) and not is_privileged:
+            return
+        if cmd in {'kick','ban','unban','bans'}:
+            if not is_moderator:
+                self.say('Moderator permission required.')
+                return
+            self._moderation_command(cmd,user_id,text[len(parts[0]):].strip())
+            return
+
         # Normalize Mania aliases before the public flood guard, so aliases
         # retain the same permissions and rate limits as canonical commands.
         if self.cfg.get("ruleset_id", 0) == 3:
@@ -4253,6 +4278,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     f"{p}silence on/off {p}voteskip on/off "
                     f"{p}ppannounce on/off"
                 )
+                self.say(f"Moderation: {p}kick <user> | {p}ban <user> [30m|24h|7d] [| reason] | {p}unban <user> | {p}bans [page]")
                 self.say(
                     f"Mod tune: {p}range <min> <max> {auto_help}{p}length/<maxlength> <s> "
                     f"{p}maxage <years|off> {p}countdown <s> "
@@ -4640,6 +4666,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 map_origin=('standard-dt' if getattr(self.last_played_map, 'is_dt', False)
                             else getattr(self.last_played_map, "map_origin", "unknown")),
                 key_count=getattr(self.last_played_map, "mania_keys", None),
+                context=getattr(self, '_rating_context', {}),
             )
             if first:
                 if rating == 0:
@@ -6074,6 +6101,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         self._early_abort_pending = None
         self._start_immediate_retry = False
         self.last_played_map = None
+        self._rating_context = {}
         self._rating_window_until = 0.0
         self._rating_prompt_pending = False
         self._recent_rating_map_ids.clear()
@@ -6763,6 +6791,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
     def _next_downloadable_map(self, max_attempts: int = 30, *, native_only=False):
         """Pick until a map is either confirmed/assumed downloadable."""
+        if not self._refresh_operator_exclusions():
+            return None
         for _ in range(max(1, int(max_attempts))):
             if callable(getattr(self.pool, 'reserve_playlist_maps', None)):
                 reserved = [m.beatmap_id for _item_id, m in getattr(self, "queued", [])]
@@ -6814,6 +6844,61 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if getattr(self.pool, 'dt_full', False) and not native_only:
             return self._next_downloadable_map(max_attempts, native_only=True)
         return None
+
+    def _refresh_operator_exclusions(self):
+        path = str(self.cfg.get('beatmap_exclusions_file') or '').strip()
+        if not path:
+            return True
+        policy = getattr(self, '_operator_exclusion_policy', None)
+        if policy is None or str(policy.path) != path:
+            policy = self._operator_exclusion_policy = ExclusionList(path)
+        policy.refresh()
+        if not policy.valid:
+            return False  # A configured policy must load before any new map.
+        apply = getattr(self.pool, 'apply_operator_exclusions', None)
+        if not callable(apply):
+            return False
+        changed = apply(policy.ids)
+        if changed:
+            self._operator_exclusion_audit_pending = True
+            log.info('Hot-loaded %d operator chart exclusions', len(policy.ids))
+        return True
+
+    def _operator_map_allowed(self, m):
+        if not self.cfg.get('beatmap_exclusions_file'):
+            return True
+        return (self._refresh_operator_exclusions()
+                and m.beatmap_id not in self._operator_exclusion_policy.ids)
+
+    def _cleanup_operator_exclusions(self):
+        """Only an audited idle playlist can be edited; never touch gameplay."""
+        if not self.cfg.get('beatmap_exclusions_file'):
+            return True
+        if self.state not in (IDLE, SCORING):
+            return True
+        blocked = getattr(self.pool, '_operator_excluded', set())
+        current = self._server_playlist_items.get(self.current_item_id, {})
+        if getattr(self.current_map, 'beatmap_id', None) in blocked:
+            if not current or current.get('played') or current.get('expired'):
+                return False
+            replacement = self._next_downloadable_map()
+            if replacement is None:
+                log.warning('Excluded current chart has no eligible replacement; holding start')
+                return False
+            self.apply_map(replacement, announce=True)
+        for item_id, m in list(self.queued):
+            if m.beatmap_id not in blocked:
+                continue
+            known = self._server_playlist_items.get(item_id, {})
+            if item_id is None or not known or known.get('played') or known.get('expired'):
+                return False
+            self._referee_operation_with_rejoin('RemovePlaylistItem',
+                lambda item_id=item_id: self.hub.remove_playlist_item(self.room_id, item_id))
+            self._server_playlist_items.pop(item_id, None)
+            self._playlist_maps.pop(item_id, None)
+            self.queued = [pair for pair in self.queued if pair[0] != item_id]
+        self._operator_exclusion_audit_pending = False
+        return True
 
     def _dt_fixed_mods_supported(self):
         return not (set(self.cfg.get('required_mods', [])) - {'NF'})
@@ -7455,6 +7540,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if not self.room_id:
             return False
 
+        if not self._refresh_operator_exclusions():
+            return False
+        exclusion_audit = getattr(self, '_operator_exclusion_audit_pending', False)
+        if exclusion_audit and not fetch_remote and self.state in (IDLE, SCORING):
+            return self.reconcile_playlist(reason, fetch_remote=True,
+                                           ensure_depth=ensure_depth, trim_extras=trim_extras)
         if (getattr(self, '_dt_full_refresh_pending', False) and not fetch_remote
                 and ensure_depth and self.state in (IDLE, SCORING)):
             return self.reconcile_playlist(reason, fetch_remote=True,
@@ -7500,7 +7591,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
             if room:
                 self._sync_from_room_snapshot(room, reason)
-            elif getattr(self, '_dt_full_refresh_pending', False):
+            elif getattr(self, '_dt_full_refresh_pending', False) or exclusion_audit:
                 return False
             self._last_playlist_audit = time.time()
 
@@ -7513,6 +7604,18 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
         if self._standard_edit_audit_pending():
             log.debug('Standard edit awaits a full matching server snapshot; postponing start')
+            return False
+        try:
+            if not self._cleanup_operator_exclusions():
+                return False
+        except HubTransportError:
+            raise
+        except Exception as exc:
+            self._operator_exclusion_audit_pending = True
+            self._playlist_dirty = True
+            log.warning('Exclusion cleanup held for fresh audit: %s', exc)
+            return False
+        if self._standard_edit_audit_pending():
             return False
         if not self._cleanup_disabled_dt():
             return False
@@ -7623,6 +7726,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         return rules
 
     def apply_map(self, m, announce: bool = False) -> None:
+        if not self._operator_map_allowed(m):
+            raise ValueError('Chart is excluded by operator policy or quarantine')
         rules = self._playlist_rules_for_map(m)
         previous_id = self.current_item_id
         previous = dict(self._server_playlist_items.get(previous_id, {}))
@@ -8455,6 +8560,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
     def _append_future_map(self, candidate) -> int | None:
         """Append one known map and retain its playlist identity if returned."""
+        if not self._operator_map_allowed(candidate):
+            raise ValueError('Chart is excluded by operator policy or quarantine')
         rules = self._playlist_rules_for_map(candidate)
         resp = self._referee_operation_with_rejoin(
             "AddPlaylistItem",
@@ -8480,6 +8587,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         future entry is removed and appended again in its original order.
         This makes the replay next without losing the existing queue.
         """
+        if not self._operator_map_allowed(replay_map):
+            self.say('That map is excluded from this lobby.')
+            return False
         if getattr(replay_map, 'is_dt', False):
             if not self._dt_selection_enabled():
                 self.say('Enable DT with .dt before replaying a DT map.')
@@ -9049,6 +9159,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         return {
             uid for uid, info in self.players.items()
             if uid not in excluded
+            and not self._is_project_banned(uid)
             and info.get("status", "idle") != "spectating"
         }
 
@@ -10203,8 +10314,155 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         for uid, info in list(self.players.items()):
             self._flush_player_lobby_time(uid, info)
 
+    def _ban_store(self):
+        path=getattr(self,'cfg',{}).get('moderation_bans_file')
+        if not path:
+            return None
+        store=getattr(self,'_project_ban_store',None)
+        if store is None or str(store.path)!=str(path):
+            store=self._project_ban_store=BanStore(path)
+        store.refresh()
+        return store
+
+    def _moderation_protected(self, uid):
+        return uid in self.non_gameplay_user_ids() or self._is_moderator(uid)
+
+    def _is_project_banned(self, uid):
+        store=self._ban_store()
+        return bool(store and (not store.loaded or uid in store.bans)
+                    and not self._moderation_protected(uid))
+
+    def _kick_moderation_target(self, uid):
+        if self._moderation_protected(uid) or not self.room_id:
+            return False
+        # The existing broker restricts KickPlayer to the worker's owned room.
+        self._referee_operation_with_rejoin('KickPlayer',lambda:self.hub.kick(self.room_id,uid))
+        log.warning('MODERATION kick requested user=%s room=%s',uid,self.room_id)
+        return True
+
+    def _enforce_project_bans(self):
+        store=self._ban_store()
+        if not store or not store.loaded or not self.room_id:
+            return
+        attempts=getattr(self,'_ban_kick_attempts',{})
+        self._ban_kick_attempts=attempts
+        for uid in list(self.players):
+            if uid not in store.bans or self._moderation_protected(uid):
+                continue
+            proof=getattr(self,'_ban_presence_proofs',{}).get(uid,0)
+            previous=attempts.get(uid)
+            if previous and previous[0]==self.room_id:
+                if time.monotonic()-previous[1]<30 or (previous[3] and proof<=previous[2]):
+                    continue
+            attempts[uid]=(self.room_id,time.monotonic(),proof,True)
+            try:
+                self._kick_moderation_target(uid)
+            except HubTransportError:
+                raise
+            except Exception as error:
+                attempts[uid]=(self.room_id,time.monotonic(),proof,False)
+                log.warning('Ban removal not confirmed for user %s: %s',uid,error)
+
+    def _moderation_command(self, cmd, actor, raw):
+        store=self._ban_store()
+        if not store:
+            self.say('Moderation persistence is not configured; ask the owner.')
+            return
+        store.refresh(force=True)
+        if not store.loaded or store.last_error:
+            self.say('Ban storage is unavailable; no moderation changes made.')
+            return
+        if cmd=='bans':
+            try:
+                page=int(raw or '1')
+                if page<1:raise ValueError()
+            except ValueError:
+                self.say(f'Usage: {self.prefix}bans [page]');return
+            rows=sorted(store.bans.values(),key=lambda r:r['user_id'])
+            if not rows:self.say('No project bans.');return
+            total=(len(rows)+4)//5
+            if page>total:self.say(f'Ban pages: 1–{total}.');return
+            self.say(f'Project bans {page}/{total}: '+', '.join(f"{r.get('username',r['user_id'])} ({r['user_id']}; "+(f"{max(1, int((r['expires_at']-time.time()+59)//60))}m left" if r.get('expires_at') is not None else 'permanent')+")" for r in rows[(page-1)*5:page*5]))
+            return
+        target,separator,reason=raw.partition('|')
+        target=target.strip().strip('"')
+        reason=reason.strip()
+        duration=None
+        duration_label=None
+        if cmd=='ban':
+            parts=target.rsplit(None,1)
+            if len(parts)==2 and re.fullmatch(r'[0-9]+[A-Za-z]+',parts[1]):
+                from bot.moderation import parse_ban_duration
+                try:duration=parse_ban_duration(parts[1])
+                except ValueError as error:
+                    self.say(str(error));return
+                target=parts[0].strip().strip('"')
+                duration_label=parts[1].lower()
+        if duration is not None and self.cfg.get('_rolling_worker'):
+            # Older workers regard every stored ban as permanent. Do not
+            # create timed entries until every room understands expiry.
+            try:
+                if self.cfg.get('_host_root'):
+                    from poolrotater_host.layout import load
+                    from bot.moderation import read_rolling_status
+                    from poolrotater_host.config import contained
+                    root=Path(self.cfg['_host_root'])
+                    _, host=load(root)
+                    expected={r['alias'] for r in host['rooms']}
+                    status=read_rolling_status(contained(root,'state/rolling/status.json'))
+                    same_rooms=set(status['rooms'])==expected
+                else:
+                    status=json.loads((store.path.parent.parent/'rolling/status.json').read_text())
+                    same_rooms=len(status['rooms'])==4
+                versions=[tuple(map(int,r['version'].lstrip('v').split('.'))) for r in status['rooms'].values()]
+                ready=(0<=time.time()-status['generated_at']<10 and same_rooms
+                       and all(v>=(6,7,34) for v in versions))
+            except (OSError,ValueError,KeyError,TypeError):
+                ready=False
+            if not ready:
+                rooms='configured' if self.cfg.get('_host_root') else 'four'
+                self.say(f'Temporary bans unlock once all {rooms} rooms finish updating; permanent bans still work.');return
+        if not target or (separator and cmd!='ban') or len(reason)>200:
+            self.say(f'Usage: {self.prefix}{cmd} <username|id>'+(' [30m|24h|7d] [| reason]' if cmd=='ban' else ''));return
+        # Persisted ban names can be resolved after the user has left/renamed.
+        saved=next((r for r in store.bans.values() if str(r.get('username','')).casefold()==target.casefold()),None)
+        resolved=(saved['user_id'],saved.get('username',target)) if saved and cmd=='unban' else self._resolve_user_reference(target)
+        if not resolved:
+            self.say('User not found. Use their exact osu! username or numeric ID.');return
+        uid,name=resolved
+        if uid<=0 or (cmd!='unban' and self._moderation_protected(uid)):
+            self.say('Cannot kick or ban the bot, referees, admins, or moderators.');return
+        if cmd=='kick':
+            if uid not in self.players:self.say(f'{name} is not in this room.');return
+            try:
+                self._kick_moderation_target(uid)
+                log.warning('MODERATION manual kick actor=%s target=%s',actor,uid)
+                self.say(f'Kick requested for {name}.')
+            except HubTransportError:
+                self.say('Kick outcome unconfirmed; check the roster before retrying.')
+                raise
+            except Exception as error:
+                log.warning('Kick rejected for %s: %s',uid,error);self.say('Kick failed; no ban was added.')
+            return
+        try:
+            changed=store.change(cmd,uid,name,actor,self._known_username(actor) or str(actor),
+                                 self.cfg.get('_instance_name','room'),reason,duration=duration)
+        except Exception as error:
+            log.exception('Moderation persistence failed: %s',error)
+            self.say('Could not save moderation change; no ban/unban applied.');return
+        if cmd=='ban':
+            detail=(' for '+duration_label if duration_label else ' permanently') if changed else ''
+            self.say(f'Project ban '+('saved' if changed else 'already active')+f' for {name}'+detail+'; removal requested.')
+            self._enforce_project_bans()
+        else:
+            self.say(f'{name} '+('unbanned' if changed else 'is not banned')+'.')
+
     def on_user_joined(self, user_id: int) -> None:
         user_id = int(user_id)
+        if self.cfg.get('moderation_bans_file'):
+            proofs=getattr(self,'_ban_presence_proofs',{})
+            self._ban_presence_proofs=proofs
+            proofs[user_id]=time.monotonic()
         if user_id in self.non_gameplay_user_ids():
             log.info(
                 "non-gameplay operator/referee joined room; not counting as "
@@ -10212,6 +10470,14 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 user_id,
             )
             return
+        if self._is_project_banned(user_id):
+            store=self._ban_store()
+            # Invalid initial storage cannot authorize kicking anyone.
+            if store and user_id in store.bans:
+                self.players.setdefault(user_id,{'name':store.bans[user_id].get('username',str(user_id)),
+                                                 'status':'idle'})
+                self._enforce_project_bans()
+                return
         if user_id in self.players:
             return
         mode_kwargs = {"mode": "mania"} if self.cfg.get("ruleset_id", 0) == 3 else {}
@@ -10702,6 +10968,15 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             )
 
         self.last_played_map = completed_map
+        # Freeze match provenance with the feedback target, before promotion or
+        # later preference changes can describe a different song/match.
+        required = set(self.cfg.get('required_mods', []))
+        if completed_map is not None and getattr(completed_map, 'is_dt', False):
+            required.add('DT')
+        self._rating_context = {'ruleset_id': self.cfg.get('ruleset_id'),
+                                'room_id': self.room_id,
+                                'playlist_item_id': self.scoring_item_id,
+                                'required_mods': sorted(required)}
         self._record_mania_round(completed_map)
         if completed_map is not None and callable(getattr(self.pool, 'record_song_play', None)):
             self.pool.record_song_play(completed_map)
@@ -11342,6 +11617,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         elif name == "UserJoined":
             uid = int(payload.get("user_id") or 0)
             if uid:
+                store=self._ban_store()
+                if store and uid in store.bans and not self._moderation_protected(uid):
+                    self.on_user_joined(uid)
+                    return  # No profile fetches, welcomes or vote participation.
                 # Capture whether there were any gameplay players BEFORE this
                 # join. If this is the first player after an empty period, the
                 # old IDLE timer may already be minutes/hours old; without a
@@ -11914,6 +12193,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 self._recover_hub_transport("SignalR reconnect/disconnect event")
 
             self._reload_config_from_disk()
+            self._refresh_operator_exclusions()
+            self._enforce_project_bans()
             shutdown_event = self.process_control.pending_shutdown()
             if shutdown_event is not None:
                 log.warning(

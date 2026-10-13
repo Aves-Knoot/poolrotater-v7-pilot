@@ -4,6 +4,7 @@ Administrative commands address only the dedicated instance. A service unit is
 installed disabled/stopped. Start/authorization retain the release fence.
 """
 import hashlib
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,7 @@ import time
 
 from .config import ConfigError
 from .pilot_installation import administrative_binding, paths, _stopped
-from .provisioning import protected
+from .provisioning import protected, _control
 
 ENV = {'PATH': '/usr/sbin:/usr/bin:/bin', 'LANG': 'C.UTF-8',
        'PYTHONDONTWRITEBYTECODE': '1', 'MALLOC_ARENA_MAX': '2'}
@@ -28,6 +29,12 @@ def unit_text(instance):
 def _unit_text(instance, *, qualification):
     target = paths(instance)
     entry = '--provider-room-fixture service' if qualification else '--provider-service'
+    # The reserved owner crossover preserves the inventoried v6 scheduling and
+    # resource settings. Generic operators keep the bounded pilot defaults;
+    # qualification always uses the development limits and nice priority.
+    resources = ('Nice=0\nMemoryMax=infinity\nMemorySwapMax=infinity\nTasksMax=256'
+                 if instance == 'owner' and not qualification else
+                 'Nice=15\nMemoryMax=1G\nMemorySwapMax=512M\nTasksMax=128')
     isolation = ('PrivateNetwork=yes\nEnvironment=POOLROTATER_OFFLINE_SANDBOX=1 '
                  'POOLROTATER_PROVISIONING_SANDBOX=1\n') if qualification else ''
     return f'''[Unit]
@@ -47,10 +54,7 @@ KillSignal=SIGTERM
 SendSIGKILL=yes
 TimeoutStopSec=90
 UMask=0077
-Nice=15
-MemoryMax=1G
-MemorySwapMax=512M
-TasksMax=128
+{resources}
 LimitCORE=0
 NoNewPrivileges=yes
 CapabilityBoundingSet=
@@ -66,6 +70,7 @@ ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
 Environment=LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 MALLOC_ARENA_MAX=2
+EnvironmentFile=-{target['root']}/secrets/integrations.env
 
 [Install]
 WantedBy=multi-user.target
@@ -181,6 +186,27 @@ def check(instance):
             'live_ready': False, 'provider_dispatch_enabled': record['execution'] == 'pilot-live'}
 
 
+def code_proof(instance):
+    """Public code evidence only; no auth/account/ownership construction."""
+    target, _, record = administrative_binding(instance)
+    from .runtime_lifecycle import validate_runtime
+    current = validate_runtime(record, target['prefix'])
+    files = current['manifest']['files']
+    from .runtime_package import json_bytes
+    proof = {'format': 1, 'kind': 'protected-v7-code-evidence', 'ok': True,
+             'version': current['manifest']['version'], 'execution': record['execution'],
+             'runtime_sha256': record['bundle_sha256'], 'environment_id': record['environment_id'],
+             'source_files_sha256': hashlib.sha256(json_bytes(files)).hexdigest(),
+             'source_files': files, 'protected_runtime_checked': True,
+             'receipt_scope': 'registered_code_and_environment_only',
+             'operational_acceptance_verified': False, 'provider_dispatch': False, 'live_ready': False}
+    # A concurrent administrative switch must not turn old observations into
+    # current source authority. Read-only diagnostics never acquire owner lease.
+    if administrative_binding(instance)[2] != record:
+        raise ConfigError('registered runtime changed during public code proof')
+    return proof
+
+
 def ownership(instance, action, *, journal_sha256=None, alias=None, room_id=None,
               confirm_lost_creation=False, transaction_id=None, decision=None):
     if action not in ('review', 'clear', 'resume'):
@@ -282,6 +308,57 @@ def catalog_recover(instance):
     return {'ok': True, 'catalog_recovery': result['status'], 'live_ready': False}
 
 
+def replace_catalog_trust(instance, *, repository, trust_root, trust_sha256,
+                          previous_trust_sha256, confirm_replacement):
+    from .catalog_store import CatalogStore
+    from .catalog_trust import BootstrapTrust, bounded_file
+    from .catalog_rekey import replace
+    store = CatalogStore.open_pilot_administrative(instance)
+    with bounded_file(Path(trust_root), 65536) as handle: raw = handle.read(65537)
+    if hashlib.sha256(raw).hexdigest() != trust_sha256:
+        raise ConfigError('independently confirmed replacement catalog bootstrap digest mismatch')
+    with _catalog_trust_stopped(instance):
+        return replace(store, repository, BootstrapTrust(raw, fixture=False),
+                       old_sha256=previous_trust_sha256, new_sha256=trust_sha256,
+                       confirm_replacement=confirm_replacement, owner_lease_held=True)
+
+
+@contextmanager
+def _catalog_trust_stopped(instance):
+    from .layout import file_lease
+    from .pilot_installation import require_no_service_processes
+    from .network import operations as network
+    target, _, record = administrative_binding(instance)
+    with file_lease(target['prefix'] / 'network-admin.lock'):
+        _unit(instance, optional=True)
+        network._checked_unit(instance, optional=True)
+        for state in (_service_state(instance), network._state(instance)):
+            if (state['MainPID'] or state['ActiveState'] not in ('inactive', 'failed')
+                    or state['UnitFileState'] not in ('', 'disabled', 'not-found')):
+                raise ConfigError('catalog trust replacement requires disabled/stopped bot and network services')
+        require_no_service_processes(record['service_uid'])
+        with _stopped(target['root'], record['service_uid']):
+            require_no_service_processes(record['service_uid'])
+            yield
+
+
+def recover_catalog_trust(instance, *, transaction_id):
+    # A half-swapped directory cannot open normally. Reconstruct only the fixed
+    # registered administrative namespace, never a caller-selected store path.
+    from .catalog_store import CatalogStore, _identity, POINTER
+    from .catalog_rekey import resume
+    from .provisioning import _control
+    target, marker, record = administrative_binding(instance)
+    path = target['prefix'] / 'catalog-stores' / marker['installation_id']
+    binding = _identity(marker, target['root'], record['service_uid'], path, False,
+                        execution=record['execution'])
+    if _control(target['root'] / POINTER, record['service_uid'], private=True) != binding:
+        raise ConfigError('catalog trust recovery namespace changed')
+    with _catalog_trust_stopped(instance):
+        return resume(CatalogStore(target['root'], path, binding), transaction_id=transaction_id,
+                      owner_lease_held=True)
+
+
 def status(instance):
     target, _, record = administrative_binding(instance)
     result = check(instance)
@@ -353,7 +430,14 @@ def _service_observation(target, record, state, *, historical=False):
     return value
 
 
-def _wait_ready(target, record, *, timeout=75):
+def _wait_ready(target, record, *, timeout=None):
+    from .config import validate
+    configuration = validate(_control(target['root'] / 'config/host.json', record['service_uid'], private=True))
+    expected_rooms = configuration['rooms']
+    if timeout is None:
+        # The cold full-catalog load and several checked provider handshakes per
+        # room must fit the explicit owner four-room startup observation too.
+        timeout = 75 + 45 * (len(expected_rooms) - 1)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         state = _service_state(target['root'].name)
@@ -379,8 +463,10 @@ def _wait_ready(target, record, *, timeout=75):
             if observed['phase'] == 'recovery_required':
                 raise ConfigError('pilot startup requires stopped ownership review')
             if observed['phase'] == 'running':
-                if observed.get('room_count') != 1:
-                    raise ConfigError('pilot service did not observe exactly one room')
+                if type(observed.get('room_count')) is not int or observed['room_count'] != len(expected_rooms):
+                    raise ConfigError('pilot service did not observe the exact configured room count')
+                if validate(_control(target['root'] / 'config/host.json', record['service_uid'], private=True))['rooms'] != expected_rooms:
+                    raise ConfigError('pilot room configuration changed during startup observation')
                 return state
         time.sleep(.2)
     raise ConfigError('pilot startup observation timed out; inspect existing service without retry')
@@ -466,4 +552,10 @@ def support(instance):
                 'service_phase', 'failure_http_status', 'last_service_phase',
                 'last_service_failure_code', 'last_service_failure_http_status'):
         if key in value: result[key] = value[key]
+    from .network.operations import command
+    network=command(instance,'support')
+    result['network']={key:network[key] for key in ('ok','configured','enrolled','pending_operation','directory',
+        'account_binding_matches',
+        'credential_expires_at','last_heartbeat_receipt_at','pending_heartbeat','agent_phase','agent_error',
+        'last_attempt_at','live_rooms_affected','remote_health_verified','protected_runtime_checked') if key in network}
     return result

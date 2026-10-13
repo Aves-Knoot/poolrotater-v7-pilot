@@ -56,7 +56,7 @@ def require_repair_compatible(before, after):
     """
     if before.get('version') != 'v7.0.1' or after.get('version') != 'v7.0.1':
         raise ConfigError('pilot repair requires its reviewed runtime family')
-    for key in ('protocol', 'storage', 'storage_epoch', 'requirements', 'python_hash', 'environment_hash'):
+    for key in ('protocol', 'storage_epoch', 'requirements', 'python_hash', 'environment_hash'):
         if key not in before or before[key] != after.get(key):
             raise ConfigError('pilot repair persistent/runtime contract changed: ' + key)
     if before.get('migrations') != [] or after.get('migrations') != []:
@@ -64,6 +64,15 @@ def require_repair_compatible(before, after):
     if (type(before.get('shared')) is not dict or type(after.get('shared')) is not dict
             or before['shared'].keys() != after['shared'].keys()):
         raise ConfigError('pilot repair shared inventory changed')
+    from .integrated_upgrade import admits
+    if admits(before, after):
+        # Exact inventory pairs are generated only in the reviewed frozen
+        # artifact. The operator still supplies both trusted runtime digests;
+        # _locked requires stopped services, no children and clean ownership.
+        # M4 ledger preparation remains a separate explicit stopped operation.
+        return
+    if 'storage' not in before or before['storage'] != after.get('storage'):
+        raise ConfigError('pilot repair persistent/runtime contract changed: storage')
     for key in before['shared']:
         # Only the exact published -> reviewed chat guard / OAuth diagnostics
         # are accepted here. Do not authorize arbitrary shared code changes or
@@ -147,8 +156,16 @@ def _unit_bytes(target):
     if not os.path.lexists(path): return None
     text = _code(path).decode('ascii')
     new = unit_text(target['root'].name)
-    legacy = new.replace('SendSIGKILL=yes\n', 'SendSIGKILL=no\n')
-    if text not in (legacy, new): raise ConfigError('unrecognized pilot unit cannot be upgraded')
+    environment = f"EnvironmentFile=-{target['root']}/secrets/integrations.env\n"
+    bases = {new}
+    if target['root'].name == 'owner':
+        bases.add(new.replace('Nice=0\nMemoryMax=infinity\nMemorySwapMax=infinity\nTasksMax=256',
+                              'Nice=15\nMemoryMax=1G\nMemorySwapMax=512M\nTasksMax=128'))
+    approved = {body.replace('SendSIGKILL=yes\n', kill).replace(environment, env)
+                for body in bases for kill in ('SendSIGKILL=yes\n', 'SendSIGKILL=no\n')
+                for env in (environment, '')}
+    if text not in approved:
+        raise ConfigError('unrecognized pilot unit cannot be upgraded')
     return text
 
 

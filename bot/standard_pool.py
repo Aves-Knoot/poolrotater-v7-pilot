@@ -44,6 +44,7 @@ class StandardPool(MapPool):
         self._last_dt_pick = False
         self._dt_catalog_warned = False
         self._dt_valid_until = 0
+        self._dt_refresh_after = 0
         self._dt_source_signature = None
         super().__init__(db_path, **kwargs)
 
@@ -107,6 +108,10 @@ class StandardPool(MapPool):
         except (OSError, ValueError):
             return False
 
+    def dt_catalog_refresh_due(self):
+        """Thirty days schedules research refresh; it does not invalidate charts."""
+        return self.dt_catalog_ready() and time.time() >= self._dt_refresh_after
+
     def set_dt_override(self, enabled, *, full=False):
         if enabled is not None and type(enabled) is not bool:
             raise ValueError('DT override must be true, false or automatic')
@@ -166,6 +171,7 @@ class StandardPool(MapPool):
                 conn.row_factory = sqlite3.Row
                 metadata = dict(conn.execute('SELECT key,value FROM metadata'))
                 source = Path(self.db_path).stat()
+                built_at = float(metadata['built_at'])
                 if self.standard_catalog_binding is not None:
                     identity_valid = (metadata.get('format') == '2'
                                       and metadata.get('source_sha256') == self.standard_catalog_binding['source_sha256']
@@ -177,9 +183,14 @@ class StandardPool(MapPool):
                 if (not identity_valid or metadata.get('mods') != 'DT'
                         or metadata.get('clock_rate') != '1.5'
                         or metadata.get('calculator') != DT_CALCULATOR
-                        or not 0 <= time.time()-float(metadata['built_at']) <= 30*86400):
-                    raise ValueError('DT evidence is stale or belongs to another database/calculator')
-                self._dt_valid_until = float(metadata['built_at'])+30*86400
+                        or not math.isfinite(built_at) or built_at <= 0
+                        or built_at > time.time()):
+                    raise ValueError('DT evidence is invalid or belongs to another database/calculator')
+                # Keep verified evidence usable while a replacement is prepared.
+                # Managed content hashes, source identity and revision checks
+                # remain mandatory; refresh age is not evidence invalidation.
+                self._dt_valid_until = float('inf')
+                self._dt_refresh_after = built_at+30*86400
                 self._dt_source_signature = (source.st_size, source.st_mtime_ns)
                 if beatmap_id is not None:
                     return conn.execute('SELECT * FROM dt_maps WHERE beatmap_id=?', (beatmap_id,)).fetchall()

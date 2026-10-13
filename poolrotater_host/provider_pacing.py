@@ -15,7 +15,7 @@ import uuid
 
 from .config import contained
 from .layout import atomic_json, checked_root, file_lease, load, owner_lease, read_json
-from .oauth import AuthError, _positive
+from .oauth import AuthError, _positive, diagnostic_lease
 from .provider_contract import PROVIDER_ORIGIN
 
 COUNTERS = {'attempted', 'dispatched', 'replies', 'rate_limited', 'uncertain', 'deferred'}
@@ -65,17 +65,7 @@ class PersistentRequestGate:
         return {}
 
     def __init__(self, root, client_id, *, minimum_interval=.05, clock=clock_sample):
-        self._offline(); _positive(client_id)
-        if type(minimum_interval) not in (float, int) or not self.minimum_spacing <= minimum_interval <= 60:
-            raise AuthError('invalid_provider_pacing')
-        self.root = checked_root(Path(root)); marker, _ = load(self.root)
-        self.binding = {'format': 1, 'execution': self.execution, 'root': str(self.root),
-                        'uid': os.geteuid(), 'installation_id': marker['installation_id'],
-                        'generation': marker['generation'], 'client_id': client_id, 'provider': PROVIDER_ORIGIN,
-                        **self._extra_binding()}
-        self.interval, self.clock = float(minimum_interval), clock
-        self._pid = os.getpid(); self._held = None
-        self._needs_outcome = False; self._outcome_saved = False
+        self._initialize_binding(root, client_id, minimum_interval, clock)
         try:
             with self._lease(5):
                 anchor = self._anchor(optional=True)
@@ -93,6 +83,20 @@ class PersistentRequestGate:
                 self._read()
         except AuthError: raise
         except Exception: raise AuthError('provider_pacing_initialization_uncertain') from None
+
+    def _initialize_binding(self, root, client_id, minimum_interval, clock):
+        """Only validate/bind memory; ledger creation remains in __init__."""
+        self._offline(); _positive(client_id)
+        if type(minimum_interval) not in (float, int) or not self.minimum_spacing <= minimum_interval <= 60:
+            raise AuthError('invalid_provider_pacing')
+        self.root = checked_root(Path(root)); marker, _ = load(self.root)
+        self.binding = {'format': 1, 'execution': self.execution, 'root': str(self.root),
+                        'uid': os.geteuid(), 'installation_id': marker['installation_id'],
+                        'generation': marker['generation'], 'client_id': client_id, 'provider': PROVIDER_ORIGIN,
+                        **self._extra_binding()}
+        self.interval, self.clock = float(minimum_interval), clock
+        self._pid = os.getpid(); self._held = None
+        self._needs_outcome = False; self._outcome_saved = False
 
     @staticmethod
     def _offline():
@@ -159,7 +163,24 @@ class PersistentRequestGate:
         if len(json.dumps(value, allow_nan=False).encode()) > 16384: raise AuthError('provider_pacing_state_refused')
         try: atomic_json(contained(self.root, self.state_path), value)
         except Exception: raise AuthError('provider_pacing_write_uncertain') from None
+        previous = self._held
         self._held = deepcopy(value)
+        self._usage_saved(previous, value)
+
+    def _usage_saved(self, before, after):
+        pass  # Legacy fixture pacing has no operational provider telemetry.
+
+    def _usage_admission(self):
+        pass
+
+    def _usage_wait(self, seconds, *, elapsed=None):
+        pass
+
+    def _wait_seconds(self, value, now):
+        return max(value['next'], value['blocked']) - now['monotonic']
+
+    def _next_time(self, value, now):
+        return now['monotonic'] + value['interval']
 
     @staticmethod
     def _count(value, key): value['counters'][key] = min(MAX_COUNTER, value['counters'][key] + 1)
@@ -203,16 +224,21 @@ class PersistentRequestGate:
         try:
             value = self._read(); self._healthy(value); now = self._now()
             self._held = deepcopy(value); self._count(value, 'attempted')
-            wait = max(value['next'], value['blocked']) - now['monotonic']
+            self._usage_admission()
+            wait = self._wait_seconds(value, now)
             if value['halted'] or wait >= deadline - time.monotonic():
                 self._count(value, 'deferred'); self._save(value)
                 raise AuthError('provider_pacing_deferred')
-            if wait > 0: time.sleep(wait)
+            if wait > 0:
+                self._usage_wait(wait)
+                wait_started = time.monotonic()
+                try: time.sleep(wait)
+                finally: self._usage_wait(wait, elapsed=max(0., time.monotonic() - wait_started))
             if time.monotonic() >= deadline: raise AuthError('provider_deadline_exceeded')
             now = self._now()
             if not clock_matches(value['clock'], now): raise AuthError('provider_pacing_clock_changed')
             value['clock'] = now; value['interval'] = max(value['interval'], self.interval)
-            value['next'] = now['monotonic'] + value['interval']; value['phase'] = 'reserved'
+            value['next'] = self._next_time(value, now); value['phase'] = 'reserved'
             self._count(value, 'dispatched'); self._save(value); reserved = True
             self._needs_outcome = False; self._outcome_saved = False
             yield
@@ -236,9 +262,10 @@ class PersistentRequestGate:
             self._count(value, 'rate_limited')
             if delay is None: value['halted'] = True
             else: value['blocked'] = max(value['blocked'], now['monotonic'] + delay)
+        self._usage_last_status = code
         self._save(value); self._outcome_saved = True
 
-    def exchange_started(self):
+    def exchange_started(self, *, kind='http'):
         if self._held is None or self._held['phase'] != 'reserved': raise AuthError('provider_pacing_not_admitted')
         self._needs_outcome = True
 
@@ -256,10 +283,13 @@ class PersistentRequestGate:
     def snapshot(self):
         with self._lease(5):
             value = self._read()
-            return {'counters': dict(value['counters']), 'phase': value['phase'], 'halted': value['halted'],
-                    'account_bound': value['user_id'] is not None, 'state_sha256': digest(value),
-                    'requires_recovery': value['phase'] != 'idle' or not clock_matches(value['clock'], self._now()),
-                    'live_ready': False}
+            return self._snapshot_fields(value)
+
+    def _snapshot_fields(self, value):
+        return {'counters': dict(value['counters']), 'phase': value['phase'], 'halted': value['halted'],
+                'account_bound': value['user_id'] is not None, 'state_sha256': digest(value),
+                'requires_recovery': value['phase'] != 'idle' or not clock_matches(value['clock'], self._now()),
+                'live_ready': False}
 
     def recover(self, *, expected_state_sha256, local_guard=None):
         """Explicit stopped rate-reservation/clock recovery; no token/room writes.
@@ -309,7 +339,36 @@ class ProviderRequestGate(PersistentRequestGate):
             super()._offline()
 
     def __init__(self, root, client_id, *, execution, client_profile_sha256,
-                 minimum_interval=1.2, clock=clock_sample):
+                 minimum_interval=1.2, clock=clock_sample, budget_loader=None):
+        self._provider_binding(execution, client_profile_sha256)
+        self._bind_budget(budget_loader)
+        if self._budget is not None: minimum_interval = max(minimum_interval, self._budget['minimum_interval_seconds'])
+        super().__init__(root, client_id, minimum_interval=minimum_interval, clock=clock)
+
+    def _bind_budget(self, loader):
+        if loader is not None and not callable(loader): raise AuthError('invalid_provider_budget_loader')
+        self._budget_loader = loader
+        self._budget = None if loader is None else loader()
+
+    def _current(self):
+        config = super()._current()
+        if self._budget_loader is not None and self._budget_loader() != self._budget:
+            raise AuthError('provider_budget_changed')
+        return config
+
+    def _wait_seconds(self, value, now):
+        if self._budget is None: return super()._wait_seconds(value, now)
+        # Exact existing owner GCRA tolerance; blocked/halt/crash fences retain
+        # precedence. The unchanged `next` field is theoretical arrival time.
+        interval = max(value['interval'], self.interval)
+        earliest = value['next'] - (self._budget['burst_capacity'] - 1) * interval
+        return max(earliest, value['blocked']) - now['monotonic']
+
+    def _next_time(self, value, now):
+        if self._budget is None: return super()._next_time(value, now)
+        return max(value['next'], now['monotonic']) + value['interval']
+
+    def _provider_binding(self, execution, client_profile_sha256):
         import re
         if execution not in ('provider-disabled', 'provider-fixture', 'provider-pilot', 'provider-live-pilot'):
             raise AuthError('invalid_provider_execution')
@@ -319,7 +378,85 @@ class ProviderRequestGate(PersistentRequestGate):
         self.execution = execution
         self.minimum_spacing = .05 if execution == 'provider-fixture' else 1.2
         self.client_profile_sha256 = client_profile_sha256
-        super().__init__(root, client_id, minimum_interval=minimum_interval, clock=clock)
+        self._usage_started_at = None
+        self._usage_last_status = None
+        self._usage_kind = 'http'
+
+    @classmethod
+    def diagnostic_snapshot(cls, root, client_id, *, execution, client_profile_sha256,
+                            user_id, minimum_interval=1.2, budget_loader=None):
+        """Read an existing checked ledger; never return an admission authority.
+
+        The caller holds the OAuth read lease, stabilizing the account/profile
+        while this shared pacing lease serializes against request outcomes.
+        Missing authority is refused, never initialized or repaired.
+        """
+        gate = object.__new__(cls)
+        gate._provider_binding(execution, client_profile_sha256)
+        gate._bind_budget(budget_loader)
+        if gate._budget is not None: minimum_interval = max(minimum_interval, gate._budget['minimum_interval_seconds'])
+        gate._initialize_binding(root, client_id, minimum_interval, clock_sample)
+        if user_id is not None: _positive(user_id)
+        with diagnostic_lease(contained(gate.root, gate.lock_path)):
+            value = gate._read()
+            if user_id is not None and value['user_id'] not in (None, user_id):
+                raise AuthError('provider_pacing_account_mismatch')
+            return gate._snapshot_fields(value)
 
     def _extra_binding(self):
         return {'client_profile_sha256': self.client_profile_sha256}
+
+    def _snapshot_fields(self, value):
+        result = super()._snapshot_fields(value)
+        result['budget'] = ({'source':'default-strict','algorithm':'strict-spacing',
+                             'minimum_interval_seconds':max(value['interval'],self.interval),'burst_capacity':1}
+                            if self._budget is None else
+                            {'source':'protected-owner-adoption','algorithm':'gcra-owner',
+                             'minimum_interval_seconds':max(value['interval'],self.interval),
+                             'burst_capacity':self._budget['burst_capacity']})
+        return result
+
+    def _usage_admission(self):
+        self._usage_started_at = None
+        self._usage_last_status = None
+        self._usage_kind = 'http'
+
+    def _usage_emit(self, event, before, after, **kwargs):
+        # The observer cannot escape into authority/dispatch control flow.
+        try:
+            from .provider_usage import record
+            record(self.root, ledger=after['ledger_id'], execution=self.execution,
+                   before=before['counters'], after=after['counters'], event=event,
+                   sequence=after['counters']['dispatched'] or None, kind=self._usage_kind, **kwargs)
+        except Exception:
+            try:
+                from .provider_usage import _failure
+                _failure(self.root)
+            except Exception: pass
+
+    def _usage_saved(self, before, after):
+        if before['counters'] == after['counters']: return
+        event = ('replied' if after['counters']['replies'] > before['counters']['replies'] else
+                 'uncertain' if after['counters']['uncertain'] > before['counters']['uncertain'] else 'counters')
+        duration = (max(0., time.monotonic() - self._usage_started_at)
+                    if self._usage_started_at is not None else None)
+        self._usage_emit(event, before, after, status=self._usage_last_status, duration=duration)
+
+    def exchange_started(self, *, kind='http'):
+        super().exchange_started(kind=kind)
+        self._usage_kind = kind
+        self._usage_started_at = time.monotonic()
+        self._usage_emit('started', self._held, self._held)
+
+    def _usage_wait(self, seconds, *, elapsed=None):
+        try:
+            from .provider_usage import record
+            record(self.root, ledger=self._held['ledger_id'], execution=self.execution,
+                   before=self._held['counters'], after=self._held['counters'],
+                   event='wait' if elapsed is None else 'wait_finished',
+                   sequence=self._held['counters']['attempted'] + 1, delay=seconds, elapsed=elapsed)
+        except Exception:
+            try:
+                from .provider_usage import _failure
+                _failure(self.root)
+            except Exception: pass

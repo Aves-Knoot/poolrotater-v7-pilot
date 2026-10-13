@@ -9,6 +9,7 @@ from . import __version__
 from .checks import check
 from .config import ConfigError, PRESETS
 from .layout import load, setup
+from .network.contracts import NetworkError
 
 
 def main(argv=None):
@@ -24,11 +25,21 @@ def main(argv=None):
     download.add_argument('--ca-sha256', required=True)
     download.add_argument('--destination', required=True, type=Path)
     download.add_argument('--mode', required=True, choices=('standard', 'mania4', 'mania7'))
-    for action in ('install', 'check', 'status', 'support', 'unit', 'configure', 'authorize', 'cancel',
-                   'recover', 'pacing-recover', 'catalog-import', 'catalog-recover', 'start', 'stop', 'remove',
-                   'ownership-review', 'ownership-clear', 'ownership-resume'):
+    for action in ('install', 'check', 'code-proof', 'status', 'support', 'unit', 'configure', 'authorize', 'cancel',
+                   'recover', 'pacing-recover', 'catalog-import', 'catalog-recover',
+                   'catalog-trust-replace', 'catalog-trust-recover', 'start', 'stop', 'remove',
+                   'owner-import', 'owner-status', 'owner-rollback', 'owner-budget-prepare',
+                   'ownership-review', 'ownership-clear', 'ownership-resume',
+                   'network-configure','network-enroll','network-resume','network-rotate','network-leave','network-reset',
+                   'network-status','network-support','network-unit','network-start','network-stop','network-remove',
+                   'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
+                   'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch'):
         command = commands.add_parser('pilot-' + action, help='explicit protected pilot ' + action)
         command.add_argument('--instance', required=True)
+        if action == 'owner-import':
+            command.add_argument('--owner-review-stdin', required=True, action='store_true')
+            command.add_argument('--snapshot-sha256', required=True)
+        if action in ('ratings-configure','ratings-reader-configure','ratings-review-epoch'):command.add_argument('--ratings-stdin',required=True,action='store_true')
         if action == 'install':
             command.add_argument('--bundle', required=True, type=Path)
             command.add_argument('--sha256', required=True)
@@ -52,7 +63,11 @@ def main(argv=None):
         if action == 'ownership-resume':
             command.add_argument('--transaction-id', required=True)
             command.add_argument('--decision', choices=('complete', 'abort'), required=True)
-        if action == 'catalog-import':
+        if action == 'catalog-trust-recover': command.add_argument('--transaction-id', required=True)
+        if action == 'catalog-trust-replace':
+            command.add_argument('--previous-trust-sha256', required=True)
+            command.add_argument('--confirm-replacement', required=True, action='store_true')
+        if action in ('catalog-import', 'catalog-trust-replace'):
             source = command.add_mutually_exclusive_group(required=True)
             source.add_argument('--repository', type=Path)
             source.add_argument('--origin')
@@ -60,7 +75,8 @@ def main(argv=None):
             command.add_argument('--ca-sha256')
             command.add_argument('--trust-root', required=True, type=Path)
             command.add_argument('--trust-sha256', required=True)
-            command.add_argument('--mode', required=True, action='append', choices=('standard', 'mania4', 'mania7'))
+            if action == 'catalog-import':
+                command.add_argument('--mode', required=True, action='append', choices=('standard', 'mania4', 'mania7'))
     for name in ('setup', 'check', 'status', 'config', 'runtime-config', 'simulate'):
         command = commands.add_parser(name)
         command.add_argument('--root', type=Path, required=True, help='explicit private host directory')
@@ -75,10 +91,21 @@ def main(argv=None):
             if action == 'install':
                 from .pilot_installation import install
                 result = install(args.instance, args.bundle, args.sha256, presets=args.preset, **({'live_pilot': True} if args.live_pilot else {}))
-            elif action in ('check', 'status', 'support', 'catalog-recover'):
+            elif action in ('check', 'code-proof', 'status', 'support', 'catalog-recover'):
                 result = getattr(pilot, action.replace('-', '_'))(args.instance)
             elif action == 'unit': result = pilot.install_unit(args.instance)
             elif action == 'remove': result = pilot.remove_unit(args.instance)
+            elif action.startswith('ratings-'):
+                from .ratings import operations
+                operation=action.removeprefix('ratings-')
+                if operation in ('configure','reader-configure','review-epoch'):result=operations.command(args.instance,operation,stream=sys.stdin.buffer)
+                else:result=operations.command(args.instance,operation)
+            elif action.startswith('network-'):
+                from .network import operations
+                operation=action.removeprefix('network-')
+                if operation in ('unit','start','stop','remove'):result=operations.unit(args.instance,operation)
+                else:result=operations.command(args.instance,operation,
+                    stream=sys.stdin.buffer if operation in ('configure','enroll','reset') else None)
             elif action.startswith('ownership-'):
                 result = pilot.ownership(args.instance, action.removeprefix('ownership-'),
                     journal_sha256=getattr(args, 'journal_sha256', None),
@@ -86,14 +113,27 @@ def main(argv=None):
                     confirm_lost_creation=getattr(args, 'confirm_lost_creation', False),
                     transaction_id=getattr(args, 'transaction_id', None), decision=getattr(args, 'decision', None))
             elif action in ('start', 'stop'): result = pilot.lifecycle(args.instance, action)
-            elif action == 'catalog-import':
+            elif action.startswith('owner-'):
+                from .owner_operations import command as owner_command
+                result = owner_command(args.instance, action.removeprefix('owner-'),
+                    stream=sys.stdin.buffer if action == 'owner-import' else None,
+                    snapshot_sha256=getattr(args, 'snapshot_sha256', None))
+            elif action == 'catalog-trust-recover':
+                result = pilot.recover_catalog_trust(args.instance, transaction_id=args.transaction_id)
+            elif action in ('catalog-import', 'catalog-trust-replace'):
                 if (args.origin is None) != (args.ca_file is None and args.ca_sha256 is None):
                     raise ConfigError('HTTPS catalog import requires explicit CA file and digest')
                 repository = args.repository
                 if args.origin is not None:
                     repository = pilot.https_repository(args.instance, args.origin, args.ca_file, args.ca_sha256)
-                result = pilot.import_catalogs(args.instance, repository=repository,
-                    trust_root=args.trust_root, trust_sha256=args.trust_sha256, modes=args.mode)
+                if action == 'catalog-import':
+                    result = pilot.import_catalogs(args.instance, repository=repository,
+                        trust_root=args.trust_root, trust_sha256=args.trust_sha256, modes=args.mode)
+                else:
+                    result = pilot.replace_catalog_trust(args.instance, repository=repository,
+                        trust_root=args.trust_root, trust_sha256=args.trust_sha256,
+                        previous_trust_sha256=args.previous_trust_sha256,
+                        confirm_replacement=args.confirm_replacement)
             else:
                 result = pilot.operator(args.instance, action,
                     credentials_stream=sys.stdin.buffer if action == 'configure' else None,
@@ -128,9 +168,9 @@ def main(argv=None):
             result = simulate(args.root, args.rounds)
         print(json.dumps(result, indent=2, allow_nan=False))
         return 0 if result.get('ok', True) else 3
-    except (ConfigError, OSError, ValueError, sqlite3.Error) as exc:
+    except (ConfigError, OSError, ValueError, sqlite3.Error, NetworkError) as exc:
         # Deliberate config messages are safe; arbitrary OS/data errors can expose paths.
-        detail = str(exc) if isinstance(exc, ConfigError) else type(exc).__name__
+        detail = exc.code if isinstance(exc,NetworkError) else str(exc) if isinstance(exc, ConfigError) else type(exc).__name__
         print(json.dumps({'ok': False, 'error': detail}), file=sys.stderr)
         return 2
 

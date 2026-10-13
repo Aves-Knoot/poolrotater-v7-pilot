@@ -18,7 +18,7 @@ record; the archive digest and runtime digest are different.
 ```bash
 kit_directory=/absolute/path/to/extracted/replacement
 old_runtime_sha=e4db2fbe600ccc14ad323ba2d6ded80840718744613ff5de876a9765890219ab
-new_runtime_sha=a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932
+new_runtime_sha=04f3dcd4b059a9f445d3949faf6707b1a8c8c5142c51544dbd4fc84adac84501
 sudo /usr/bin/python3.12 -I -S "$kit_directory/install.py" \
   --instance first --bundle "$kit_directory/runtime.zip" \
   --sha256 "$new_runtime_sha" --live-pilot \

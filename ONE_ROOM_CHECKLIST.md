@@ -10,7 +10,9 @@ live test checklist, not evidence that these observations have already passed.
    eligible maps and exclusion of beatmap 1549496. Note timestamp and timezone.
 3. Have consenting other players join, download in their clients and play a few
    maps. Test help/queue/skip/votes and the configured language. The bot downloads
-   prepared DBs, never beatmap/audio files. Its referee account is not a player.
+   prepared selection DBs. Clients download game beatmaps/audio; optional local
+   PP calculation can fetch a map's `.osu` definition. Its referee account is not
+   a player.
 4. With at least two players, check countdown/readiness and an AFK/unready player
    without holding the room hostage. Confirm `.start` requires someone ready.
 5. Observe chat pacing, map/song spacing, normal joins/leaves and match completion.

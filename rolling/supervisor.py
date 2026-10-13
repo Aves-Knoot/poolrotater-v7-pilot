@@ -161,7 +161,16 @@ class RollingSupervisor:
                 base = worker.release if path.parts[0] in ("catalog-data", "farm-data") else self.runtime
                 cfg[key] = str((base / path).resolve())
                 cfg["_supervisor_overrides"][key] = cfg[key]
-        cfg["map_pp_cache_dir"] = str(self.runtime / "state/map_pp" / worker.manifest["version"])
+        if cfg.get('_host_root'):
+            # Managed adoption imported the existing PP cache here. Do not
+            # silently redirect it into an empty version-specific directory.
+            from poolrotater_host.config import contained
+            preserved_cache = str(contained(Path(cfg['_host_root']), 'state/controller-map-pp'))
+            if cfg.get('map_pp_cache_dir') not in ('', preserved_cache):
+                raise IncompatibleRelease('managed PP cache path changed')
+            cfg['map_pp_cache_dir'] = preserved_cache
+        else:
+            cfg["map_pp_cache_dir"] = str(self.runtime / "state/map_pp" / worker.manifest["version"])
         cfg["_supervisor_overrides"]["map_pp_cache_dir"] = cfg["map_pp_cache_dir"]
         context = Path(cfg.get("ai_context_file") or "ai_context.md")
         if not cfg.get('_host_root') and not context.is_absolute() and (worker.release / context).is_file():
@@ -293,7 +302,7 @@ class RollingSupervisor:
         self.record(alias, phase="starting", release=str(worker.release), version=worker.manifest["version"],
                     pid=worker.process.pid, generation=worker.broker.generation, error=None)
         self.workers[alias] = worker
-        worker.broker.active = True
+        worker.broker.activate()
         worker.peer.call("activate", timeout=10)
         def healthy():
             good = (worker.fresh() and worker.status.get("ready") and worker.status.get("running")
@@ -624,7 +633,6 @@ class RollingSupervisor:
                 self.rollout_alias = alias
                 def reopen(alias=alias, state=state):
                     try:
-                        self.discord.reopen_view(alias)
                         self.activate(self.prepare(alias, state["release"]))
                     except Exception as exc:
                         self.record(alias, phase="recovery_required", error=str(exc)[:800])
@@ -634,15 +642,19 @@ class RollingSupervisor:
                 self.rollout_thread.start()
 
     def write_status(self, force=False):
+        from poolrotater_host.network.projection import verified_visibility
         if not force and time.monotonic() - self.last_status_write < 5:
             return
         state = self.registry.snapshot()
+        for row in state['rooms'].values():
+            row['network_visibility'] = 'unknown'
         for alias, worker in list(self.workers.items()):
             row = state["rooms"].setdefault(alias, {})
             row.update(status=worker.status, heartbeat_age=round(time.monotonic() - worker.status_at, 2)
                        if worker.status_at else None, healthy=worker.fresh(),
                        roster_known=worker.broker.known, observed_players=len(worker.broker.players),
                        empty_seconds=round(time.monotonic() - worker.empty_since, 1) if worker.empty_since else 0)
+            row['network_visibility'] = verified_visibility(worker, row)
         state.update(supervisor_version=self.manifest["version"], generated_at=time.time(),
                      deployment_empty_seconds=self.empty_seconds, configuration_error=self.config_error)
         atomic_json(self.directory / "status.json", state)

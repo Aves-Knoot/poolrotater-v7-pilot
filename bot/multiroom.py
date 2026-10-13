@@ -532,11 +532,14 @@ class DiscordRoomView(DiscordControl):
     def enqueue_command(self, command):
         # Room lifecycle commands that must work while LobbyBot is stopped are
         # consumed by the supervisor instead of this room's command queue.
-        if self._is_supervisor_command(command.content):
-            return self.transport.enqueue_supervisor_command(
-                self._instance_name(), command
-            )
-        return super().enqueue_command(command)
+        with self.transport._view_lock:
+            if self._is_supervisor_command(command.content):
+                return self.transport.enqueue_supervisor_command(
+                    self._instance_name(), command
+                )
+            if self._stop.is_set():
+                return False
+            return super().enqueue_command(command)
 
     def flush(self, timeout=1.5):
         # The shared transport remains alive until every room has shut down,
@@ -553,6 +556,8 @@ class SharedDiscord(DiscordControl):
         super().__init__(configs[0], start=False)
         self.views = [DiscordRoomView(cfg, self) for cfg in configs]
         self.supervisor_commands = queue.Queue(maxsize=100)
+        self._view_lock = threading.RLock()
+        self._view_generations = {}
 
     def view_for(self, alias):
         normalized = str(alias or "").strip().casefold()
@@ -564,13 +569,52 @@ class SharedDiscord(DiscordControl):
     def reopen_view(self, alias):
         """Replace a stopped room view with a fresh command queue/state."""
         normalized = str(alias or "").strip().casefold()
-        for index, old in enumerate(self.views):
-            if old._instance_name() != normalized:
-                continue
-            fresh = DiscordRoomView(old.cfg, self)
-            self.views[index] = fresh
-            return fresh
+        with self._view_lock:
+            for index, old in enumerate(self.views):
+                if old._instance_name() != normalized:
+                    continue
+                fresh = DiscordRoomView(old.cfg, self)
+                self.views[index] = fresh
+                self._view_generations.pop(normalized, None)
+                return fresh
         raise KeyError(f"unknown Discord room alias: {alias}")
+
+    @staticmethod
+    def _discard_room_commands(view):
+        # Lifecycle requests have a separate shared supervisor queue. Never
+        # drain that queue or another room's commands when retiring a worker.
+        while True:
+            try: view.commands.get_nowait()
+            except queue.Empty: return
+
+    def activate_view(self, alias, generation):
+        """Bind one rolling generation without replacing the shared transport."""
+        if not isinstance(generation, str) or not generation or len(generation) > 128:
+            raise ValueError('explicit Discord worker generation required')
+        normalized = str(alias or '').strip().casefold()
+        with self._view_lock:
+            view = self.view_for(normalized)
+            if self._view_generations.get(normalized) != generation:
+                self._discard_room_commands(view)
+                if view._stop.is_set():
+                    fresh = DiscordRoomView(view.cfg, self)
+                    self.views[self.views.index(view)] = fresh
+                    view = fresh
+                self._view_generations[normalized] = generation
+                view._stop.clear()
+            return view
+
+    def retire_view(self, alias, generation, view):
+        """A late old-generation cleanup cannot disable its replacement."""
+        normalized = str(alias or '').strip().casefold()
+        with self._view_lock:
+            if (self._view_generations.get(normalized) != generation
+                    or self.view_for(normalized) is not view):
+                return False
+            view.stop()
+            self._discard_room_commands(view)
+            self._view_generations.pop(normalized)
+            return True
 
     def enqueue_supervisor_command(self, alias, command):
         self.supervisor_commands.put_nowait((str(alias).casefold(), command))
@@ -580,15 +624,15 @@ class SharedDiscord(DiscordControl):
 
     def command_targets(self, content, channel_id):
         results = []
-        for view in self.views:
-            if not view.cfg.get("discord_control_enabled", True):
-                continue
-            routed = view._route_command(content, channel_id=channel_id)
-            if routed is not None:
-                # A parked room intentionally stops its LobbyBot Discord view.
-                # Keep ordinary commands disabled, but still allow admin
-                # lifecycle commands to reach the live shared supervisor.
-                if view._stop.is_set() and not view._is_supervisor_command(routed):
+        with self._view_lock:
+            for view in self.views:
+                if not view.cfg.get("discord_control_enabled", True):
                     continue
-                results.append((view, routed))
+                routed = view._route_command(content, channel_id=channel_id)
+                if routed is not None:
+                    # A parked room intentionally stops its LobbyBot Discord
+                    # view. Lifecycle commands still reach the supervisor.
+                    if view._stop.is_set() and not view._is_supervisor_command(routed):
+                        continue
+                    results.append((view, routed))
         return results

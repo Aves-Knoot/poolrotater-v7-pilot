@@ -9,7 +9,7 @@ import math
 from .authorization import OperatorAuthorizationSession, authorization_diagnostic
 from .installed_authorization import (
     _runtime_guard, configure_installed_provider_client, installed_provider_state,
-    installed_provider_authentication,
+    installed_provider_authentication, installed_provider_diagnostic,
 )
 from .oauth import AuthError
 from .operator_client import OperatorClient, credentials_from_stream
@@ -67,7 +67,13 @@ def execute(authentication, action, *, mode='local', reauthorize=False,
         authentication.recover_pacing(expected_state_sha256=pacing_state_sha256)
     result = authorization_diagnostic(authentication)
     result['live_capable'] = authentication.execution == 'provider-live-pilot'
-    result.update(provider_pacing=authentication.pacing_snapshot(), action=action,
+    result['provider_pacing'] = authentication.pacing_snapshot()
+    return _operator_diagnostic(result, action, instructions=instructions)
+
+
+def _operator_diagnostic(result, action, *, instructions=None):
+    """One presentation for stopped actions and read-only active diagnostics."""
+    result.update(action=action,
                   operator_client_configured=True, provider_client_ownership_verified=False,
                   protected_runtime_checked=True, workers_started=0, start_allowed=False,
                   actual_room_testing=False, live_ready=False)
@@ -102,6 +108,9 @@ def run(root, release, action, *, credentials_stream=None, expected_user_id=None
         profile = OperatorClient(credentials_from_stream(credentials_stream),
                                  expected_user_id, redirect_uri)
         configure_installed_provider_client(root, release, profile)
+    if action == 'status':
+        return _operator_diagnostic(installed_provider_diagnostic(root, release,
+            configuration=configuration), action)
     if action in ('authorize', 'recover'):
         # The local state-only transport has no CA snapshot. A future approved
         # authorization must reconstruct the full fixed adapter, never send a

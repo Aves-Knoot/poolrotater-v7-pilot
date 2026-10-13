@@ -56,7 +56,12 @@ def _admin():
 def _parent(path):
     protected(path.parent)
     if not path.exists(): path.mkdir(mode=0o755)
-    return protected(path)
+    protected(path)
+    # These shared installer parents contain public sealed code or private
+    # per-instance roots; the dedicated UID must be able to traverse them even
+    # when the administrator installs with umask0077.
+    path.chmod(0o755)
+    return path
 
 
 def _available_uid():
@@ -95,6 +100,7 @@ def _publish_intent(prefix, intent):
     from .catalog_download import _publish
     with tempfile.TemporaryDirectory(prefix='.pilot-intent-', dir=CODE_BASE) as directory:
         stage = Path(directory) / 'installation'; stage.mkdir(mode=0o755)
+        stage.chmod(0o755)
         _write(stage / 'pilot-install.json', intent)
         fd = os.open(stage, os.O_RDONLY | os.O_DIRECTORY)
         try: os.fsync(fd)

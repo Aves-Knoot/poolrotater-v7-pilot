@@ -89,6 +89,8 @@ def make_worker_pool(cfg):
     constructor = StandardPool if 'standard_dt_db' in dt else MapPool
     pool = constructor(str(path), limit=cfg['pool_limit'], **policy, **dt,
                    **{key: cfg[key] for key in keys if key in cfg})
+    from poolrotater_host.ratings.reader import for_settings
+    pool.ratings_reader=for_settings(cfg)
     if not pool.maps:
         raise ValueError(f"{cfg['_instance_name']} has an empty map pool")
     return _managed_policy(pool, cfg)
@@ -158,6 +160,9 @@ class Lifecycle:
             "reopenable": bool(bot._supervisor_reopenable_stop),
             "auto": bool(bot.cfg.get("auto_difficulty", True) and not bot.manual_range),
             "ruleset": bot.cfg.get("ruleset_id", 0), "loved": bool(bot.cfg.get("loved_mode", False)),
+            "network": {"title": str(getattr(bot, "_current_room_name", "")),
+                        "min_stars": bot.pool.sr_min, "max_stars": bot.pool.sr_max,
+                        "catalog_version": bot.cfg.get('_host_catalog_set') or 'unavailable'},
             "public": {"state": bot.state, "players": len(bot.players),
                        "current_map": map_info(shown), "queue": [map_info(m) for m in upcoming[:8]],
                        "queue_known": bool(bot._room_ready),

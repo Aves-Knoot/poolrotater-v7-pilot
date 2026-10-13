@@ -216,10 +216,12 @@ class MapPool:
                  loved_mode: bool = False,
                  sparse_passcount_enabled: bool = False,
                  sparse_passcount_min_maps: int = 50,
-                 sparse_passcount_floor: int = 1000):
+                 sparse_passcount_floor: int = 1000,
+                 ratings_reader=None):
         self.db_path = db_path
         self.loved_mode = bool(loved_mode)
         self.ratings_db = str(ratings_db) if ratings_db else None
+        self.ratings_reader = ratings_reader
         self.sr_min, self.sr_max = float(sr_min), float(sr_max)
         # Loved rooms may explicitly use 0 for no length ceiling. Ranked
         # Farm/Stream rooms retain their historical positive ceiling.
@@ -1293,6 +1295,8 @@ class MapPool:
         the very next maps without maintaining another cache. Any DB/read
         problem degrades safely to neutral weights.
         """
+        if self.ratings_reader is not None:
+            return self.ratings_reader.tallies(beatmap_ids)
         if not self.ratings_db or not beatmap_ids:
             return {}
 
@@ -1562,13 +1566,20 @@ class MapPool:
 
     def exclude_beatmap(self, beatmap_id: int) -> None:
         beatmap_id = int(beatmap_id)
+        if not hasattr(self, '_download_excluded'):
+            self._download_excluded = set()
+        self._download_excluded.add(beatmap_id)
         self._runtime_excluded.add(beatmap_id)
         log.warning("runtime-excluded beatmap %s from future picks", beatmap_id)
 
     def exclude_beatmaps(self, beatmap_ids) -> None:
         for beatmap_id in beatmap_ids or []:
             try:
-                self._runtime_excluded.add(int(beatmap_id))
+                bid = int(beatmap_id)
+                if not hasattr(self, '_download_excluded'):
+                    self._download_excluded = set()
+                self._download_excluded.add(bid)
+                self._runtime_excluded.add(bid)
             except (TypeError, ValueError):
                 continue
         if beatmap_ids:
@@ -1576,6 +1587,23 @@ class MapPool:
                 "runtime-excluded %d beatmap(s) from an unavailable set",
                 len(self._runtime_excluded),
             )
+
+    def apply_operator_exclusions(self, ids):
+        """Keep download quarantine separate so unbanning cannot clear it."""
+        ids = set(ids)
+        previous = getattr(self, '_operator_excluded', set())
+        if ids == previous:
+            return False
+        self._runtime_excluded = ((self._runtime_excluded - previous) | ids
+                                  | getattr(self, '_download_excluded', set()))
+        self._operator_excluded = ids
+        # Refresh even when additions leave no eligible maps. Never roll back
+        # an operator ban just because a style/window has become empty.
+        try:
+            self.reload()
+        except Exception:
+            log.exception('Pool reload failed after exclusion update; bans remain enforced')
+        return True
 
     @staticmethod
     def _song_key(m: PoolMap) -> str:

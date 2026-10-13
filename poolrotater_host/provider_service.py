@@ -1,8 +1,10 @@
 """One installed provider lifecycle; the fixed upstream entry is release-disabled."""
 import os
+import logging
 from pathlib import Path
 import signal
 import threading
+import time
 
 from .config import ConfigError
 from .layout import atomic_json
@@ -47,6 +49,7 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
     workers = []
     acquired = False
     supervisor = None
+    last_usage_log = 0.
     try:
         with provider_host_controller(root, release, authentication=authentication,
                                       api=api, hub=hub) as supervisor:
@@ -58,6 +61,13 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                 supervisor.activate(worker)
             if not stop.is_set(): observer('running', supervisor, workers)
             while not stop.wait(.5) and not supervisor.stopping.is_set():
+                if time.monotonic() - last_usage_log >= 60:
+                    last_usage_log = time.monotonic()
+                    try:
+                        from .provider_usage import summary
+                        logging.getLogger(__name__).info('%s', summary(root))
+                    except Exception:
+                        logging.getLogger(__name__).warning('provider usage summary unavailable; pacing remains authoritative')
                 # Use the native maintenance cadence: room recreation needs
                 # publication, configuration refresh and status processing.
                 supervisor.tick()

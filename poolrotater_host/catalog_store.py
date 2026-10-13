@@ -28,7 +28,8 @@ POINTER = 'state/catalog-installation.json'
 RESERVE = 5 * 1024**3
 MAX_VERSIONS = 128
 CATALOG_KEYS = ('farm_db', 'standard_dt_db', 'standard_catalog_binding', 'mania_db',
-                'mania_farm_db', 'mania_farm_enabled', '_host_catalog_set', '_host_catalog_reference')
+                'mania_farm_db', 'mania_farm_enabled', 'mania_convert_db',
+                'mania_convert_validation_db', '_host_catalog_set', '_host_catalog_reference')
 
 
 def mode_for(room):
@@ -239,6 +240,9 @@ class CatalogStore:
         _sync(path); _sync(path.parent)
 
     def _check(self):
+        from .catalog_rekey import pending_path
+        if os.path.lexists(pending_path(self)):
+            raise ConfigError('catalog trust transition requires explicit recovery')
         for name in ('', 'versions', 'receipts', '.staging', 'cache'):
             # Service users cannot inspect private administrator workspaces.
             if not self.fixture and os.geteuid() != 0 and name in ('.staging', 'cache'): continue
@@ -275,7 +279,7 @@ class CatalogStore:
         if path.stat().st_mode & 0o222: raise ConfigError('catalog version directory is not sealed')
         # Bound inventory before inspecting contents (also rejects symlink/extra adoption).
         children = list(path.iterdir())
-        if len(children) > 4: raise ConfigError('catalog version inventory exceeded')
+        if len(children) > 5: raise ConfigError('catalog version inventory exceeded')
         for p in children:
             self._check_path(p)
             if p.stat().st_mode & 0o222: raise ConfigError('catalog version file is not sealed')
@@ -526,7 +530,7 @@ class CatalogStore:
                 _hash(interrupted['content_id'])
                 if interrupted['content_id'] in preserved: raise ConfigError('interrupted cleanup now references a version; refusing deletion')
                 for name, digest in interrupted['files'].items():
-                    if name not in ('manifest.json','catalog.db','dt.db','farm.db','bundle.tar.gz'): raise ConfigError('unsafe cleanup journal member')
+                    if name not in ('manifest.json','catalog.db','dt.db','farm.db','converts.db','bundle.tar.gz'): raise ConfigError('unsafe cleanup journal member')
                     _hash(digest)
             for path in sorted((self.path/'versions').iterdir()):
                 if path.name in preserved:
@@ -616,15 +620,29 @@ def _administrator(root, prefix):
         raise ConfigError('catalog administrative writes require disposable provisioning mounts')
 
 
-def resolved_catalogs(root):
-    """Resolve exactly one complete reference for all host rooms, read-only."""
+def resolved_catalogs(root, *, room_alias=None, reference=None):
+    """Verify a complete reference, inspecting only an explicitly scoped room.
+
+    Host preflight still inspects every bundle. A guarded worker retains its
+    pinned reference and may inspect only databases declared for its own mode.
+    """
     root = Path(root)
-    if not os.path.lexists(contained(root, POINTER)): return None
-    store = CatalogStore.open(root); ref = store.current()
+    if reference is not None and room_alias is None:
+        raise ConfigError('pinned catalog resolution requires an explicit room')
+    if not os.path.lexists(contained(root, POINTER)):
+        if reference is not None: raise ConfigError('pinned catalog store is missing')
+        return None
+    store = CatalogStore.open(root); current = store.current()
+    ref = store._validate_reference(reference) if reference is not None else current
     _, config = load(root)
     if not {mode_for(r) for r in config['rooms']} <= set(ref['modes']):
         raise ConfigError('managed catalog set is incomplete; stopped import required')
-    bundles = {mode: store.version(mode, identity) for mode, identity in ref['modes'].items()}
+    modes = set(ref['modes'])
+    if room_alias is not None:
+        selected = [room for room in config['rooms'] if room['alias'] == room_alias]
+        if len(selected) != 1: raise ConfigError('unknown configured room')
+        modes = {mode_for(selected[0])}
+    bundles = {mode: store.version(mode, ref['modes'][mode]) for mode in sorted(modes)}
     return {'set_id': ref['set_id'], 'reference': ref, 'bundles': bundles, 'store': store.path}
 
 
@@ -637,7 +655,9 @@ def settings_for(room, resolved):
             'standard_dt_db': str(folder / 'dt.db') if 'dt' in companions else '',
             'standard_catalog_binding': {'source_sha256': files['catalog.db'], 'dt_sha256': files['dt.db']} if 'dt' in companions else None,
             'mania_farm_db': str(folder / 'farm.db') if 'farm' in companions else '',
-            'mania_farm_enabled': 'farm' in companions}
+            'mania_farm_enabled': 'farm' in companions,
+            'mania_convert_db': str(folder / 'converts.db') if 'converts' in companions else '',
+            'mania_convert_validation_db': str(folder / 'converts.db') if 'converts' in companions else None}
 
 
 def main(argv=None):

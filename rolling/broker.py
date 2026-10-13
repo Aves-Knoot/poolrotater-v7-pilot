@@ -277,9 +277,16 @@ class Broker:
             except queue.Empty:
                 pass
 
+    def activate(self):
+        if self.fenced:
+            raise HubDisconnected('retired worker cannot reactivate')
+        self.discord = self.owner.discord.activate_view(self.alias, self.generation)
+        self.active = True
+
     def retire(self):
         self.active = False
         self.fenced = True
+        self.owner.discord.retire_view(self.alias, self.generation, self.discord)
         if self.owner.chat_websocket and self.channel:
             self.owner.chat_websocket.unsubscribe(self.channel, self.chat_inbox)
         with self.owner.shared.lock:

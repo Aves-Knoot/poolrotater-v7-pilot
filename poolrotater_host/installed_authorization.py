@@ -8,7 +8,7 @@ the same owner lease used by controller startup and stopped release switching.
 import os
 from pathlib import Path
 
-from .oauth import AuthError, OfflineOAuth
+from .oauth import AuthError, OfflineOAuth, diagnostic_lease
 from .operator_client import (configure_operator_client, load_operator_client,
                               operator_client_fingerprint, same_client,
                               _configure_provider_client, _load_provider_client,
@@ -60,6 +60,18 @@ def installed_provider_state(root, release, *, initialize=False, configuration=N
                                     _fixed_transport(guard()).local_state(configuration), initialize=initialize)
 
 
+def installed_provider_diagnostic(root, release, *, configuration=None):
+    """Consistent installed local snapshot while a service owns the account.
+
+    Runtime/profile/namespace validation remains mandatory. Shared read leases
+    cover existing OAuth and pacing locks only; no network, callbacks, authority
+    creation, repair, token values or lifetime owner/account lease is involved.
+    """
+    guard = _runtime_guard(root, release, prepared=True)
+    return _provider_authentication(root, guard,
+        _fixed_transport(guard()).local_state(configuration), diagnostic=True)
+
+
 def installed_provider_authentication(root, release, trust, configuration=None, *, initialize=False):
     """Bind an explicit fixed provider; every actual authorization stays disabled."""
     guard = _runtime_guard(root, release, prepared=True)
@@ -75,7 +87,7 @@ def _fixed_transport(runtime):
     return PilotProviderTransport if execution == PILOT_PROVIDER else FixedProviderTransport
 
 
-def _provider_authentication(root, runtime_guard, transport, *, initialize=False):
+def _provider_authentication(root, runtime_guard, transport, *, initialize=False, diagnostic=False):
     """One complete prepared namespace; reconstruction never initializes a ledger."""
     from .provider_authorization import ProviderOAuth
     from .provider_pacing import ProviderRequestGate
@@ -83,6 +95,8 @@ def _provider_authentication(root, runtime_guard, transport, *, initialize=False
     from .provider_transport import DeadlineFixtureTransport
 
     if type(initialize) is not bool: raise AuthError('invalid_provider_initialization_choice')
+    if type(diagnostic) is not bool or (diagnostic and initialize):
+        raise AuthError('invalid_provider_diagnostic_choice')
     if type(transport) in (FixedProviderTransport, PilotProviderTransport, LivePilotTransport):
         execution = transport.execution
         from .pilot_identity import provider_execution
@@ -118,6 +132,15 @@ def _provider_authentication(root, runtime_guard, transport, *, initialize=False
 
     guard()
     fingerprint = provider_client_fingerprint(root, profile, execution=execution)
+    pacing_budget = None
+    # Ordinary fixture guards intentionally return only a fake manifest. Real
+    # load_provisioned always validates and returns its protected registration;
+    # no mutable installation/profile input can omit this registration.
+    runtime = runtime_guard()
+    if 'registration' in runtime:
+        from .provider_budget import loader as budget_loader
+        registration = runtime['registration']
+        pacing_budget = budget_loader(registration['prefix'], registration, fingerprint)
     auth = ProviderOAuth(root, profile.credentials, transport, local_guard=guard,
                          expected_user_id=profile.expected_user_id, redirect_uri=profile.redirect_uri,
                          client_profile_sha256=fingerprint)
@@ -127,6 +150,23 @@ def _provider_authentication(root, runtime_guard, transport, *, initialize=False
     # cooperating administrator. Room calls still reread mutable profile/journal
     # provenance without hashing the entire installed environment for every chat.
     auth._room_guard = room_guard
+    if diagnostic:
+        # This short read path deliberately does not return an OAuth or gate
+        # object. All mutating/owner construction paths below keep their lease.
+        with diagnostic_lease(auth.lock_path):
+            guard()
+            phases = auth._authorization_phases()
+            pacing = ProviderRequestGate.diagnostic_snapshot(root,
+                profile.credentials.client_id, execution=execution,
+                client_profile_sha256=fingerprint, user_id=auth._account(),
+                minimum_interval=interval, budget_loader=pacing_budget)
+            guard()
+        from .authorization import diagnostic_phases
+        return {**diagnostic_phases(phases), 'provider_pacing': pacing,
+                'start_allowed': False, 'actual_provider_dispatch': False,
+                'live_capable': execution == 'provider-live-pilot',
+                'diagnostic_snapshot_scope': 'checked_local_authorization_and_pacing',
+                'authority_state_modified': False}
     with auth._transaction():
         existing = False
         for path, kind in ((auth.token_path, 'token'), (auth.pending_path, 'pending'),
@@ -137,7 +177,8 @@ def _provider_authentication(root, runtime_guard, transport, *, initialize=False
         if not all(present) and (not initialize or existing):
             raise AuthError('provider_pacing_state_missing')
         gate = ProviderRequestGate(root, profile.credentials.client_id, execution=execution,
-                                   client_profile_sha256=fingerprint, minimum_interval=interval)
+                                   client_profile_sha256=fingerprint, minimum_interval=interval,
+                                   budget_loader=pacing_budget)
         gate.require_authority(root, profile.credentials.client_id, user_id=auth._account())
         transport.gate = gate
     return auth

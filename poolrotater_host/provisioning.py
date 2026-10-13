@@ -24,10 +24,12 @@ def protected(path):
     """Check every ancestor, not just the inherited guard's immediate parents."""
     path = Path(path)
     if not path.is_absolute() or '..' in path.parts: raise ConfigError('protected paths must be absolute and canonical')
+    if os.geteuid() != 0 and os.access not in os.supports_effective_ids:
+        raise ConfigError('effective-identity runtime permission checks unavailable')
     for item in (path, *path.parents):
         st = item.lstat()
         if (stat.S_ISLNK(st.st_mode) or st.st_uid != 0 or stat.S_IMODE(st.st_mode) & 0o022
-                or (os.geteuid() != 0 and os.access(item, os.W_OK))):
+                or (os.geteuid() != 0 and os.access(item, os.W_OK, effective_ids=True))):
             raise ConfigError('runtime path or ancestor is writable/unprotected')
     return path
 
@@ -181,8 +183,10 @@ def _provision(root, prefix, bundle, expected_sha256, *, uid, execution, reserve
     expected_pointer = _pointer(marker, prefix)
     if pointer is not None and pointer != expected_pointer: raise ConfigError('operator runtime binding changed')
     prefix.mkdir(mode=0o755, exist_ok=True)
+    protected(prefix);prefix.chmod(0o755)
     for name in ('releases','environments','installations','candidates','transitions','.staging'):
         path = prefix / name; path.mkdir(mode=0o755, exist_ok=True); protected(path)
+        path.chmod(0o755)
     with file_lease(prefix / '.provision.lock'):
         from .runtime_lifecycle import install_bootstrap, require_no_pending, store_candidate
         require_no_pending(prefix, marker['installation_id'])

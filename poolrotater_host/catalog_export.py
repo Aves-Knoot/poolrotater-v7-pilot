@@ -42,6 +42,11 @@ FEATURES = columns('beatmap_id:INTEGER classifier_version:TEXT key_count:INTEGER
 OVERREP = columns('beatmap_id:INTEGER rank_score:REAL confidence:REAL raw_appearances:INTEGER band_count:INTEGER')
 MANIA_FARM = columns('beatmap_id:INTEGER key_count:INTEGER farm_index:REAL confidence:REAL model_version:TEXT')
 DT = columns('beatmap_id:INTEGER artist:TEXT title:TEXT version:TEXT nm_sr:REAL dt_sr:REAL hit_length:INTEGER source_hit_length:INTEGER passcount:INTEGER ranked_date:TEXT farm_score:REAL dominant_mods:TEXT stream_score:REAL stream_bpm:REAL checksum:TEXT calculator:TEXT')
+CONVERT_CORE = BASE + columns('key_count:INTEGER checked_at:REAL unique_players:INTEGER')
+CONVERT_OPTIONAL = columns('classifier_version:TEXT jack_score:REAL chordjack_score:REAL stream_score:REAL ln_score:REAL technical_score:REAL')
+CONVERT = CONVERT_CORE + CONVERT_OPTIONAL
+CONVERT_VALIDATION = columns('beatmap_id:INTEGER catalog_keys:INTEGER catalog_sr:REAL catalog_checked_at:REAL actual_keys:INTEGER converted_sr:REAL source_sr:REAL source_sha256:TEXT backend:TEXT verified_at:REAL')
+CONVERT_BINDING = 'catalog-revision-and-actual-keys-v1'
 META = columns('key:TEXT value:TEXT')
 
 
@@ -58,6 +63,8 @@ def canonical(value):
 
 
 def schemas(mode, role):
+    if role == 'converts' and mode in ('mania4', 'mania7'):
+        return {'convert_maps': CONVERT, 'verified_converts': CONVERT_VALIDATION, 'metadata': META}
     if role == 'dt' and mode == 'standard':
         return {'dt_maps': DT, 'metadata': META}
     if role == 'farm' and mode != 'standard':
@@ -140,6 +147,8 @@ def create_table(db, table, fields):
 
 def validate_row(fields, row, *, mode, table):
     for (name, kind), value in zip(fields, row):
+        if table == 'convert_maps' and (name, kind) in CONVERT_OPTIONAL and value is None:
+            continue
         validate_value(name, kind, value)
     item = dict(zip((name for name, _ in fields), row))
     if 'key_count' in item and item['key_count'] != MODES[mode][1]:
@@ -154,7 +163,68 @@ def validate_row(fields, row, *, mode, table):
             raise ConfigError('invalid DT calculator/checksum evidence')
         if item['hit_length'] != math.ceil(item['source_hit_length'] / 1.5):
             raise ConfigError('invalid DT playing length')
+    if table == 'verified_converts':
+        if (item['catalog_keys'] != MODES[mode][1] or item['actual_keys'] != MODES[mode][1]
+                or any(not 0 < item[k] <= 100 for k in ('catalog_sr','converted_sr','source_sr'))
+                or not HASH.fullmatch(item['source_sha256']) or not item['backend']
+                or item['verified_at'] <= 0):
+            raise ConfigError('invalid Mania conversion verification evidence')
     return item
+
+
+def _project_rows(db, table, fields, *, optional=()):
+    """Static selection projection only; never copy source SQL/private columns."""
+    obj = db.execute('SELECT type,sql FROM sqlite_master WHERE name=?',(table,)).fetchone()
+    if not obj or obj[0] != 'table' or not obj[1] or 'VIRTUAL TABLE' in obj[1].upper():
+        raise ConfigError('required conversion table is absent or unsupported')
+    available={r[1] for r in db.execute(f'PRAGMA table_info({table})')}
+    if not {name for name,_ in fields if name not in optional} <= available:
+        raise ConfigError('required conversion columns are missing')
+    projection=','.join(name if name in available else 'NULL' for name,_ in fields)
+    seen=set()
+    for index,row in enumerate(db.execute(f'SELECT {projection} FROM {table} ORDER BY beatmap_id')):
+        if index >= MAX_ROWS: raise ConfigError('conversion row budget exceeded')
+        item=dict(zip((name for name,_ in fields),row))
+        bid=item['beatmap_id']
+        if type(bid) is not int or bid<=0 or bid in seen:
+            raise ConfigError('invalid or duplicate conversion beatmap identity')
+        seen.add(bid)
+        yield item
+
+
+def _conversion_matches(candidate, evidence, keys):
+    """Match the unchanged native reader's independent revision/key admission."""
+    return (evidence is not None and candidate['key_count']==keys
+            and evidence['catalog_keys']==candidate['key_count']
+            and evidence['actual_keys']==keys and evidence['catalog_sr']==candidate['sr']
+            and evidence['catalog_checked_at']==candidate['checked_at'])
+
+
+def write_converts(path, candidates, validation, mode, *, meta):
+    verified={r['beatmap_id']:r for r in _project_rows(validation,'verified_converts',CONVERT_VALIDATION)}
+    retained=[]
+    for item in _project_rows(candidates,'convert_maps',CONVERT,
+                              optional={name for name,_ in CONVERT_OPTIONAL}):
+        evidence=verified.get(item['beatmap_id'])
+        if item['beatmap_id'] in EXCLUDED or not _conversion_matches(item,evidence,MODES[mode][1]):
+            continue
+        validate_row(CONVERT,tuple(item.values()),mode=mode,table='convert_maps')
+        validate_row(CONVERT_VALIDATION,tuple(evidence.values()),mode=mode,table='verified_converts')
+        retained.append((item,evidence))
+    with sqlite3.connect(path) as out:
+        out.execute('PRAGMA journal_mode=DELETE')
+        out.execute('PRAGMA application_id=1347572547')
+        out.execute('PRAGMA user_version=1')
+        for table,fields in schemas(mode,'converts').items(): create_table(out,table,fields)
+        for item,evidence in retained:
+            out.execute(f'INSERT INTO convert_maps VALUES ({",".join("?" for _ in CONVERT)})',tuple(item.values()))
+            out.execute(f'INSERT INTO verified_converts VALUES ({",".join("?" for _ in CONVERT_VALIDATION)})',tuple(evidence.values()))
+        out.executemany('INSERT INTO metadata VALUES (?,?)',sorted(meta.items()))
+        out.execute('CREATE INDEX convert_selection ON convert_maps(key_count,hit_length,passcount)')
+        out.commit()
+        if out.execute('PRAGMA quick_check').fetchall()!=[('ok',)]:
+            raise ConfigError('exported conversion integrity failed')
+    return {'convert_maps':len(retained),'verified_converts':len(retained)}
 
 
 def copy_table(src, dst, table, fields, *, mode, ids=None):
@@ -236,9 +306,12 @@ def _pack(folder, files):
             'expanded_bytes': sum(item['bytes'] for item in files), 'codec': 'tar+gzip-v1'}
 
 
-def export_bundle(catalog, destination, mode, *, dt=None, farm=None):
+def export_bundle(catalog, destination, mode, *, dt=None, farm=None, converts=None, convert_validation=None):
     """Build a new local export directory; never overwrite an installed package."""
-    if mode not in MODES or (dt is not None and mode != 'standard') or (farm is not None and mode == 'standard'):
+    if (mode not in MODES or (dt is not None and mode != 'standard')
+            or (farm is not None and mode == 'standard')
+            or ((converts is None)!=(convert_validation is None))
+            or (converts is not None and mode=='standard')):
         raise ConfigError('invalid export mode/companion combination')
     destination = Path(destination).absolute()
     if destination.exists() or destination.is_symlink():
@@ -304,6 +377,19 @@ def export_bundle(catalog, destination, mode, *, dt=None, farm=None):
                 analysis['farm'] = meta['model_version']
             elif mode != 'standard':
                 capabilities['unavailable']['farm'] = 'no qualified efficiency companion'
+            if converts is not None:
+                cdb,cinfo=stack.enter_context(source(converts))
+                vdb,vinfo=stack.enter_context(source(convert_validation))
+                inputs['converts']=cinfo
+                provenance={'binding':CONVERT_BINDING,'validation_sha256':vinfo['sha256'],
+                            'validation_bytes':vinfo['bytes']}
+                meta={'format':'1','keys':str(MODES[mode][1]),'binding':CONVERT_BINDING,
+                      'candidate_source_sha256':cinfo['sha256'],'validation_source_sha256':vinfo['sha256']}
+                counts=write_converts(temporary/'converts.db',cdb,vdb,mode,meta=meta)
+                files.append(_identity(temporary/'converts.db','converts',counts))
+                capabilities['companions'].append('converts')
+                capabilities['unavailable'].pop('converts')
+                analysis['converts']=provenance
             archive = _pack(temporary, files)
             manifest = {'format': FORMAT, 'export_schema': 1, 'reader': READER, 'mode': mode,
                         'ruleset': MODES[mode][0], 'keys': MODES[mode][1], 'files': files,
@@ -344,18 +430,23 @@ def validate_manifest(manifest):
     if type(manifest['ruleset']) is not int or (manifest['ruleset'], manifest['keys']) != MODES[mode] or (mode != 'standard' and type(manifest['keys']) is not int):
         raise ConfigError('catalog manifest mode mismatch')
     files = manifest['files']
-    if type(files) is not list or not 1 <= len(files) <= 2:
+    if type(files) is not list or not 1 <= len(files) <= (2 if mode=='standard' else 3):
         raise ConfigError('catalog manifest file budget exceeded')
     roles = []
     for item in files:
         _closed(item, {'name', 'role', 'sha256', 'bytes', 'tables'})
         role = item['role']
-        if type(role) is not str or role not in {'catalog', 'dt', 'farm'} or item['name'] != role + '.db':
+        if type(role) is not str or role not in {'catalog', 'dt', 'farm','converts'} or item['name'] != role + '.db':
             raise ConfigError('unexpected catalog file identity')
         fields = schemas(mode, role)
         _closed(item['tables'], set(fields) - {'metadata'})
         for count in item['tables'].values():
-            _size(count, maximum=MAX_ROWS)
+            if role=='converts':
+                if type(count) is not int or not 0<=count<=MAX_ROWS:
+                    raise ConfigError('conversion count outside limits')
+            else: _size(count, maximum=MAX_ROWS)
+        if role=='converts' and item['tables']['convert_maps']!=item['tables']['verified_converts']:
+            raise ConfigError('conversion evidence coverage mismatch')
         _hash(item['sha256']); _size(item['bytes'])
         roles.append(role)
     if roles[0] != 'catalog' or len(roles) != len(set(roles)):
@@ -369,13 +460,14 @@ def validate_manifest(manifest):
     if capabilities['styles'] != expected_styles or capabilities['mods'] != (['NM', 'DT'] if 'dt' in roles else ['NM']) or capabilities['companions'] != roles[1:]:
         raise ConfigError('catalog capabilities do not match required evidence')
     expected_unavailable = {'loved': 'no qualified catalog', 'converts': 'no matching source/evidence pair'}
+    if 'converts' in roles: expected_unavailable.pop('converts')
     if mode == 'standard' and 'dt' not in roles:
         expected_unavailable['DT'] = 'no matching prepared companion'
     if mode != 'standard' and 'farm' not in roles:
         expected_unavailable['farm'] = 'no qualified efficiency companion'
     if capabilities['unavailable'] != expected_unavailable:
         raise ConfigError('invalid catalog unavailable capabilities')
-    _closed(manifest['analysis'], {'structural_classifier', 'farm'} | ({'jump'} if mode == 'standard' else set()) | ({'dt'} if 'dt' in roles else set()))
+    _closed(manifest['analysis'], {'structural_classifier', 'farm'} | ({'jump'} if mode == 'standard' else set()) | ({'dt'} if 'dt' in roles else set()) | ({'converts'} if 'converts' in roles else set()))
     expected_classifier = 'stream_v3' if mode == 'standard' else 'mania_patterns_v1'
     if manifest['analysis']['structural_classifier'] != expected_classifier or manifest['analysis']['farm'] != ('mania_farm_efficiency_v1' if 'farm' in roles else 'prepared-source-derived; no calculator claim'):
         raise ConfigError('unsupported catalog analysis provenance')
@@ -393,6 +485,12 @@ def validate_manifest(manifest):
             valid = False
         if not valid or evidence['calculator'] != DT_CALCULATOR or evidence['clock_rate'] != '1.5':
             raise ConfigError('incompatible DT evidence provenance')
+    if 'converts' in roles:
+        evidence=manifest['analysis']['converts']
+        _closed(evidence,{'binding','validation_sha256','validation_bytes'})
+        _hash(evidence['validation_sha256']);_size(evidence['validation_bytes'])
+        if evidence['binding']!=CONVERT_BINDING:
+            raise ConfigError('incompatible conversion evidence provenance')
     _closed(manifest['exclusions'], {'revision', 'beatmap_ids'})
     if (type(manifest['exclusions']['revision']) is not int
             or type(manifest['exclusions']['beatmap_ids']) is not list
@@ -478,9 +576,20 @@ def inspect_bundle(folder):
                 meta = dict(db.execute('SELECT key,value FROM metadata'))
                 if meta != {'key_count':str(manifest['keys']), 'model_version':'mania_farm_efficiency_v1'}:
                     raise ConfigError('Mania farm companion provenance mismatch')
+            if item['role']=='converts':
+                meta=dict(db.execute('SELECT key,value FROM metadata'))
+                expected_meta={'format':'1','keys':str(manifest['keys']),'binding':CONVERT_BINDING,
+                    'candidate_source_sha256':manifest['sources']['converts']['sha256'],
+                    'validation_source_sha256':manifest['analysis']['converts']['validation_sha256']}
+                if meta!=expected_meta:
+                    raise ConfigError('conversion companion provenance mismatch')
+                candidates={r['beatmap_id']:r for r in _project_rows(db,'convert_maps',CONVERT)}
+                verified={r['beatmap_id']:r for r in _project_rows(db,'verified_converts',CONVERT_VALIDATION)}
+                if set(candidates)!=set(verified) or any(not _conversion_matches(c,verified[bid],manifest['keys']) for bid,c in candidates.items()):
+                    raise ConfigError('conversion companion revision/key mismatch')
             if manifest['mode'] != 'standard' and item['role'] == 'catalog' and item['tables']['maps'] != item['tables']['mania_features']:
                 raise ConfigError('native structural evidence coverage is incomplete')
-            for table in set(fields) - {'metadata', 'maps', 'beatmaps'}:
+            for table in set(fields) - {'metadata', 'maps', 'beatmaps','convert_maps','verified_converts'}:
                 if any(row[0] not in ids for row in db.execute(f'SELECT beatmap_id FROM {table}')):
                     raise ConfigError('catalog companion map closure mismatch')
     return manifest
@@ -513,7 +622,9 @@ def pool_from_bundle(folder, *, sr_min=0, sr_max=20, source_mode='variety', limi
     from bot.mania_pool import ManiaPool
     return ManiaPool(str(folder / 'catalog.db'), mania_keys=manifest['keys'],
                      mania_source_mode=source_mode, mania_farm_enabled='farm' in manifest['capabilities']['companions'],
-                     mania_farm_db=str(folder / 'farm.db') if 'farm' in manifest['capabilities']['companions'] else '', **options)
+                     mania_farm_db=str(folder / 'farm.db') if 'farm' in manifest['capabilities']['companions'] else '',
+                     mania_convert_db=str(folder/'converts.db') if 'converts' in manifest['capabilities']['companions'] else '',
+                     mania_convert_validation_db=str(folder/'converts.db') if 'converts' in manifest['capabilities']['companions'] else None, **options)
 
 
 def main(argv=None):
@@ -523,9 +634,12 @@ def main(argv=None):
     parser.add_argument('--mode', required=True, choices=MODES)
     parser.add_argument('--dt', type=Path)
     parser.add_argument('--farm', type=Path)
+    parser.add_argument('--converts',type=Path)
+    parser.add_argument('--convert-validation',type=Path)
     args = parser.parse_args(argv)
     try:
-        manifest = export_bundle(args.catalog, args.destination, args.mode, dt=args.dt, farm=args.farm)
+        manifest = export_bundle(args.catalog, args.destination, args.mode, dt=args.dt, farm=args.farm,
+                                 converts=args.converts,convert_validation=args.convert_validation)
     except (ConfigError, OSError, sqlite3.Error, ValueError) as exc:
         parser.exit(2, (str(exc) if isinstance(exc, ConfigError) else type(exc).__name__) + '\n')
     print(json.dumps(manifest, sort_keys=True, indent=2, allow_nan=False))

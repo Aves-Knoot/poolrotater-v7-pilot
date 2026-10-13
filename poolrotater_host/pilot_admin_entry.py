@@ -73,9 +73,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--instance', required=True)
     parser.add_argument('--verified-stage', action='store_true', help=argparse.SUPPRESS)
-    parser.add_argument('action', choices=('check', 'status', 'support', 'unit', 'configure', 'authorize',
-        'cancel', 'recover', 'pacing-recover', 'catalog-import', 'catalog-recover', 'start', 'stop', 'remove',
-        'ownership-review', 'ownership-clear', 'ownership-resume'))
+    parser.add_argument('action', choices=('check', 'code-proof', 'status', 'support', 'unit', 'configure', 'authorize',
+        'cancel', 'recover', 'pacing-recover', 'catalog-import', 'catalog-recover',
+        'catalog-trust-replace', 'catalog-trust-recover', 'start', 'stop', 'remove',
+        'owner-import', 'owner-status', 'owner-rollback', 'owner-budget-prepare',
+        'ownership-review', 'ownership-clear', 'ownership-resume',
+        'network-configure','network-enroll','network-resume','network-rotate','network-leave','network-reset',
+        'network-status','network-support','network-unit','network-start','network-stop','network-remove',
+        'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
+        'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch'))
     args, rest = parser.parse_known_args()
     release = verified_release(args.instance)
     sys.path.insert(0, str(release))

@@ -156,6 +156,8 @@ def make_pool(cfg):
     pool = (ManiaPool if mania else MapPool)(str(db_path), limit=cfg["pool_limit"], **extra, **{
         key: cfg[key] for key in keys if key in cfg
     })
+    from poolrotater_host.ratings.reader import for_settings
+    pool.ratings_reader=for_settings(cfg)
     if not pool.maps:
         raise ValueError(f"{cfg['_instance_name']} has an empty map pool")
     return pool

@@ -21,7 +21,7 @@ PROVIDER = 'provider-live-pilot'
 
 def policy():
     return {'format': 1, 'release': VERSION, 'installation': INSTALLATION,
-            'provider': PROVIDER, 'maximum_rooms': 1,
+            'provider': PROVIDER, 'maximum_rooms': 4,
             'automatic_authorization': False, 'automatic_updates': False,
             'collection_or_analysis': False}
 
@@ -58,7 +58,7 @@ def registered_policy_path():
             or record['release_snapshot']['files'].get(POLICY_NAME) != hashlib.sha256(policy_bytes()).hexdigest()):
         raise ValueError
     _, config = load(root)
-    if config['execution'] != INSTALLATION or len(config['rooms']) != 1: raise ValueError
+    if config['execution'] != INSTALLATION or not 1 <= len(config['rooms']) <= policy()['maximum_rooms']: raise ValueError
     return protected(release / POLICY_NAME)
 
 

@@ -24,6 +24,23 @@ ROOT_SOURCES = ('run_bot.py', 'run_multiroom.py', 'run_rolling.py', 'run_room_wo
                 'offline_host_controller.py', 'check_protected_runtime.py', 'deployment/sqlite_readonly.py')
 TARGET = {'os': 'linux', 'architecture': 'x86_64', 'python': '3.12', 'reference_os': 'Ubuntu 24.04'}
 
+# Inspection of the published upgrade baseline is distinct from admission of
+# the current installed policy. Only these exact, externally pinned bytes may
+# carry the historical single-room policy; installed authority still requires
+# live_release.policy_bytes() and the current protected registration.
+REVIEWED_SINGLE_ROOM_BASELINES = frozenset({
+    'a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932',
+})
+
+
+def _reviewed_live_policy(expected_sha256, actual):
+    from .live_release import policy, policy_bytes
+    if actual == policy_bytes():
+        return True
+    historical = {**policy(), 'maximum_rooms': 1}
+    return (expected_sha256 in REVIEWED_SINGLE_ROOM_BASELINES
+            and actual == json_bytes(historical))
+
 
 def fixture_only():
     if os.environ.get('POOLROTATER_OFFLINE_SANDBOX') != '1':
@@ -233,7 +250,8 @@ def inspect(path, expected_sha256, *, execution='offline-fixture'):
             from .live_release import INSTALLATION, VERSION, POLICY_NAME, policy_bytes
             policy_member = 'payload/' + POLICY_NAME
             if execution == INSTALLATION:
-                if spec['version'] != VERSION or policy_member not in names or archive.read(policy_member) != policy_bytes():
+                if (spec['version'] != VERSION or policy_member not in names
+                        or not _reviewed_live_policy(expected_sha256, archive.read(policy_member))):
                     raise ConfigError('live pilot release policy differs from reviewed artifact')
             elif policy_member in names:
                 raise ConfigError('non-live artifacts cannot carry a live policy')

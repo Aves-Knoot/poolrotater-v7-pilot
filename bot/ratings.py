@@ -263,9 +263,25 @@ CREATE INDEX IF NOT EXISTS ix_autohost_match_players_map
 
 
 class RatingStore:
-    def __init__(self, path: str = "ratings.db"):
+    def __init__(self, path: str = "ratings.db", *, initialize: bool = True, reader=None):
         self.path = str(path)
+        self.reader=reader
         db_path = Path(self.path)
+        if not initialize:
+            # Coordinated v7 migrations prepare this ledger before workers run.
+            # Existing workers validate it, rather than opportunistically DDL.
+            if not db_path.is_file():
+                raise ValueError("prepared_rating_ledger_required")
+            conn = self._conn()
+            try:
+                from .rating_outbox import validate
+                validate(conn)
+                conn.execute("SELECT beatmap_id,user_id,rating,created_at,map_origin,key_count FROM map_ratings LIMIT 0")
+                conn.execute("SELECT user_id,is_ignored,accept_after FROM rating_ignored_users LIMIT 0")
+                conn.execute("SELECT beatmap_id,user_id,rating,created_at FROM shadow_map_ratings LIMIT 0")
+            finally:
+                conn.close()
+            return
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         conn = sqlite3.connect(self.path, timeout=30)
@@ -276,7 +292,7 @@ class RatingStore:
         # short rating/evidence write. SQLite still has one writer at a time,
         # but our writes are tiny and busy_timeout handles brief contention.
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA synchronous=FULL")
         conn.executescript(SCHEMA)
 
         # Non-destructive upgrades for databases created by older versions.
@@ -355,7 +371,7 @@ class RatingStore:
                 c.row_factory = sqlite3.Row
                 c.execute("PRAGMA busy_timeout=30000")
                 c.execute("PRAGMA foreign_keys=ON")
-                c.execute("PRAGMA synchronous=NORMAL")
+                c.execute("PRAGMA synchronous=FULL")
                 return c
             except sqlite3.OperationalError as exc:
                 if c is not None:
@@ -472,6 +488,7 @@ class RatingStore:
         *,
         map_origin: str = "unknown",
         key_count: int | None = None,
+        context: dict | None = None,
     ) -> bool:
         """Record a real human vote.
 
@@ -485,60 +502,56 @@ class RatingStore:
         origin = str(map_origin or "unknown")[:32]
         keys = int(key_count) if key_count in (4, 7) else None
         conn = self._conn()
-        prev = conn.execute(
-            """
-            SELECT rating, created_at
-            FROM map_ratings
-            WHERE beatmap_id=? AND user_id=?
-            """,
-            (bid, uid),
-        ).fetchone()
-        policy = conn.execute(
-            """
-            SELECT is_ignored, accept_after
-            FROM rating_ignored_users
-            WHERE user_id=?
-            """,
-            (uid,),
-        ).fetchone()
-
-        same_rating = bool(prev and int(prev["rating"]) == val)
-        old_pre_cutoff = False
-        if same_rating and policy is not None and not int(policy["is_ignored"] or 0):
-            cutoff = policy["accept_after"]
-            created = prev["created_at"]
-            old_pre_cutoff = (
-                cutoff is not None
-                and (created is None or float(created) < float(cutoff))
-            )
-
-        if same_rating and not old_pre_cutoff:
+        try:
+            # Serialize the read/modify/write decision across room processes.
+            # Outbox capture shares this transaction, never another WAL file.
+            conn.execute("BEGIN IMMEDIATE")
+            prev = conn.execute(
+                "SELECT rating, created_at FROM map_ratings WHERE beatmap_id=? AND user_id=?",
+                (bid, uid),
+            ).fetchone()
+            policy = conn.execute(
+                "SELECT is_ignored, accept_after FROM rating_ignored_users WHERE user_id=?",
+                (uid,),
+            ).fetchone()
+            if policy is not None and int(policy["is_ignored"] or 0):
+                # A moderator can ignore someone between the command's earlier
+                # policy read and this transaction. Never export that input.
+                conn.execute(
+                    "INSERT INTO shadow_map_ratings(beatmap_id,user_id,rating,created_at) VALUES(?,?,?,?) "
+                    "ON CONFLICT(beatmap_id,user_id) DO UPDATE SET rating=excluded.rating,created_at=excluded.created_at",
+                    (bid, uid, val, time.time()),
+                )
+                conn.commit()
+                return False
+            same_rating = bool(prev and int(prev["rating"]) == val)
+            old_pre_cutoff = False
+            if same_rating and policy is not None:
+                cutoff, created = policy["accept_after"], prev["created_at"]
+                old_pre_cutoff = cutoff is not None and (created is None or float(created) < float(cutoff))
+            from .rating_outbox import capture, repeat_is_fresh
+            fresh_after_conflict = same_rating and repeat_is_fresh(conn, bid, uid)
+            if same_rating and not old_pre_cutoff and not fresh_after_conflict:
+                conn.execute("UPDATE map_ratings SET map_origin=?,key_count=? WHERE beatmap_id=? AND user_id=?",
+                             (origin, keys, bid, uid))
+                conn.commit()
+                return False
+            now = time.time()
             conn.execute(
-                "UPDATE map_ratings SET map_origin=?, key_count=? "
-                "WHERE beatmap_id=? AND user_id=?",
-                (origin, keys, bid, uid),
+                "INSERT INTO map_ratings(beatmap_id,user_id,rating,created_at,map_origin,key_count) VALUES(?,?,?,?,?,?) "
+                "ON CONFLICT(beatmap_id,user_id) DO UPDATE SET rating=excluded.rating,created_at=excluded.created_at,"
+                "map_origin=excluded.map_origin,key_count=excluded.key_count",
+                (bid, uid, val, now, origin, keys),
             )
+            capture(conn, beatmap_id=bid, user_id=uid, rating=val,
+                    observed_at=now, map_origin=origin, key_count=keys, context=context)
             conn.commit()
+            return True
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
             conn.close()
-            return False
-
-        now = time.time()
-        conn.execute(
-            """
-            INSERT INTO map_ratings (
-                beatmap_id, user_id, rating, created_at, map_origin, key_count
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(beatmap_id, user_id) DO UPDATE SET
-                rating=excluded.rating,
-                created_at=excluded.created_at,
-                map_origin=excluded.map_origin,
-                key_count=excluded.key_count
-            """,
-            (bid, uid, val, now, origin, keys),
-        )
-        conn.commit()
-        conn.close()
-        return True
 
     def is_rating_ignored(self, user_id: int) -> bool:
         """Return True while this user's feedback is shadow-ignored."""
@@ -785,6 +798,8 @@ class RatingStore:
         )
 
     def tally(self, beatmap_id: int) -> tuple[int, int]:
+        if self.reader is not None:
+            return self.reader.tallies([int(beatmap_id)]).get(int(beatmap_id),(0,0))
         conn = self._conn()
         predicate = self._active_rating_policy_sql("mr", "rp")
         r = conn.execute(
@@ -837,6 +852,10 @@ class RatingStore:
         not included so fake votes can never leak into any shared backend tally.
         """
         up, down = self.tally(int(beatmap_id))
+        if self.reader is not None:
+            # The canonical aggregate cannot identify a player's own opinion;
+            # an extra apparent local/shadow vote would risk double counting.
+            return up, down
         conn = self._conn()
         row = conn.execute(
             """

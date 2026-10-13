@@ -10,12 +10,14 @@ import base64
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 import hmac
+import fcntl
 import json
 import math
 import os
 from pathlib import Path
 import re
 import secrets
+import stat
 import threading
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit
@@ -37,6 +39,50 @@ class AuthError(ConfigError):
         self.http_status = http_status
         suffix = '' if http_status is None else f' [HTTP {http_status}]'
         super().__init__('OAuth: ' + code + suffix)
+
+
+@contextmanager
+def diagnostic_lease(path, *, timeout=5):
+    """Shared, bounded read lease on an existing private transaction lock.
+
+    Diagnostics never create locks or acquire the lifetime owner/account lease.
+    Writers still hold their existing exclusive OAuth/pacing locks. Refuse a
+    replaced lock rather than treating two unrelated inodes as one authority.
+    """
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 <= timeout <= 5:
+        raise AuthError('invalid_diagnostic_timeout')
+    fd = None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        initial = os.fstat(fd)
+        if (not stat.S_ISREG(initial.st_mode) or initial.st_uid != os.geteuid()
+                or initial.st_nlink != 1 or stat.S_IMODE(initial.st_mode) & 0o077):
+            raise AuthError('diagnostic_lock_requires_review')
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise AuthError('diagnostic_snapshot_busy') from None
+                time.sleep(max(0, min(.02, deadline - time.monotonic())))
+        def current():
+            now = os.stat(path, follow_symlinks=False)
+            if (now.st_dev, now.st_ino) != (initial.st_dev, initial.st_ino):
+                raise AuthError('diagnostic_lock_changed')
+            if (not stat.S_ISREG(now.st_mode) or now.st_uid != os.geteuid()
+                    or now.st_nlink != 1 or stat.S_IMODE(now.st_mode) & 0o077):
+                raise AuthError('diagnostic_lock_requires_review')
+        current()
+        yield
+        current()
+    except AuthError:
+        raise
+    except Exception:
+        raise AuthError('diagnostic_lock_requires_review') from None
+    finally:
+        if fd is not None: os.close(fd)
 
 
 def _secret(value, maximum=16384):
@@ -265,17 +311,21 @@ class OAuthAuthority:
     def authorization_status(self):
         """Local phases only: no HTTP, token values, callbacks or account names."""
         with self._transaction():
-            pending = self._read(self.pending_path, 'pending', optional=True)
-            token = self._read(self.token_path, 'token', optional=True)
-            candidate = self._read(self.candidate_path, 'token', optional=True)
-            recoverable = bool(pending and pending['phase'] in {'exchange_pending', 'verifying'}
-                               and candidate and candidate['attempt'] == pending['attempt'])
-            return {'execution': self.execution, 'live_ready': False,
-                    'pending_phase': pending['phase'] if pending else 'absent',
-                    'token_phase': token['phase'] if token else 'absent',
-                    'candidate_recovery_available': recoverable,
-                    'callback_expired': bool(pending and pending['phase'] == 'waiting'
-                                             and not pending['issued_at'] <= self.clock() < pending['expires_at'])}
+            return self._authorization_phases()
+
+    def _authorization_phases(self):
+        """Checked fields only; caller must hold an OAuth transaction/read lease."""
+        pending = self._read(self.pending_path, 'pending', optional=True)
+        token = self._read(self.token_path, 'token', optional=True)
+        candidate = self._read(self.candidate_path, 'token', optional=True)
+        recoverable = bool(pending and pending['phase'] in {'exchange_pending', 'verifying'}
+                           and candidate and candidate['attempt'] == pending['attempt'])
+        return {'execution': self.execution, 'live_ready': False,
+                'pending_phase': pending['phase'] if pending else 'absent',
+                'token_phase': token['phase'] if token else 'absent',
+                'candidate_recovery_available': recoverable,
+                'callback_expired': bool(pending and pending['phase'] == 'waiting'
+                                         and not pending['issued_at'] <= self.clock() < pending['expires_at'])}
 
     def callback_retry_available(self, expected_state=None):
         with self._transaction():

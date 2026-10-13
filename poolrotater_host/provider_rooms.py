@@ -150,6 +150,10 @@ class ProviderRoomApi:
     offline_fixture = False
     chat_access_guard = True
 
+    def create_chat_websocket(self, configs):
+        from .provider_chat import create
+        return create(self.auth, configs)
+
     def __init__(self, auth, backend=None):
         _service(auth, backend)
         self.auth, self.backend = auth, backend

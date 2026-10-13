@@ -108,10 +108,16 @@ def main():
     mode.add_argument('--service', action='store_true')
     mode.add_argument('--provider-service', action='store_true',
                       help='prepared fixed provider service; upstream execution is disabled')
-    mode.add_argument('--ownership-local-status', action='store_true',
-                      help='read local journal and recovery receipt without provider requests')
+    mode.add_argument('--network-action', choices=('configure','enroll','resume','rotate','leave','reset','status','support'),
+                      help='independent installed network operation; never provider authorization')
+    mode.add_argument('--network-agent',action='store_true',help='independent optional heartbeat agent')
+    mode.add_argument('--ratings-action',choices=('configure','sync','fetch','status','support'))
+    parser.add_argument('--ratings-input',action='store_true',help='explicit bounded ratings JSON on stdin')
+    parser.add_argument('--network-input',action='store_true',help='explicit bounded network JSON on stdin')
     mode.add_argument('--ownership-recovery', choices=('review', 'clear', 'resume'),
                       help='explicit stopped room ownership recovery; no room mutations')
+    mode.add_argument('--ownership-local-status', action='store_true',
+                      help='read local journal and recovery receipt without provider requests')
     mode.add_argument('--calculator-check', action='store_true', help=argparse.SUPPRESS)
     mode.add_argument('--probe-candidate', type=Path, help=argparse.SUPPRESS)
     mode.add_argument('--authorization-fixture', choices=('status', 'authorize', 'cancel', 'timeout',
@@ -142,7 +148,12 @@ def main():
     parser.add_argument('--decision', choices=('complete', 'abort'))
     parser.add_argument('--verified-stage', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
-    prepared = bool(args.operator_authorization or args.provider_service or args.pilot_check or args.ownership_recovery or args.ownership_local_status)
+    prepared = bool(args.operator_authorization or args.provider_service or args.pilot_check or args.ownership_recovery or args.ownership_local_status
+                    or args.network_action or args.network_agent or args.ratings_action)
+    if args.ratings_input != (args.ratings_action=='configure'):
+        raise ValueError('ratings private input requires explicit configure action')
+    if args.network_input != (args.network_action in ('configure','enroll','reset')):
+        raise ValueError('network private input requires explicit network action')
     if not args.ownership_recovery and any((args.journal_sha256, args.room_alias,
             args.created_room_id, args.confirm_lost_creation, args.transaction_id, args.decision)):
         raise ValueError('ownership choices require explicit recovery')
@@ -193,6 +204,14 @@ def main():
                'LANG': 'C.UTF-8', 'PYTHONDONTWRITEBYTECODE': '1', 'MALLOC_ARENA_MAX': '2',
                'DOTNET_ROOT': '/usr/lib/dotnet', 'DOTNET_CLI_TELEMETRY_OPTOUT': '1',
                'DOTNET_GCHeapHardLimit': '0x8000000'}
+        if args.provider_service:
+            # Keep only explicitly configured owner integration credentials.
+            # The fixed systemd EnvironmentFile is separately provisioned;
+            # never discover production files or inherit arbitrary variables.
+            from poolrotater_host.owner_integrations import environment_names
+            for name in environment_names(args.root):
+                if name in os.environ:
+                    env[name] = os.environ[name]
         if not prepared:
             env.update(POOLROTATER_OFFLINE_SANDBOX='1', POOLROTATER_PROVISIONING_SANDBOX='1')
         if args.calculator_check: env['POOLROTATER_CALCULATOR_QUALIFICATION'] = '1'
@@ -200,6 +219,13 @@ def main():
                    '--root', str(args.root), '--verified-stage']
         if args.service: command += ['--service']
         elif args.provider_service: command += ['--provider-service']
+        elif args.network_agent:command += ['--network-agent']
+        elif args.ratings_action:
+            command += ['--ratings-action',args.ratings_action]
+            if args.ratings_input:command += ['--ratings-input']
+        elif args.network_action:
+            command += ['--network-action',args.network_action]
+            if args.network_input:command += ['--network-input']
         elif args.ownership_local_status: command += ['--ownership-local-status']
         elif args.ownership_recovery:
             command += ['--ownership-recovery', args.ownership_recovery]
@@ -233,6 +259,19 @@ def main():
                 command += ['--pacing-state-sha256', args.pacing_state_sha256]
         else: command += ['--probe-candidate', str(args.probe_candidate)]
         os.execve(command[0], command, env)
+    if args.network_action:
+        from poolrotater_host.network.installed import run as network_action
+        print(json.dumps(network_action(args.root,runtime['release'],args.network_action,
+                         stream=sys.stdin.buffer if args.network_input else None)))
+        return
+    if args.ratings_action:
+        from poolrotater_host.ratings.installed import run as ratings_action
+        print(json.dumps(ratings_action(args.root,runtime['release'],args.ratings_action,
+                         stream=sys.stdin.buffer if args.ratings_input else None)))
+        return
+    if args.network_agent:
+        from poolrotater_host.network.installed import serve as network_agent
+        network_agent(args.root,runtime['release']);return
     if args.ownership_local_status:
         from poolrotater_host.installed_room_recovery import local_status
         print(json.dumps(local_status(args.root)))
@@ -290,6 +329,7 @@ if __name__ == '__main__':
     try: main()
     except Exception as error:
         # Control file values, token bodies and exception strings never reach stderr.
-        label = 'pilot service' if '--provider-service' in sys.argv else 'offline service'
+        label = ('network service' if '--network-agent' in sys.argv or '--network-action' in sys.argv else
+                 'pilot service' if '--provider-service' in sys.argv else 'offline service')
         print(label + ' refused: ' + type(error).__name__, file=sys.stderr)
         raise SystemExit(2)
