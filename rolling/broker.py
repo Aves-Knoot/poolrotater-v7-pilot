@@ -121,6 +121,10 @@ class Broker:
                 raise HubDisconnected("worker lost mutation authority while waiting for the hub")
             if self.hub.owned or self.uncertain:
                 raise HubInvocationUncertain("previous room ownership unresolved")
+            chosen = None
+            if self.private_pilot is not None:
+                from poolrotater_host.private_pilot import desired_password
+                chosen = desired_password(self.owner.runtime, self.private_pilot)
             self.journal(operation="make_pending", ownership_unknown=True)
             self.uncertain = True
             result = self.hub.make_room(*args, **kwargs)
@@ -132,7 +136,22 @@ class Broker:
             self.uncertain = False
             if self.private_pilot is not None:
                 from poolrotater_host.private_pilot import capture_access, scrub
+                if chosen is not None:
+                    # The server first creates its ordinary private GUID room.
+                    # Retain the known ID and never replay an uncertain setting.
+                    capture_access(self.owner.runtime, self.private_pilot, room_id=int(result['room_id']), channel_id=self.channel, password=self.password)
+                    self.uncertain = True
+                    # Password outcome is uncertain; positive room ownership
+                    # remains known and uses ordinary stopped recovery.
+                    self.hub.change_room_settings(int(result['room_id']), password=chosen)
+                    self.password = chosen
+                    # RoomHub caches this exact authoritative creation object
+                    # for same-generation JoinRoom; update only after ACK.
+                    result["password"] = chosen
                 capture_access(self.owner.runtime, self.private_pilot, room_id=int(result['room_id']), channel_id=self.channel, password=self.password)
+                if chosen is not None:
+                    self.journal(operation='owned', ownership_unknown=False)
+                    self.uncertain = False
                 return scrub(result)
             return result
 

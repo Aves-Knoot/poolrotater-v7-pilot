@@ -7,6 +7,7 @@ from .config import ConfigError,contained
 from .layout import atomic_json,checked_root,load,owner_lease,read_json
 PROFILE='secrets/private-pilot.json'
 ACCESS='secrets/private-pilot-access.json'
+DESIRED='secrets/private-pilot-password.json'
 FIELDS={'format','installation_id','generation','session_id','alias'}
 ACCESS_FIELDS=FIELDS|{'room_id','channel_id','password'}
 PRIVATE_TITLE='PoolRotater private test (Standard)'
@@ -44,29 +45,52 @@ def status(root):
     profile=load_profile(root)
     return {'ok':True,'private_test_configured':profile is not None,'selected_alias':profile.alias if profile else None,'session_id':profile.session_id if profile else None,'access_record_present':bool(profile and os.path.lexists(contained(root,ACCESS))),'service_started':False,'public':False}
 
-def configure(root,*,alias='room1',owner_lease_held=False):
+def desired_password(root,profile):
+    if profile!=load_profile(root):raise ConfigError('private pilot profile changed')
+    try:value=_private(root,DESIRED)
+    except FileNotFoundError:return None
+    if type(value)is not dict or set(value)!=FIELDS|{'password'} or any(value[k]!=profile.record()[k]for k in FIELDS):raise ConfigError('private pilot password binding requires review')
+    _validated(root,{k:value[k]for k in FIELDS})
+    _password(value['password'])
+    return value['password']
+
+def _password(value):
+    if type(value)is not str or not re.fullmatch('[A-Za-z0-9_-]{8,128}',value):raise ConfigError('private pilot password requires review')
+
+def configure(root,*,alias='room1',password=None,owner_lease_held=False):
     root=checked_root(root)
+    if password is not None:_password(password)
     with nullcontext()if owner_lease_held else owner_lease(root):
         current=load_profile(root)
         if current is not None:
             if current.alias!=alias:raise ConfigError('private pilot already configured')
+            desired_password(root,current)
+            if password is not None:atomic_json(contained(root,DESIRED),{**current.record(),'password':password})
             return status(root)
         marker,_=load(root);value={'format':1,'installation_id':marker['installation_id'],'generation':marker['generation'],'session_id':str(uuid.uuid4()),'alias':alias}
         _validated(root,value)
         if os.path.lexists(contained(root,ACCESS)):raise ConfigError('retained private pilot access requires explicit clear')
+        if os.path.lexists(contained(root,DESIRED)):raise ConfigError('retained private pilot password requires explicit clear')
         atomic_json(contained(root,PROFILE),value)
+        if password is not None:atomic_json(contained(root,DESIRED),{**value,'password':password})
         return status(root)
 
 def clear(root,*,owner_lease_held=False):
     root=checked_root(root)
     with nullcontext()if owner_lease_held else owner_lease(root):
         profile=load_profile(root)
+        if os.path.lexists(contained(root,DESIRED)):
+            value=_private(root,DESIRED)
+            if type(value)is not dict or set(value)!=FIELDS|{'password'}:raise ConfigError('private pilot password requires review')
+            _validated(root,{k:value[k]for k in FIELDS});_password(value['password'])
+            if profile and any(value[k]!=profile.record()[k]for k in FIELDS):raise ConfigError('private pilot password binding requires review')
         if os.path.lexists(contained(root,ACCESS)):
             value=_private(root,ACCESS)
             if type(value)is not dict or set(value)!=ACCESS_FIELDS:raise ConfigError('private pilot access requires review')
             _validated(root,{k:value[k]for k in FIELDS})
             if profile and any(value[k]!=profile.record()[k]for k in FIELDS):raise ConfigError('private pilot access binding requires review')
             contained(root,ACCESS).unlink()
+        contained(root,DESIRED).unlink(missing_ok=True)
         if profile:contained(root,PROFILE).unlink()
         return status(root)
 

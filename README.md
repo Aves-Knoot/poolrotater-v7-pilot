@@ -49,7 +49,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 030f20b1eb80e18b19561e39f6c0e456dc15c3ad1dd78da036f29e885ffd046c --live-pilot
+  --bundle runtime.zip --sha256 8c35ae6259100a577ef747eb0c6e2f5867623cc0114d164595ba43fadd63f4ab --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.
@@ -162,9 +162,27 @@ sudo /usr/bin/python3.12 -I -S \
   --instance first private-test-status
 ```
 
-Only the alias is accepted: never supply a password, credential, URL or start
-flag. osu!'s native MakeRoom generates the password. After confirmed creation,
-the parent retains it in a private mode0600 access record; neither these commands,
+The alias is required. With alias-only input, osu!'s native MakeRoom generates
+the password. You may optionally choose a password through bounded JSON stdin:
+8–128 ASCII letters, digits, underscores or hyphens only. Never put it in command
+arguments or environment variables. A hidden terminal prompt can feed the JSON:
+
+```sh
+sudo -v
+/usr/bin/python3.12 -I -c 'import getpass,json; print(json.dumps({"alias":"room1","password":getpass.getpass("Private room password: ")}))' | \
+  sudo -n /usr/bin/python3.12 -I -S \
+  "$pilot_release/poolrotater_host/pilot_admin_entry.py" \
+  --instance first private-test-configure --private-test-stdin
+```
+
+The chosen secret is stored in a separate installation/session-bound mode0600
+record. The parent creates the selected private room with its native generated
+password first. Only after confirmed positive ownership does it apply the chosen
+password with one native room-settings request and wait for the typed completion.
+It updates the captured access record only after that acknowledgement. An uncertain
+settings reply is not replayed; retain the known room and recovery evidence.
+Credentials, URLs, alternate aliases and start flags remain forbidden. The parent
+retains actual access in a private mode0600 record; neither these commands,
 status/support, child arguments, logs nor public room listings may expose it.
 Share the confirmed private link/password only with the intended participant.
 Use the normal protected start exactly once during the agreed private test window.
@@ -173,7 +191,7 @@ while retaining configured staff controls and moderation.
 
 After testing, stop cleanly, verify room closure and process absence, disable
 both units if necessary, then run the protected entry with action
-`private-test-clear`. Clear deletes the profile/access records and retains isolated
+`private-test-clear`. Clear deletes the profile/access/chosen-secret records and retains isolated
 session preferences for review. It neither overwrites the original four-room
 configuration nor starts the public rooms. Public activation needs a separate
 instruction. Return redacted times, before/active/after support and the commands

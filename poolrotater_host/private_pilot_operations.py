@@ -64,11 +64,18 @@ def command(instance, action, *, stream=None):
                 if action == 'configure':
                     from .network.contracts import decode, fields
                     value = decode(stream.read(MAX_INPUT + 1), maximum=MAX_INPUT)
-                    fields(value, ('alias',))
+                    fields(value, ('alias', 'password') if type(value) is dict
+                           and 'password' in value else ('alias',))
                     if value['alias'] != 'room1':
                         raise ConfigError('private test input refused')
-                    result = private_pilot.configure(target['root'], alias=value['alias'],
-                        owner_lease_held=True)
+                    options = {'alias': value['alias'], 'owner_lease_held': True}
+                    if 'password' in value:
+                        import re
+                        if type(value['password']) is not str or not re.fullmatch(
+                                '[A-Za-z0-9_-]{8,128}', value['password']):
+                            raise ConfigError('private test password input refused')
+                        options['password'] = value['password']
+                    result = private_pilot.configure(target['root'], **options)
                 elif action == 'clear':
                     result = private_pilot.clear(target['root'], owner_lease_held=True)
                 else:

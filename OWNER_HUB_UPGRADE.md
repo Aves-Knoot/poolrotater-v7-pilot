@@ -33,6 +33,13 @@ exact reviewed shared/storage transitions; the listed dev9 configuration and
 service-parity origins have the same reviewed source contracts as that runtime.
 The package version stays unchanged. Compare the separate tag and exact digest.
 
+If already on the private Standard parity repair, confirm registered runtime
+`030f20b1eb80e18b19561e39f6c0e456dc15c3ad1dd78da036f29e885ffd046c`
+and use it for `--upgrade-from-sha256`. This chosen-password repair retains the
+same profile schema and saved configuration. Its four exact reviewed origins
+include the preceding private Standard runtime. Upgrade while stopped; choosing
+a password remains a separate explicit stdin operation and starts nothing.
+
 Stop the bot cleanly with its existing protected `stop` entry; confirm upstream
 room closure and no dedicated worker processes. If a network agent is installed,
 stop it too. Both services must be disabled/stopped before upgrade. Unknown room
@@ -40,7 +47,7 @@ ownership must be reviewed and resolved without discarding its journal.
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 030f20b1eb80e18b19561e39f6c0e456dc15c3ad1dd78da036f29e885ffd046c --live-pilot \
+  --bundle runtime.zip --sha256 8c35ae6259100a577ef747eb0c6e2f5867623cc0114d164595ba43fadd63f4ab --live-pilot \
   --upgrade-from-sha256 a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932
 ```
 
