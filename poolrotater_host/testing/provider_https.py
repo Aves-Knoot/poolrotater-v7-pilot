@@ -13,7 +13,7 @@ import time
 from urllib.parse import parse_qsl, urlsplit
 
 from ..oauth import AuthError
-from ..provider_contract import OWNED_PATH, exchange_fixture, prepare
+from ..provider_contract import OWNED_PATH, ROOM_LIMIT, exchange_fixture, prepare
 from .oauth import OAuthProvider
 
 
@@ -72,7 +72,16 @@ class TLSProvider(OAuthProvider):
             self.calls.append({'method': method, 'path': path, 'form': form, 'bearer': bearer, 'headers': dict(headers)})
             if self.on_read: self.on_read(path)
             if bearer not in self.access: return 401, {}
-            return (200, self.rooms) if path == OWNED_PATH else self.details.get(path.rsplit('/', 1)[1], (404, {}))
+            if path == OWNED_PATH:
+                rows = self.rooms
+                if type(rows) is list:
+                    # Fixed is_active=1 filters before the upstream250 cap.
+                    # Keep deliberately malformed fixture rows visible to the
+                    # real wire/evidence validators rather than hiding them.
+                    rows = [row for row in rows if type(row) is not dict or row.get('active') is not False]
+                    rows = rows[:ROOM_LIMIT]
+                return 200, rows
+            return self.details.get(path.rsplit('/', 1)[1], (404, {}))
         return super().handle(method, path, form, bearer, headers)
 
     def __enter__(self):

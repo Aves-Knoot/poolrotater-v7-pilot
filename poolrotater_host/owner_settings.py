@@ -191,6 +191,7 @@ def effective_legacy(defaults,room_configs,universal):
                    discord_control_accept_untargeted=False)
         result[alias]=cfg
     # The running shared transport uses primary pacing/process paths and aliases.
+    from .owner_integrations import discord_id
     primary=next(iter(result.values()));aliases=list(result)
     for alias,cfg in result.items():
         for key in ('api_rate_db','process_control_db'):
@@ -199,7 +200,7 @@ def effective_legacy(defaults,room_configs,universal):
         cfg['discord_control_primary_instance']=aliases[0]
         cfg['discord_control_known_room_aliases']=sorted(aliases)
         cfg['discord_control_channel_ids_by_room']={a:c['discord_control_channel_id']
-            for a,c in result.items() if c.get('discord_control_channel_id')}
+            for a,c in result.items() if discord_id(c.get('discord_control_channel_id',0))>0}
     return copy.deepcopy(result)
 
 

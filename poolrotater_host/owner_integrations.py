@@ -78,6 +78,24 @@ def _text(value,maximum=256,*,empty=True):
     return type(value) is str and (empty or bool(value)) and len(value)<=maximum and all(ord(c)>=32 and ord(c)!=127 for c in value)
 
 
+def discord_id(value, *, allow_zero=True):
+    """Semantic snowflake identity; never replace the privately stored value.
+
+    Native DiscordControl accepts decimal strings via int(). Keep that existing
+    representation for exact owner parity while bounding admission to unsigned
+    64-bit IDs and ASCII digits, with no signs, whitespace, floats or booleans.
+    """
+    if type(value) is int:
+        parsed=value
+    elif type(value) is str and re.fullmatch('[0-9]{1,20}',value) is not None:
+        parsed=int(value)
+    else:
+        raise ConfigError('owner Discord identity invalid')
+    if not 0<=parsed<2**64 or (not allow_zero and parsed==0):
+        raise ConfigError('owner Discord identity invalid')
+    return parsed
+
+
 def _url(key,value):
     if not _text(value,1024):return False
     if not value:return True
@@ -96,7 +114,8 @@ def validate_settings(value,aliases):
         good=False
         if key in FLAGS:good=type(item) is bool
         elif key in ENV_KEYS:good=credential_environment_name(item)
-        elif key in ID_KEYS:good=type(item) is int and 0<=item<2**64
+        elif key in ID_KEYS:
+            discord_id(item);good=True
         elif key in TEXT_KEYS:good=_text(item,256)
         elif key in URL_KEYS:good=_url(key,item)
         elif key in NUMBER_KEYS:
@@ -110,7 +129,9 @@ def validate_settings(value,aliases):
         elif key=='custom_join_greetings':
             good=type(item) is dict and len(item)<=1000 and all(_text(k,80,empty=False) and _text(v,1000) for k,v in item.items())
         elif key=='discord_control_channel_ids_by_room':
-            good=type(item) is dict and set(item)<=set(aliases) and all(type(x) is int and 0<x<2**64 for x in item.values())
+            good=type(item) is dict and set(item)<=set(aliases)
+            if good:
+                for channel in item.values():discord_id(channel,allow_zero=False)
         if not good:raise ConfigError('owner integration field invalid')
     for key in ('discord_control_room_alias','discord_control_primary_instance'):
         if key in value and value[key] not in aliases:raise ConfigError('owner integration alias invalid')

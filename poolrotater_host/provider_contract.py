@@ -20,7 +20,7 @@ PROVIDER_ORIGIN = 'https://osu.ppy.sh'
 API_VERSION = '20220705'
 ROOM_LIMIT = 250
 OWNED_PATH = '/api/v2/rooms?' + urlencode(
-    {'mode': 'owned', 'type_group': 'realtime', 'limit': ROOM_LIMIT, 'sort': 'created'})
+    {'mode': 'owned', 'type_group': 'realtime', 'is_active': 1, 'limit': ROOM_LIMIT, 'sort': 'created'})
 
 
 def require_live_provider(execution=None):

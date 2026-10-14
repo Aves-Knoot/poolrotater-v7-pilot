@@ -6,10 +6,21 @@ automatic-difficulty room configuration**. Installation starts no room or servic
 and performs no account authorization. Existing installations keep their settings,
 authorization, catalogs and resolved ownership history during the stopped upgrade.
 
-Existing dev7 testers: follow [OWNER_HUB_UPGRADE.md](OWNER_HUB_UPGRADE.md). Do not
+Existing dev7 or dev8 testers: follow [OWNER_HUB_UPGRADE.md](OWNER_HUB_UPGRADE.md). Do not
 reinstall, repeat ownership-clear or sign in again for a clean existing instance.
 Owner four-room migration has a separate private backup/configuration parity gate;
 this kit never discovers or replaces the owner's currently running v6 service.
+
+The dev9 repair accepts existing decimal-string Discord identifiers without
+changing their saved representation, imports supported historical native SQLite
+columns by name, and retains the native language-offer sidecar. It preserves
+saved settings and player history; it does not turn temporary difficulty/style
+choices into new administrator defaults. Owner adoption still requires a stopped,
+private source/configuration preflight before changing the running installation.
+See [docs/OWNER_V7_MIGRATION.md](docs/OWNER_V7_MIGRATION.md) for the public boundary.
+Startup queries active owned rooms, so ended room history does not exhaust the
+bounded listing. Existing active rooms and uncertain creation still block startup;
+authorization and exclusive ownership checks remain required.
 
 ## Fresh independent operator
 
@@ -22,7 +33,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 04f3dcd4b059a9f445d3949faf6707b1a8c8c5142c51544dbd4fc84adac84501 --live-pilot
+  --bundle runtime.zip --sha256 0b8f12a7b8e2dfc9a708f8fc331e08583bcabccaa1a1132adb971b7319b81481 --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.
@@ -58,7 +69,7 @@ short-lived invitation privately. Installing or upgrading does not enroll you.
 
 Use your own osu! account and an OAuth client owned by that account. Register
 `http://127.0.0.1:51111/oauth/callback` exactly in its OAuth settings. Know your
-numeric osu! user ID. Existing dev7 operators keep their authorization and skip
+numeric osu! user ID. Existing dev7/dev8 operators keep their authorization and skip
 these steps unless the protected status explicitly requires reauthorization.
 
 From the extracted kit folder, run:

@@ -33,6 +33,7 @@ PHASES = ('prepared', 'files_imported', 'ledger_migrated', 'committed')
 MAX_STATE_FILES=100000
 MAX_STATE_BYTES=4*1024**3
 PP_CACHE_SUFFIX=r'(?:osu/[1-9][0-9]{0,9}\.osu|(?:results|results_mania)/[1-9][0-9]{0,9}__[A-Z0-9]+__[0-9p-]+\.json)'
+LANGUAGE_OFFERS='state/player-language-v1/offers.json'
 ADDITIONS = frozenset({'ratings_schema_prepared','ratings_reader_mode','ratings_reader_root',
                       'ratings_reader_epoch','standard_catalog_binding','standard_dt_db'})
 OBSERVER_KEYS = ('discord_control_health_state_file', 'discord_public_status_state_file')
@@ -146,7 +147,7 @@ def _state_target(value):
     # Only native private policies, preferences, integration state and PP cache.
     # Credentials, ownership journals, process locks and OAuth are never copied.
     fixed=set(integrations.PATHS.values())-{'config/ai-context-{alias}.md','state/controller-map-pp'}
-    valid=(value in fixed or re.fullmatch(r'config/ai-context-[a-z][a-z0-9_-]{0,23}\.md',value)
+    valid=(value in fixed or value==LANGUAGE_OFFERS or re.fullmatch(r'config/ai-context-[a-z][a-z0-9_-]{0,23}\.md',value)
            or re.fullmatch(r'state/player-language-v1/[1-9][0-9]{0,18}\.json',value)
            or re.fullmatch(r'state/controller-map-pp/'+PP_CACHE_SUFFIX,value))
     if not valid:raise ConfigError('owner snapshot state target not allowlisted')
@@ -154,7 +155,14 @@ def _state_target(value):
 
 
 def _state_check(target,path):
-    if target.startswith('state/player-language-v1/'):
+    if target==LANGUAGE_OFFERS:
+        value=read_json(path,maximum=2048)
+        fields(value,('format','at'),'owner language offer snapshot')
+        if (type(value['format']) is not int or value['format']!=1
+                or type(value['at']) not in (int,float) or not math.isfinite(value['at'])
+                or value['at']<0):
+            raise ConfigError('owner language offer snapshot invalid')
+    elif target.startswith('state/player-language-v1/'):
         from bot.languages import LANGUAGES
         value=read_json(path,maximum=2048)
         fields(value,('format','language','offered'),'owner language snapshot')
@@ -457,8 +465,8 @@ def rollback_ledger(source,destination,*,stopped=False):
             raise ConfigError('owner rollback unclassified tables require review')
         for table in tables:
             expected=[r[1:] for r in target.execute(f'PRAGMA table_info("{table}")')]
-            observed=[r[1:] for r in origin.execute(f'PRAGMA table_info("{table}")')]
-            if observed!=expected:raise ConfigError('owner rollback native schema incompatible')
+            if not _native_columns_match(origin,table,expected):
+                raise ConfigError('owner rollback native schema incompatible')
             columns=[r[0] for r in expected]
             names=','.join('"'+column+'"' for column in columns)
             insert=f'INSERT INTO "{table}" ({names}) VALUES ({",".join("?" for _ in columns)})'
@@ -509,6 +517,15 @@ def _native_schema():
     finally:memory.close()
 
 
+def _native_columns_match(connection,table,expected):
+    # Native ALTER TABLE history may change column order. Keep exact named
+    # affinity/nullability/default/PK metadata and reject hidden columns.
+    actual=[r[1:] for r in connection.execute(f'PRAGMA table_xinfo("{table}")')]
+    named={row[0]:tuple(row) for row in expected}
+    return (len(actual)==len(named) and all(row[-1]==0 for row in actual)
+            and {row[0]:tuple(row[:-1]) for row in actual}==named)
+
+
 def _legacy_schema_check(path):
     """Closed native source schema, after consistent private backup only."""
     if path.stat().st_size>256*1024**2:raise ConfigError('owner legacy ledger exceeds bounded import')
@@ -521,7 +538,12 @@ def _legacy_schema_check(path):
         if connection.execute("SELECT 1 FROM sqlite_master WHERE type IN ('trigger','view') LIMIT 1").fetchone():
             raise ConfigError('owner legacy ledger executable schema requires review')
         for table in tables:
-            if [r[1:] for r in connection.execute(f'PRAGMA table_info("{table}")')]!=schema[table][1]:
+            # Historical native ALTER TABLE appends fields in a different order
+            # from a fresh CREATE. Every import/rollback copy addresses columns
+            # by name; names, affinity, nullability, defaults and PK positions
+            # must still match the exact code-owned schema. Hidden/generated
+            # columns are not a supported native history extension.
+            if not _native_columns_match(connection,table,schema[table][1]):
                 raise ConfigError('owner legacy ledger columns require review')
     finally:connection.close()
 

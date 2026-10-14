@@ -1,10 +1,15 @@
-# Preserve the existing dev7 instance and add hub integration
+# Preserve an existing dev7 or dev8 instance
 
 Use the new private release archive in a fresh folder. Keep the existing `first`
 instance and all its state. Record before-support and the current registered
 runtime SHA256. The expected dev7 runtime is:
 
 `a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932`.
+
+If already on the published dev8 owner-hub pilot, confirm that its registered
+runtime is `04f3dcd4b059a9f445d3949faf6707b1a8c8c5142c51544dbd4fc84adac84501`
+and use that value for `--upgrade-from-sha256` below. A version label alone is
+insufficient; stop for review if the installed digest is different.
 
 Stop the bot cleanly with its existing protected `stop` entry; confirm upstream
 room closure and no dedicated worker processes. If a network agent is installed,
@@ -13,7 +18,7 @@ ownership must be reviewed and resolved without discarding its journal.
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 04f3dcd4b059a9f445d3949faf6707b1a8c8c5142c51544dbd4fc84adac84501 --live-pilot \
+  --bundle runtime.zip --sha256 0b8f12a7b8e2dfc9a708f8fc331e08583bcabccaa1a1132adb971b7319b81481 --live-pilot \
   --upgrade-from-sha256 a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932
 ```
 
@@ -21,11 +26,22 @@ This accepts the exact reviewed dev7-to-integrated transition. It starts no
 service and performs no ledger migration. Use the new printed `pilot_release`.
 Run `status`, `support` and `ownership-review` with the protected admin entry.
 Authorization/catalogs/recovery and one-room configuration must remain intact.
+The dev9 source-compatibility repair preserves existing decimal-string Discord
+IDs and supported historical native column order instead of resetting settings
+or history to fit a new representation. Existing player-language choices and
+offer suppression stay local and are retained. This tester upgrade neither
+discovers nor imports the owner's production data; owner migration requires its
+own private configuration/schema preflight and approved stopped snapshot.
 If upgrade was interrupted, inspect its transaction and use install.py's explicit
 `--upgrade-status` / `--upgrade-recover complete|abort --transaction-id ...` flow
 with the same approved old/new digests. Retain evidence; never remove journals.
 
 ## Explicit catalog trust adoption
+
+Existing dev8 operators who already adopted bootstrap `2892f9fda822c2aade05fe5b28f354a57623b66555f75f2fb09fd4c0101f7a74`
+and CA `60a0dac90855a1b0006062e9820c2144ba2240fc097cd685a6ca0b6fcb445f39` keep that trust and verified cache. Skip replacement;
+use the existing protected catalog checks/import with the same9445 origin if an
+updated download is needed. Do not repeat the old-to-new replacement transaction.
 
 The former pilot's signers were discarded. This release carries new independently
 pinned catalog root and HTTPS CA bytes; old cached catalogs remain available until
