@@ -63,7 +63,7 @@ ownership must be reviewed and resolved without discarding its journal.
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 fecad01b6e63962b06aa085fa354bce2272b8605058a897bf6b2fe6de0313faa --live-pilot \
+  --bundle runtime.zip --sha256 b014b75a68fe9adb1612700f74e0038e3d689a7e71debde59518d41a469f10e1 --live-pilot \
   --upgrade-from-sha256 a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932
 ```
 

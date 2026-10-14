@@ -59,7 +59,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 fecad01b6e63962b06aa085fa354bce2272b8605058a897bf6b2fe6de0313faa --live-pilot
+  --bundle runtime.zip --sha256 b014b75a68fe9adb1612700f74e0038e3d689a7e71debde59518d41a469f10e1 --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.

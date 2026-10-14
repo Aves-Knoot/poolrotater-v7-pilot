@@ -8058,12 +8058,31 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         length = int(self.cfg.get("max_length", self.pool.max_length))
         return lo, hi, length
 
+    def _floor_fixed_community_layers(self, base_lo: float) -> None:
+        """Discard unapplied easier bias while retaining each voter's attribution."""
+        offset = self._community_bias_overlay()
+        if offset >= -base_lo:
+            return
+        negative = sum(min(0.0, float(layer['amount']))
+                       for layer in self._difficulty_bias_layers)
+        if negative >= 0:
+            return
+        scale = max(0.0, min(1.0, (negative - base_lo - offset) / negative))
+        self._difficulty_bias_layers = [
+            dict(layer, amount=(float(layer['amount']) * scale
+                                if layer['amount'] < 0 else layer['amount']))
+            for layer in self._difficulty_bias_layers
+            if layer['amount'] >= 0 or scale > 0
+        ]
+
     def _apply_fixed_community_range(self, reason: str = "") -> bool:
         """Apply the JSON range plus the current temporary fixed-room shift."""
         if not self._fixed_difficulty_mode():
             return False
         base_lo, base_hi, length = self._fixed_baseline_window()
-        offset = self._community_bias_overlay()
+        # Keep the window's width while flooring the whole temporary shift.
+        # Also covers a remaining negative layer after an opposite voter leaves.
+        offset = max(-base_lo, self._community_bias_overlay())
         lo, hi = base_lo + offset, base_hi + offset
         if self.pool.set_window(lo, hi, length) <= 0:
             log.warning(
@@ -8073,6 +8092,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 reason or "difficulty update",
             )
             return False
+        self._floor_fixed_community_layers(base_lo)
         self.update_room_name_for_range(lo, hi)
         log.info(
             "fixed difficulty range set to %.2f-%.2f* from JSON baseline "
@@ -8166,8 +8186,17 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         step_size = self._difficulty_vote_step()
         step = step_size if direction == "harder" else -step_size
         cap = self._difficulty_vote_max_offset()
+        fixed_mode = self._fixed_difficulty_mode()
+        previous_layers = list(self._difficulty_bias_layers)
+        if fixed_mode:
+            base_lo, _base_hi, _length = self._fixed_baseline_window()
+            self._floor_fixed_community_layers(base_lo)
         old_overlay = self._community_bias_overlay()
         new_overlay = max(-cap, min(cap, old_overlay + step))
+        if fixed_mode:
+            # Record only the shift that can actually apply. Extra easier votes
+            # at zero must not build debt that later harder votes have to undo.
+            new_overlay = max(-base_lo, new_overlay)
         actual_delta = new_overlay - old_overlay
         self._clear_difficulty_vote("vote passed")
 
@@ -8190,9 +8219,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             if not self._apply_fixed_community_range(
                 f"{direction} vote passed"
             ):
-                # Remove only the rejected layer, then restore the previous
-                # known-good temporary fixed window.
-                self._difficulty_bias_layers.pop()
+                # Also restore any unapplied floor normalization when neither
+                # the proposed window nor the prior floor is available.
+                self._difficulty_bias_layers = previous_layers
                 self._difficulty_vote_changes_since_match -= 1
                 self._apply_fixed_community_range(
                     "rejected temporary vote restored previous range"
