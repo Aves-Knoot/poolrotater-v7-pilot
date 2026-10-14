@@ -1,5 +1,6 @@
 """Lifetime-authorized fixed RefereeHub adapter; never replays invocations."""
 import math
+import logging
 import queue
 import threading
 import time
@@ -9,6 +10,31 @@ from .oauth import AuthError
 from .referee_contract import negotiation
 from .referee_protocol import MAX_COMMAND, encoded
 from .referee_wire import ChildSession
+
+
+log = logging.getLogger(__name__)
+# External wire errors and exception messages may contain untrusted data.
+# Only these source-owned codes enter parent audit logs; never event payloads,
+# bearer material, response bodies, endpoints or upstream error text.
+_FAILURE_LOG_CODES = frozenset((
+    'referee_transport_uncertain', 'referee_reply_refused', 'referee_closed',
+    'referee_event_refused', 'referee_event_overflow', 'referee_child_cleanup_uncertain',
+    'referee_unauthorized', 'referee_rate_limited', 'referee_unavailable',
+    'referee_deadline_exceeded', 'referee_pipe_closed', 'referee_packet_refused',
+    'referee_upgrade_deadline', 'referee_upgrade_refused', 'referee_child_setup_refused',
+    'referee_parent_changed', 'referee_handshake_deadline', 'referee_handshake_refused',
+    'referee_receive_deadline', 'referee_socket_closed', 'referee_stopped',
+    'referee_message_refused', 'referee_message_too_large', 'referee_record_flood',
+    'referee_record_deadline', 'referee_frame_refused', 'referee_frame_deadline',
+    'verified_owner_required', 'provider_trust_refused', 'qualified_provider_transport_required',
+))
+
+
+def _log_failure(error, generation):
+    code = error.code if type(error) is AuthError and error.code in _FAILURE_LOG_CODES else 'referee_transport_uncertain'
+    # Generation is receiver-owned, not an upstream identity or payload.
+    number = generation if type(generation) is int and 0 <= generation < 10**19 else 0
+    log.warning('shared referee transport interrupted: code=%s generation=%d', code, number)
 
 
 @dataclass(frozen=True)
@@ -200,10 +226,12 @@ class ProviderRefereeClient:
                     self._message(value['value'], generation)
             except Exception as error:
                 self._failure = error if type(error) is AuthError else AuthError('referee_transport_uncertain')
+                _log_failure(error, generation)
             finally:
                 try: self._retire()
                 except Exception:
                     self._failure = AuthError('referee_child_cleanup_uncertain');self._stop.set()
+                    _log_failure(self._failure, generation)
                 self._attempt.set()
             if not established: break
             try: self._event('HubDisconnected', {'generation':generation}, generation)

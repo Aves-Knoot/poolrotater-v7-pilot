@@ -18,6 +18,12 @@ same package version; the runtime digest and separate release tag identify it.
 It preserves the stopped instance and starts no service. Do not reset authorization,
 reimport owner data or discard unresolved room ownership to install the repair.
 
+If already on the published dev9 owner service-parity repair, confirm registered
+runtime `dc3d5fd5fd0c9790008e134539ab90924c62ddb7af5afdf52345dfc3661fb69b`
+and use it for `--upgrade-from-sha256`. The reconnect repair also keeps the same
+package version; compare the exact runtime digest and release tag. Preserve the
+same instance and unresolved ownership evidence until its stopped checks succeed.
+
 Stop the bot cleanly with its existing protected `stop` entry; confirm upstream
 room closure and no dedicated worker processes. If a network agent is installed,
 stop it too. Both services must be disabled/stopped before upgrade. Unknown room
@@ -25,7 +31,7 @@ ownership must be reviewed and resolved without discarding its journal.
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 dc3d5fd5fd0c9790008e134539ab90924c62ddb7af5afdf52345dfc3661fb69b --live-pilot \
+  --bundle runtime.zip --sha256 ca877b9c33b397d2ac2e340d3e304449cd3b9e7889daf126f0123d0f59edcc27 --live-pilot \
   --upgrade-from-sha256 a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932
 ```
 

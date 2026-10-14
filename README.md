@@ -29,6 +29,15 @@ maintenance or be published as current. Explicit worker connection, process,
 failure and ownership-recovery signals still stop unsafe operation. Upgrade the
 same stopped instance; retain its OAuth, catalogs, settings, ratings and journal.
 
+The reconnect repair preserves native missing-channel retry behavior during
+bounded transport recovery: a temporary HTTP 404 remains a missing channel,
+while startup still requires verified chat membership. Other HTTP denials and
+invalid channel evidence keep their typed refusal. Room mutations are not
+replayed to repair chat access. Shared referee failures now log a source-owned
+code and local generation without response bodies or credentials. The original
+wire-disconnection cause remains unknown; real pilot acceptance is still limited
+to the modes and scenarios actually observed.
+
 ## Fresh independent operator
 
 This frozen pilot targets Ubuntu24.04 Linux x86_64, the pinned system CPython3.12
@@ -40,7 +49,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 dc3d5fd5fd0c9790008e134539ab90924c62ddb7af5afdf52345dfc3661fb69b --live-pilot
+  --bundle runtime.zip --sha256 ca877b9c33b397d2ac2e340d3e304449cd3b9e7889daf126f0123d0f59edcc27 --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.

@@ -159,7 +159,11 @@ class ProviderApiClient:
             raise AuthError('provider_api_endpoint_refused')
         result = self._req('GET', f'/chat/channels/{channel_id}')
         if result is None:
-            raise AuthError('provider_chat_access_unavailable', http_status=404)
+            # Preserve OsuApi's native missing-channel contract. Startup still
+            # requires membership; bounded transport recovery retries a False
+            # join as HubDisconnected without replaying mutations. Other HTTP
+            # denials retain their typed failure and status.
+            return None
         channel = result['channel']
         if channel['current_user_attributes']['can_message'] is not True:
             raise AuthError('provider_chat_cannot_message')
