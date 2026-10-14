@@ -298,16 +298,23 @@ class CatalogStore:
         return self._validate_reference(self._read('current.json'))
 
     def status(self):
+        result, _ = self._inspection()
+        return result
+
+    def _inspection(self):
         ref = self.current(allow_pending=True)
         pending = self._read('pending.json', optional=True)
         if pending is not None: self._journal(pending)
-        for mode, identity in ref['modes'].items(): self.version(mode, identity)
-        return {'reference': ref, 'recovery_required': pending is not None, 'fixture': self.fixture, 'live_ready': False}
+        manifests = {mode: self.version(mode, identity)[1] for mode, identity in ref['modes'].items()}
+        return ({'reference': ref, 'recovery_required': pending is not None,
+                 'fixture': self.fixture, 'live_ready': False}, manifests)
 
     def inspect(self):
-        result = self.status()
-        result['manifests'] = {mode: self.version(mode, identity)[1]
-                               for mode, identity in result['reference']['modes'].items()}
+        # Full inspection is expensive on complete catalogs. Reuse the exact
+        # manifests verified in this call instead of scanning every DB twice.
+        # There is no cross-call cache or reduced verification boundary.
+        result, result_manifests = self._inspection()
+        result['manifests'] = result_manifests
         return result
 
     def _writer(self):

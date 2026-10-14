@@ -1,135 +1,87 @@
-# Preserve an existing dev7, dev8 or dev9 instance
+# Upgrade an existing instance to dev10 without changing its room count
 
-Use the new private release archive in a fresh folder. Keep the existing `first`
-instance and all its state. Record before-support and the current registered
-runtime SHA256. The expected dev7 runtime is:
+Keep the existing instance and all of its state. The fresh two-room instructions
+in TWO_ROOM_OPERATOR_HANDOFF.md are a separate route: an ordinary upgrade cannot
+add a second room. Do not reinstall, copy tokens or reset ownership journals.
 
-`a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932`.
+This release includes the October14 chat-pacing and fatal-shutdown repair. For
+Xikeon's existing `two`, preserve the selected PoolRotator titles, completed
+OAuth, catalogs, hub enrollment and contribution permission. Upgrade in place;
+do not create another instance, request another invite or migrate ratings again.
 
-The published dev8 owner-hub pilot runtime
-`04f3dcd4b059a9f445d3949faf6707b1a8c8c5142c51544dbd4fc84adac84501`
-is not a direct reviewed upgrade origin for this private-controls repair. Keep
-that instance stopped and retain all state; ask the maintainer for its reviewed
-upgrade route rather than substituting a different old digest or reinstalling.
-A version label alone is insufficient.
+## Record and stop the existing instance
 
-If upgrading the published dev9 configuration-compatibility release, its
-registered runtime is `0b8f12a7b8e2dfc9a708f8fc331e08583bcabccaa1a1132adb971b7319b81481`.
-Use that exact digest for `--upgrade-from-sha256`. The liveness repair keeps the
-same package version; the runtime digest and separate release tag identify it.
-It preserves the stopped instance and starts no service. Do not reset authorization,
-reimport owner data or discard unresolved room ownership to install the repair.
+Using its current protected entry, capture status/support and the registered
+runtime SHA256. Stop the bot cleanly, positively confirm actual upstream room
+closure and no bot workers, then network-stop if its agent is installed. Stop
+the network agent before stopped ownership-review: it shares the dedicated UID
+and must not keep that review's process-exclusion guard busy.
+Both units must be disabled/stopped. Resolve any ownership uncertainty through
+the documented review/recovery flow before attempting an upgrade.
 
-If already on the published dev9 owner service-parity repair, confirm registered
-runtime `dc3d5fd5fd0c9790008e134539ab90924c62ddb7af5afdf52345dfc3661fb69b`
-and use it for `--upgrade-from-sha256`. The reconnect repair also keeps the same
-package version; compare the exact runtime digest and release tag. Preserve the
-same instance and unresolved ownership evidence until its stopped checks succeed.
+This artifact contains exact reviewed transitions from:
 
-If already on the native reconnect repair, confirm registered runtime
-`ca877b9c33b397d2ac2e340d3e304449cd3b9e7889daf126f0123d0f59edcc27`
-and use it for `--upgrade-from-sha256`. This private-controls repair adds only
-exact reviewed shared/storage transitions; the listed dev9 configuration and
-service-parity origins have the same reviewed source contracts as that runtime.
-The package version stays unchanged. Compare the separate tag and exact digest.
+- Published dev9 difficulty-floor runtime:
+  `b014b75a68fe9adb1612700f74e0038e3d689a7e71debde59518d41a469f10e1`.
+- Published dev7 chat-access repair:
+  `a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932`.
 
-If already on the private Standard parity repair, confirm registered runtime
-`030f20b1eb80e18b19561e39f6c0e456dc15c3ad1dd78da036f29e885ffd046c`
-and use it for `--upgrade-from-sha256`. This private-controls repair retains the
-same profile schema and saved configuration. Its five exact reviewed origins
-include the preceding private Standard and chosen-password runtimes. Upgrade while stopped; choosing
-a password remains a separate explicit stdin operation and starts nothing.
+A donor-only historical qualification origin is not an operator release. Other
+digests require explicit compatibility review: do not substitute a listed digest
+for the runtime actually installed. The label dev9 alone is not an exact identity.
 
-If already on the chosen-private-password repair, confirm registered runtime
-`8c35ae6259100a577ef747eb0c6e2f5867623cc0114d164595ba43fadd63f4ab`
-and use it for `--upgrade-from-sha256`. This repair preserves the existing
-password/profile, session preferences, full catalogs, OAuth, feedback and
-ownership evidence. It adds native staff persistence/hot reload, explicit
-occupied-room shutdown, the manual last-ready withdrawal fix and optional
-private Discord-board visibility. A configured private session remains private;
-no opt-in board setting or room start is performed by the upgrade.
+## Install the verified new archive while stopped
 
-The previously published chosen-password artifact can refuse occupied cleanup.
-For that old artifact, arrange an empty room before its stopped upgrade. If stop
-has already failed, retain its known room ID/journal and obtain fresh closure
-and protected recovery evidence from the maintainer; do not delete state or
-blindly repeat start. The new explicitly requested stop bypasses only occupancy,
-not ownership uncertainty or unresolved roster ordering.
-
-Stop the bot cleanly with its existing protected `stop` entry; confirm upstream
-room closure and no dedicated worker processes. If a network agent is installed,
-stop it too. Both services must be disabled/stopped before upgrade. Unknown room
-ownership must be reviewed and resolved without discarding its journal.
+Download the dev10 release archive, independently verify its published SHA256,
+extract to a new folder and check SHA256SUMS.txt. For an existing `first` instance
+on the published difficulty-floor runtime:
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 b014b75a68fe9adb1612700f74e0038e3d689a7e71debde59518d41a469f10e1 --live-pilot \
-  --upgrade-from-sha256 a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932
+  --bundle runtime.zip --sha256 199e4e228e833d6ce051d76b47817e558f261d0224d2cd9c88e3d7eadf0b7b81 --live-pilot \
+  --upgrade-from-sha256 b014b75a68fe9adb1612700f74e0038e3d689a7e71debde59518d41a469f10e1
 ```
 
-This accepts the exact reviewed dev7-to-integrated transition. It starts no
-service and performs no ledger migration. Use the new printed `pilot_release`.
-Run `status`, `support` and `ownership-review` with the protected admin entry.
-Authorization/catalogs/recovery and one-room configuration must remain intact.
-The dev9 source-compatibility repair preserves existing decimal-string Discord
-IDs and supported historical native column order instead of resetting settings
-or history to fit a new representation. Existing player-language choices and
-offer suppression stay local and are retained. This tester upgrade neither
-discovers nor imports the owner's production data; owner migration requires its
-own private configuration/schema preflight and approved stopped snapshot.
-If upgrade was interrupted, inspect its transaction and use install.py's explicit
-`--upgrade-status` / `--upgrade-recover complete|abort --transaction-id ...` flow
-with the same approved old/new digests. Retain evidence; never remove journals.
+Use the actual old digest instead if it is the reviewed dev7 origin. Do not add
+`--preset`; that is refused on upgrades. The command preserves state and starts
+no services. Use the exact new release path it prints for subsequent protected
+administration. Capture status/support/ownership-review and room-settings-status.
+Existing authorization, catalogs, preferences, ratings and clean recovery remain.
 
-## Explicit catalog trust adoption
+Interrupted upgrades use the installer's explicit upgrade-status/upgrade-recover
+complete|abort flow with the same approved old/new digests and transaction ID.
+Retain evidence; do not delete journals or rerun a different installation.
 
-Existing dev8 operators who already adopted bootstrap `2892f9fda822c2aade05fe5b28f354a57623b66555f75f2fb09fd4c0101f7a74`
-and CA `60a0dac90855a1b0006062e9820c2144ba2240fc097cd685a6ca0b6fcb445f39` keep that trust and verified cache. Skip replacement;
-use the existing protected catalog checks/import with the same9445 origin if an
-updated download is needed. Do not repeat the old-to-new replacement transaction.
+## Catalog and optional shared-vote checks
 
-The former pilot's signers were discarded. This release carries new independently
-pinned catalog root and HTTPS CA bytes; old cached catalogs remain available until
-the complete replacement is verified. Confirm the old installed bootstrap digest
-locally before issuing the replacement. For the original pilot it is:
+Existing installations with bootstrap 2892f9fda822c2aade05fe5b28f354a57623b66555f75f2fb09fd4c0101f7a74 and public CA
+60a0dac90855a1b0006062e9820c2144ba2240fc097cd685a6ca0b6fcb445f39 keep their catalog trust and cache. Do not replace them merely
+because the code was upgraded. Existing enrollment/sharing/reader choices also
+remain; no new invitation or grant is needed for an unchanged active binding.
 
+The old dev7 pilot trust requires explicit replacement before downloading from
+the current https://91.107.237.182:9445/. Confirm the old installed trust digest first.
+For the original pilot it was
 `60d2846968d842c9838679ee79536d5963c219e08273eccaca0fc374434b207d`.
+Use the new protected entry's catalog-trust-replace with the new pinned kit
+bootstrap/CA, the actual previous digest and confirm-replacement. A partial
+replacement blocks startup; use its documented catalog-trust-recover transaction
+instead of deleting state. A verified existing catalog may remain usable during
+the stopped review. All imported modes are full prepared catalogs, not samples.
 
-```sh
-sudo /usr/bin/python3.12 -I -S "$pilot_release/poolrotater_host/pilot_admin_entry.py" \
-  --instance first catalog-trust-replace --origin https://91.107.237.182:9445/ \
-  --trust-root bootstrap.json --trust-sha256 2892f9fda822c2aade05fe5b28f354a57623b66555f75f2fb09fd4c0101f7a74 \
-  --ca-file ca.crt --ca-sha256 60a0dac90855a1b0006062e9820c2144ba2240fc097cd685a6ca0b6fcb445f39 \
-  --previous-trust-sha256 60d2846968d842c9838679ee79536d5963c219e08273eccaca0fc374434b207d \
-  --confirm-replacement
-```
+If durable rating capture was never prepared, run ratings-migrate while stopped.
+Do not seed history for the initial pilot. Directory sharing and vote sharing
+require separate choices; central contribute permission must precede local
+ratings-configure. A downloaded snapshot is separate from upload acknowledgments
+and does not implicitly enable network weighting.
 
-It authenticates all three full catalogs, retains cumulative exclusions and the
-old store, and does not alter local votes/settings/OAuth. If interrupted, leave
-both services stopped and use `catalog-trust-recover --transaction-id ...` with
-the exact reported local pending transaction. A partial replacement blocks startup.
-A failed download before publication leaves the old catalog store usable.
+New title/gameplay patches use room-settings-configure --settings-stdin while
+both units are disabled/stopped. It preserves unrelated preferences and changes
+no account, room alias, preset, storage path or topology. Room-settings-status is
+safe while running but describes saved defaults.
 
-The current prepared Standard/DT counts are 105502/105129; native Mania4/Mania7
-counts are 19334/4347. Mania companions include farm and conversion evidence.
-Current central conversion candidates all fail existing independent key checks;
-their zero admitted rows preserve the owner's behavior, not a missing download.
-
-## Local ratings and voluntary hub enrollment
-
-While services remain stopped, explicitly run `ratings-migrate` then
-`ratings-status`. This preserves a whole-ledger backup and enables durable vote
-capture; it does not enroll or upload. Existing eligible history can be seeded
-only by separate `ratings-seed` and a maintainer historical-seed grant.
-
-Send the maintainer only your installation UUID/generation, intended hosting
-account ID and directory-sharing choice from NETWORK_OPERATOR_GUIDE.md. Configure
-the independently pinned hub, consume the bound short-lived invitation and verify
-`network-status`. Separately agree ratings-sharing mode with the maintainer, then
-use RATINGS_OPERATOR_GUIDE.md's `ratings-configure` and explicit reader mode.
-Never send OAuth credentials, client secrets or token files.
-
-Once checks are clean, use SHARED_HUB_TEST.md. The network agent can be installed
-and started explicitly; installation/enrollment never starts a gameplay room.
-Owner four-room adoption is a separate qualified, approved procedure. Do not use
-this tester upgrade to replace or import the owner's running v6 installation.
+Start once only after clean checks and during an agreed test window. Return the
+room links and safe before/active/after support. Retain state on uncertain startup
+or shutdown. Use TWO_ROOM_TEST.md for a fresh two-room installation or
+SHARED_HUB_TEST.md for the retained one-room instance. Human gameplay remains
+separate from the donor's simulated technical acceptance.

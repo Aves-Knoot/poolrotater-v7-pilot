@@ -48,6 +48,7 @@ from .discord_reports import DiscordReports
 from .lazer_coordinator import LazerCoordinator
 from .process_control import SharedProcessControl
 from .custom_greetings import JOIN_GREETING_COOLDOWN, configured_greeting
+from .api import ApiAdmissionDeferred
 
 log = logging.getLogger("bot")
 _UNIVERSAL_CONFIG_WRITE_LOCK = threading.Lock()
@@ -3719,11 +3720,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return
         room_id = self.room_id
         channel_id = int(self.channel_id)
-        messages = self.api.chat_messages(
+        completed, messages = self._chat_api_call('chat_messages',
             channel_id,
             since=self.last_message_id or None,
         )
-        if messages is None:
+        if not completed or messages is None:
             # A 404/timeout is NOT an empty history. Keep the recovery pending
             # and the cursor unchanged, without hammering an unavailable API.
             self._chat_websocket_needs_reconcile = True
@@ -3815,9 +3816,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
             now = time.time()
             if now - self._last_ack > 30:
-                self.api.chat_ack()
-                self._last_ack = now
-            msgs = self.api.chat_messages(
+                completed, _ = self._chat_api_call('chat_ack')
+                if completed: self._last_ack = now
+            completed, msgs = self._chat_api_call('chat_messages',
                 channel_id,
                 since=self._chat_patrol_since or None,
                 before_request=prepare,
@@ -3906,11 +3907,35 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         except (TypeError, ValueError):
             return fallback
 
+    def _chat_api_call(self, method, *args, **kwargs):
+        """Bounded retries for positively identified pre-dispatch gate refusal.
+
+        Only normal chat maintenance uses this path. Gameplay and real-time
+        inbox processing continue; unsuccessful reads/acks never advance cursors.
+        Authentication, transport uncertainty and malformed state still raise.
+        """
+        if method not in ('chat_ack', 'chat_messages'):
+            raise ValueError('unsupported chat maintenance operation')
+        if time.monotonic() < getattr(self, '_chat_api_retry_at', 0.0):
+            return False, None
+        try:
+            result = getattr(self.api, method)(*args, **kwargs)
+        except ApiAdmissionDeferred:
+            failures = min(5, getattr(self, '_chat_api_deferred_count', 0) + 1)
+            delay = min(15.0, float(2 ** (failures - 1)))
+            self._chat_api_deferred_count = failures
+            self._chat_api_retry_at = time.monotonic() + delay
+            log.warning('local API admission deferred for %s; retrying in %.1fs', method, delay)
+            return False, None
+        self._chat_api_deferred_count = 0
+        self._chat_api_retry_at = 0.0
+        return True, result
+
     def poll_chat(self, force: bool = False) -> None:
         now = time.time()
         if now - self._last_ack > 30:
-            self.api.chat_ack()
-            self._last_ack = now
+            completed, _ = self._chat_api_call('chat_ack')
+            if completed: self._last_ack = now
 
         if self._chat_websocket_enabled():
             self._drain_chat_websocket_inbox()
@@ -3964,8 +3989,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return
         self._last_chat_poll = now
 
-        msgs = self.api.chat_messages(self.channel_id, since=self.last_message_id or None)
-        self._process_chat_messages(msgs)
+        completed, msgs = self._chat_api_call('chat_messages', self.channel_id, since=self.last_message_id or None)
+        if completed: self._process_chat_messages(msgs)
 
     def _process_chat_messages(self, msgs: list[dict] | None) -> None:
         """Apply one fetched chat batch on the lobby's main state thread."""

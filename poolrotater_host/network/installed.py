@@ -88,4 +88,16 @@ def diagnostics(client):
         require(value['error'] in (None,'authority-refused','hub-unavailable','local-state-refused'),'invalid_network_agent_receipt')
         number(value['attempted_at']);number(value['retry_seconds'],5,330)
         summary.update(agent_phase=value['phase'],agent_error=value['error'],last_attempt_at=value['attempted_at'])
+    if not summary.get('configured'):next_action='network-configure'
+    elif summary.get('pending_operation'):next_action='network-resume'
+    elif not summary.get('account_binding_matches'):next_action='review-local-account-binding'
+    elif not summary.get('enrolled'):next_action='obtain-bound-invitation-and-network-enroll'
+    elif summary.get('agent_phase') in ('reenrollment-required','local-review-required','operator-recovery-required'):
+        next_action='retain-state-and-review-network-recovery'
+    else:next_action='inspect-network-service-and-last-heartbeat; ratings-sharing-is-separate'
+    summary.update(next_action=next_action,
+        enrollment_does_not_grant_contribution=True,
+        directory_listing_verified=False,
+        directory_observation=('sharing-disabled' if not summary.get('directory') else
+            'last-heartbeat-acknowledged' if summary.get('last_heartbeat_receipt_at') else 'awaiting-heartbeat-acknowledgment'))
     return {'ok':True,**summary,'live_rooms_affected':False,'remote_health_verified':False}

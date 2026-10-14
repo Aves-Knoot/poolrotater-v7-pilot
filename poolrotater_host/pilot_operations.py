@@ -214,9 +214,12 @@ def ownership(instance, action, *, journal_sha256=None, alias=None, room_id=None
     target, _, record = administrative_binding(instance)
     if record['execution'] != 'pilot-live':
         raise ConfigError('ownership operator commands require reviewed live pilot')
-    _unit(instance)
+    unit = _unit(instance, optional=action == 'review')
     state = _service_state(instance)
-    if state['MainPID'] or state['ActiveState'] not in ('inactive', 'failed') or state['UnitFileState'] != 'disabled':
+    uninstalled = (unit is None and state.get('LoadState') == 'not-found'
+                   and state['UnitFileState'] in ('', 'not-found'))
+    if (state['MainPID'] or state['ActiveState'] not in ('inactive', 'failed')
+            or (state['UnitFileState'] != 'disabled' and not uninstalled)):
         raise ConfigError('ownership recovery requires disabled/stopped pilot service')
     from .pilot_installation import require_no_service_processes
     require_no_service_processes(record['service_uid'])

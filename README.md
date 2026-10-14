@@ -1,5 +1,28 @@
 # PoolRotater integrated owner-hub pilot
 
+The dev10 operator onboarding release adds protected stopped room settings and
+clearer network/ratings progress. For the requested Standard Auto + Mania4K
+fresh installation, follow [TWO_ROOM_OPERATOR_HANDOFF.md](TWO_ROOM_OPERATOR_HANDOFF.md)
+and [TWO_ROOM_TEST.md](TWO_ROOM_TEST.md). The no-preset installer default remains
+one room; ordinary upgrades retain the original room count and all state.
+Use `room-settings-configure --settings-stdin` for validated partial title/gameplay
+patches while the bot/network services are disabled and stopped. It starts
+nothing, changes no topology and preserves unrelated native preferences. Active
+`room-settings-status` reports saved defaults rather than live temporary choices.
+
+Dev10 also repairs fatal local pacing deferrals in routine chat acknowledgments
+and reads. Positively identified pre-dispatch refusals retry with bounded backoff;
+authentication errors, corrupt state and uncertain requests remain strict. A
+fatal service exit coordinates closure of known occupied rooms before shared
+transports stop; uncertain ownership still requires explicit recovery. Fresh
+ownership review no longer requires installing a unit first, and status/support
+avoid inspecting each full catalog twice.
+
+Directory opt-in with fresh accepted heartbeats can appear in the owner's separate
+Community Lobbies website section. Its cards/counts never change the four owner
+cards or controls. OAuth approval, a bound hub invitation, a central contribution
+grant and actual human gameplay remain explicit operator/maintainer steps.
+
 This kit adds optional host registration, shared good/bad votes and full prepared
 catalog downloads to the existing bot. Fresh installation creates **one Standard
 automatic-difficulty room configuration**. Installation starts no room or service
@@ -59,7 +82,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 b014b75a68fe9adb1612700f74e0038e3d689a7e71debde59518d41a469f10e1 --live-pilot
+  --bundle runtime.zip --sha256 199e4e228e833d6ce051d76b47817e558f261d0224d2cd9c88e3d7eadf0b7b81 --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.

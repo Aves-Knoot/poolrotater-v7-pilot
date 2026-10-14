@@ -26,6 +26,10 @@ log = logging.getLogger("api")
 API = "https://osu.ppy.sh/api/v2"
 
 
+class ApiAdmissionDeferred(RuntimeError):
+    """The provider gate refused a request before any exchange was dispatched."""
+
+
 class RateLimiter:
     # Four-hour operations reports need a complete local request window. Keep
     # two extra hours so report scheduling jitter cannot truncate the sample.

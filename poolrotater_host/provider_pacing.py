@@ -54,6 +54,10 @@ def clock_matches(before, after):
             and abs((after['wall'] - before['wall']) - (after['monotonic'] - before['monotonic'])) <= 5)
 
 
+class ProviderAdmissionDeferred(AuthError):
+    """Retryable pacing/deadline refusal before a dispatch reservation exists."""
+
+
 class PersistentRequestGate:
     execution = 'offline-fixture'
     state_path = STATE_PATH
@@ -214,7 +218,7 @@ class PersistentRequestGate:
     @contextmanager
     def admission(self, deadline):
         remaining = deadline - time.monotonic()
-        if remaining <= 0: raise AuthError('provider_deadline_exceeded')
+        if remaining <= 0: raise ProviderAdmissionDeferred('provider_deadline_exceeded')
         try:
             lease = self._lease(remaining)
             lease.__enter__()
@@ -228,13 +232,17 @@ class PersistentRequestGate:
             wait = self._wait_seconds(value, now)
             if value['halted'] or wait >= deadline - time.monotonic():
                 self._count(value, 'deferred'); self._save(value)
-                raise AuthError('provider_pacing_deferred')
+                # A halted limiter requires review, rather than endless retries.
+                refused = AuthError if value['halted'] else ProviderAdmissionDeferred
+                raise refused('provider_pacing_deferred')
             if wait > 0:
                 self._usage_wait(wait)
                 wait_started = time.monotonic()
                 try: time.sleep(wait)
                 finally: self._usage_wait(wait, elapsed=max(0., time.monotonic() - wait_started))
-            if time.monotonic() >= deadline: raise AuthError('provider_deadline_exceeded')
+            if time.monotonic() >= deadline:
+                self._count(value, 'deferred'); self._save(value)
+                raise ProviderAdmissionDeferred('provider_deadline_exceeded')
             now = self._now()
             if not clock_matches(value['clock'], now): raise AuthError('provider_pacing_clock_changed')
             value['clock'] = now; value['interval'] = max(value['interval'], self.interval)

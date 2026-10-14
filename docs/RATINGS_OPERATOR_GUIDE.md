@@ -112,6 +112,14 @@ maintainer grant your enrolled host central `contribute` permission before
 enabling local sharing. An observe-only grant can quarantine input permanently;
 a later contribution grant does not promote those old events. Historical seed
 permission is a separate optional decision. Then invoke
+`ratings-status` and `ratings-support` include a `progress` object distinguishing
+locally captured events, queued/retryable uploads, central accepted/already-accepted
+acknowledgments, nonaccepted outcomes and a fully verified shared snapshot. Event
+counts are not distinct voter counts or final opinions. An acknowledgment is not
+proof of aggregate inclusion. Configured reader eligibility is separate from a
+verified observation that running workers use network weights. The diagnostics
+never silently switch selection mode or grant contribution permission.
+
 `pilot_ratings configure --ratings-stdin` with the closed JSON
 `{"share_ratings":true}` (or false) on stdin. No provider token belongs in this input.
 Sharing defaults absent/off. `pilot_ratings sync` performs one bounded

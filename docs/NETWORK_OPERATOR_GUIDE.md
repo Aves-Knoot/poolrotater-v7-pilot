@@ -46,6 +46,12 @@ sudo /usr/bin/python3.12 -I -S "$pilot_release/poolrotater_host/pilot_admin_entr
 The same entry accepts `network-configure`, `network-enroll`, `network-resume`,
 `network-rotate`, `network-leave`, `network-reset`, `network-support`,
 `network-unit`, `network-start`, `network-stop`, and `network-remove`.
+`network-support` describes local enrollment, pending recovery, the last heartbeat
+acknowledgment and a concrete next action. Enrollment does not grant contribution
+permission. A remembered heartbeat is not proof of current hub health or website
+visibility; inspect the public listing separately. The Community Lobbies website
+section is independent of the owner's four cards and hides expired remote joins.
+
 Configure/enroll/reset read one bounded JSON document on stdin. Supply it through
 a private file or a private interactive helper; keep shell tracing disabled and
 never put invitations or credentials in command arguments, environment variables,

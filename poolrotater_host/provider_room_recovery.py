@@ -20,6 +20,13 @@ class ProviderOwnershipReview(OfflineOwnershipReview):
         if guard is not None: guard()
         return result
 
+    def _read_journal(self, aliases):
+        # Only a completely untouched provider namespace is an absent journal.
+        # Missing pieces of a previous creation or recovery remain refused.
+        if not require_namespace(self.root, binding(self.root, self.auth.binding, self.auth._account())):
+            return {'format': 1, 'rooms': {}}
+        return super()._read_journal(aliases)
+
 
 class ProviderOwnershipRecovery(OfflineOwnershipRecovery, ProviderOwnershipReview):
     def __init__(self, authentication):

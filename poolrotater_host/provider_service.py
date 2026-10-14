@@ -5,11 +5,25 @@ from pathlib import Path
 import signal
 import threading
 import time
+from contextlib import contextmanager
 
 from .config import ConfigError
 from .layout import atomic_json
 from .provider_contract import require_live_provider
 from .provider_rooms import ProviderRoomApi, ProviderRoomHub, _authority, provider_host_controller
+
+
+@contextmanager
+def _managed_service_controller(*args, **kwargs):
+    """A fatal service exit coordinates closure before account transports stop."""
+    with provider_host_controller(*args, **kwargs) as supervisor:
+        try:
+            yield supervisor
+        except BaseException:
+            # The service is exiting, so retaining occupied siblings would
+            # orphan them. This does not bypass uncertainty or roster fences.
+            supervisor.request_shutdown()
+            raise
 
 
 def run_provider_service(root, release, *, authentication, api, hub, observer=None):
@@ -55,7 +69,7 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                 for number in (signal.SIGTERM, signal.SIGINT)}
     last_usage_log = 0.
     try:
-        with provider_host_controller(root, release, authentication=authentication,
+        with _managed_service_controller(root, release, authentication=authentication,
                                       api=api, hub=hub) as supervisor:
             acquired = True
             private = getattr(supervisor, 'private_pilot', None)

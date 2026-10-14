@@ -83,16 +83,18 @@ class OfflineOwnershipReview:
         with self.auth.verified_owner() as account:
             return self._inspect(account)
 
+    def _read_journal(self, aliases):
+        try: return _journal(read_json(journal_path(self.root)), aliases)
+        except FileNotFoundError: raise AuthError('ownership_journal_missing') from None
+        except AuthError: raise
+        except Exception: raise AuthError('ownership_journal_refused') from None
+
     def _inspect(self, account, *, journal=None):
         """Internal assessment while the caller holds verified_owner."""
         _, config = load(self.root)
         aliases = {r['alias'] for r in config['rooms']}
-        path = journal_path(self.root)
         def read():
-            try: return _journal(read_json(path), aliases)
-            except FileNotFoundError: raise AuthError('ownership_journal_missing') from None
-            except AuthError: raise
-            except Exception: raise AuthError('ownership_journal_refused') from None
+            return self._read_journal(aliases)
         observed = read()
         journal = observed if journal is None else _journal(journal, aliases)
         digest = hashlib.sha256(json.dumps(journal, sort_keys=True, allow_nan=False).encode()).hexdigest()

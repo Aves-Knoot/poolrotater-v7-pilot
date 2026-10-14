@@ -17,9 +17,31 @@ def diagnostics(sync):
     result.update(sharing_configured=os.path.lexists(sync.profile_path), share_ratings=False,
                   aggregate_inclusion_confirmed=False, live_rooms_affected=False)
     if result['sharing_configured']:result['share_ratings']=sync.profile(allow_review=True)['share_ratings']
-    _,snapshot=Cache(sync.root).read()
-    result.update(rating_mode=profile(sync.root)['mode'],network_consumption_qualified=NETWORK_CONSUMPTION_QUALIFIED,
+    counts,snapshot=Cache(sync.root).read()
+    reader=profile(sync.root)
+    result.update(rating_mode=reader['mode'],network_consumption_qualified=NETWORK_CONSUMPTION_QUALIFIED,
                   snapshot_phase=snapshot['phase'],snapshot_watermark=snapshot['watermark'])
+    events=result.get('events',{})
+    complete=snapshot['phase'] in ('current','last-good')
+    result['progress']={
+        'locally_captured_events':sum(events.values()),
+        'queued_upload_events':sum(events.get(phase,0) for phase in ('pending','retryable')),
+        'centrally_acknowledged_events':sum(events.get(phase,0) for phase in ('accepted','already_accepted')),
+        'nonaccepted_outcomes':{phase:count for phase,count in events.items()
+            if phase not in ('pending','retryable','accepted','already_accepted')},
+        'verified_shared_snapshot_available':complete,
+        'verified_shared_snapshot_maps':len(counts) if complete else 0,
+        'configured_selection_source':reader['mode'],
+        'shared_snapshot_eligible_for_configured_reader':bool(complete and
+            reader['mode']=='network' and NETWORK_CONSUMPTION_QUALIFIED and
+            snapshot.get('server_epoch')==reader['server_epoch']),
+        'runtime_reader_observation_verified':False,
+        'acknowledgment_proves_aggregate_inclusion':False}
+    if not result.get('capture_enabled'):result['next_action']='ratings-migrate-while-stopped; review-if-recovery-required'
+    elif not result['share_ratings']:result['next_action']='obtain-central-contribute-grant-before-enabling-sharing'
+    elif result['progress']['queued_upload_events']:result['next_action']='inspect-ratings-agent-and-await-scheduled-upload'
+    elif not complete:result['next_action']='ratings-fetch-for-verified-snapshot; upload-ack-is-separate'
+    else:result['next_action']='inspect-verified-snapshot-and-configured-reader; confirm-real-vote-inclusion-separately'
     path=contained(sync.root,'state/ratings-agent.json')
     if os.path.lexists(path):
         from .agent import validate_receipt

@@ -43,7 +43,8 @@ def main(argv=None):
                    'network-configure','network-enroll','network-resume','network-rotate','network-leave','network-reset',
                    'network-status','network-support','network-unit','network-start','network-stop','network-remove',
                    'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
-                   'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch'):
+                   'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch',
+                   'room-settings-configure','room-settings-status'):
         command = commands.add_parser('pilot-' + action, help='explicit protected pilot ' + action)
         command.add_argument('--instance', required=True)
         if action == 'private-test-configure':
@@ -52,6 +53,7 @@ def main(argv=None):
             command.add_argument('--owner-review-stdin', required=True, action='store_true')
             command.add_argument('--snapshot-sha256', required=True)
         if action in ('ratings-configure','ratings-reader-configure','ratings-review-epoch'):command.add_argument('--ratings-stdin',required=True,action='store_true')
+        if action == 'room-settings-configure':command.add_argument('--settings-stdin',required=True,action='store_true')
         if action == 'install':
             command.add_argument('--bundle', required=True, type=Path)
             command.add_argument('--sha256', required=True)
@@ -107,6 +109,10 @@ def main(argv=None):
                 result = getattr(pilot, action.replace('-', '_'))(args.instance)
             elif action == 'unit': result = pilot.install_unit(args.instance)
             elif action == 'remove': result = pilot.remove_unit(args.instance)
+            elif action.startswith('room-settings-'):
+                from .room_settings_operations import command as settings_command
+                result=settings_command(args.instance,action.removeprefix('room-settings-'),
+                    stream=sys.stdin.buffer if action=='room-settings-configure' else None)
             elif action.startswith('ratings-'):
                 from .ratings import operations
                 operation=action.removeprefix('ratings-')

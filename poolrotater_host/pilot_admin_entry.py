@@ -82,7 +82,8 @@ def main():
         'network-configure','network-enroll','network-resume','network-rotate','network-leave','network-reset',
         'network-status','network-support','network-unit','network-start','network-stop','network-remove',
         'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
-        'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch'))
+        'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch',
+        'room-settings-configure','room-settings-status'))
     args, rest = parser.parse_known_args()
     if args.action.startswith('private-test-'):
         expected = ['--private-test-stdin'] if args.action == 'private-test-configure' else []

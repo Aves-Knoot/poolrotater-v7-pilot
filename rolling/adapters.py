@@ -87,7 +87,15 @@ class Api:
             # rooms have no such client and legitimately return False here.
             # The account broker owns channel/room authority and HTTP pacing.
             kwargs.pop("before_request", None)
-            return call(self.peer, "api." + name, *args, **kwargs)
+            try:
+                return call(self.peer, "api." + name, *args, **kwargs)
+            except RemoteError as exc:
+                # Typed gate refusals establish no dispatch. Never infer this
+                # from a generic OAuth error string or an uncertain RPC reply.
+                if name in ('chat_ack', 'chat_messages') and exc.kind == 'ProviderAdmissionDeferred':
+                    from bot.api import ApiAdmissionDeferred
+                    raise ApiAdmissionDeferred(str(exc)) from exc
+                raise
         return invoke
 
 
