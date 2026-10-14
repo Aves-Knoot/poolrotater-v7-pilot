@@ -8,7 +8,7 @@ runtime SHA256. The expected dev7 runtime is:
 
 The published dev8 owner-hub pilot runtime
 `04f3dcd4b059a9f445d3949faf6707b1a8c8c5142c51544dbd4fc84adac84501`
-is not a direct reviewed upgrade origin for this private Standard repair. Keep
+is not a direct reviewed upgrade origin for this private-controls repair. Keep
 that instance stopped and retain all state; ask the maintainer for its reviewed
 upgrade route rather than substituting a different old digest or reinstalling.
 A version label alone is insufficient.
@@ -28,17 +28,33 @@ same instance and unresolved ownership evidence until its stopped checks succeed
 
 If already on the native reconnect repair, confirm registered runtime
 `ca877b9c33b397d2ac2e340d3e304449cd3b9e7889daf126f0123d0f59edcc27`
-and use it for `--upgrade-from-sha256`. This private Standard repair adds only
+and use it for `--upgrade-from-sha256`. This private-controls repair adds only
 exact reviewed shared/storage transitions; the listed dev9 configuration and
 service-parity origins have the same reviewed source contracts as that runtime.
 The package version stays unchanged. Compare the separate tag and exact digest.
 
 If already on the private Standard parity repair, confirm registered runtime
 `030f20b1eb80e18b19561e39f6c0e456dc15c3ad1dd78da036f29e885ffd046c`
-and use it for `--upgrade-from-sha256`. This chosen-password repair retains the
-same profile schema and saved configuration. Its four exact reviewed origins
-include the preceding private Standard runtime. Upgrade while stopped; choosing
+and use it for `--upgrade-from-sha256`. This private-controls repair retains the
+same profile schema and saved configuration. Its five exact reviewed origins
+include the preceding private Standard and chosen-password runtimes. Upgrade while stopped; choosing
 a password remains a separate explicit stdin operation and starts nothing.
+
+If already on the chosen-private-password repair, confirm registered runtime
+`8c35ae6259100a577ef747eb0c6e2f5867623cc0114d164595ba43fadd63f4ab`
+and use it for `--upgrade-from-sha256`. This repair preserves the existing
+password/profile, session preferences, full catalogs, OAuth, feedback and
+ownership evidence. It adds native staff persistence/hot reload, explicit
+occupied-room shutdown, the manual last-ready withdrawal fix and optional
+private Discord-board visibility. A configured private session remains private;
+no opt-in board setting or room start is performed by the upgrade.
+
+The previously published chosen-password artifact can refuse occupied cleanup.
+For that old artifact, arrange an empty room before its stopped upgrade. If stop
+has already failed, retain its known room ID/journal and obtain fresh closure
+and protected recovery evidence from the maintainer; do not delete state or
+blindly repeat start. The new explicitly requested stop bypasses only occupancy,
+not ownership uncertainty or unresolved roster ordering.
 
 Stop the bot cleanly with its existing protected `stop` entry; confirm upstream
 room closure and no dedicated worker processes. If a network agent is installed,
@@ -47,7 +63,7 @@ ownership must be reviewed and resolved without discarding its journal.
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 8c35ae6259100a577ef747eb0c6e2f5867623cc0114d164595ba43fadd63f4ab --live-pilot \
+  --bundle runtime.zip --sha256 fecad01b6e63962b06aa085fa354bce2272b8605058a897bf6b2fe6de0313faa --live-pilot \
   --upgrade-from-sha256 a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932
 ```
 

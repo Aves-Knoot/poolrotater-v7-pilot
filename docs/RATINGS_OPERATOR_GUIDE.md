@@ -1,7 +1,7 @@
 # Shared feedback operator guide (M4)
 
-These instructions accompany the combined dev8 candidate. The previously
-published dev7 does not contain M4. Upgrade through OWNER_HUB_UPGRADE.md and follow
+These instructions accompany the integrated owner-hub pilot, including current
+qualified private releases. The original dev7 does not contain M4. Upgrade through OWNER_HUB_UPGRADE.md and follow
 SHARED_HUB_TEST.md for the consenting one-room pilot. Enrollment, contribution,
 historical seeding and network selection remain separate explicit choices. Owner
 production adoption requires the qualified migration and explicit crossover
@@ -51,8 +51,8 @@ python -m poolrotater_host.network.admin --root /PRIVATE/INVENTED/HUB ratings-in
 
 `ratings-grant` reads a JSON object from private stdin with exactly `host_id` and
 `mode`. Modes are `observe`, `contribute`, or `disabled`. Ordinary M3 enrollment
-does not grant ratings scopes. The default repository grant is observe-only:
-submissions are quarantined and do not affect canonical votes. Explicit contribute
+does not grant ratings scopes. An explicit observe-only grant quarantines submissions without affecting
+canonical votes. Ordinary M3 enrollment alone grants no ratings scopes. Explicit contribute
 grants submit/query scopes; disabled removes them. Rotation preserves explicit
 grants. Credential revocation stops new ingestion without erasing prior votes.
 Previously quarantined events remain quarantined on retry; granting contribution
@@ -107,7 +107,11 @@ pilot_ratings() {
 ```
 
 
-After stopped ratings-migrate and separately reviewed M3 enrollment, invoke
+After stopped ratings-migrate and separately reviewed M3 enrollment, have the
+maintainer grant your enrolled host central `contribute` permission before
+enabling local sharing. An observe-only grant can quarantine input permanently;
+a later contribution grant does not promote those old events. Historical seed
+permission is a separate optional decision. Then invoke
 `pilot_ratings configure --ratings-stdin` with the closed JSON
 `{"share_ratings":true}` (or false) on stdin. No provider token belongs in this input.
 Sharing defaults absent/off. `pilot_ratings sync` performs one bounded
@@ -128,6 +132,22 @@ complete activation returns to30min plus jitter. This does not accelerate vote u
 or canonical queries. Fetch outages use independent persisted backoff; a corrupt
 fetch receipt is retained for review while heartbeat and upload scheduling continue.
 Count-only support includes fetch phase/error/deadline/pending pages.
+
+## Fresh feedback and historical backlog
+
+Keep historical seeding out of the first independent tester run. New real player
+votes can then be checked without waiting behind a large imported history. Events
+upload in sequence order, including historical seed events. At100 events per
+nominal30-minute interval, a retained7,479-event backlog takes roughly37.5 hours
+plus jitter and outages before later votes are reached. The maintainer must check
+current safe outbox counts rather than promise that a new owner vote uploads on
+the next tick. Repeated manual calls are not a safe backlog-clearing procedure.
+
+Do not move later votes ahead of earlier sequences: the hub's monotonic stream
+boundary can reject the skipped earlier events as restored sequences. Keep owner
+history/local weighting intact while the queue drains normally. A first near-term
+shared proof can be a fresh consenting tester vote and its verified snapshot on
+the owner installation; confirm later owner feedback separately once reached.
 
 ## Restored hosts and replacement enrollment
 

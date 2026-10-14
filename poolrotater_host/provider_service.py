@@ -44,11 +44,15 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                 value['workers_reaped'] = all(worker.process.poll() is not None for worker in workers)
                 value['referee_child_reaped'] = hub.client._session is None
             atomic_json(root / 'state/provider-service.json', value)
-    previous = {number: signal.signal(number, lambda *_: stop.set())
-                for number in (signal.SIGTERM, signal.SIGINT)}
     workers = []
     acquired = False
     supervisor = None
+    def requested_stop(*_):
+        stop.set()
+        if supervisor is not None:
+            supervisor.request_shutdown()
+    previous = {number: signal.signal(number, requested_stop)
+                for number in (signal.SIGTERM, signal.SIGINT)}
     last_usage_log = 0.
     try:
         with provider_host_controller(root, release, authentication=authentication,
@@ -98,6 +102,8 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                         raise ConfigError('provider_worker_exited')
                     if worker.peer.closed.is_set():
                         raise ConfigError('provider_worker_connection_closed')
+            if stop.is_set() or supervisor.stopping.is_set():
+                supervisor.request_shutdown()
         if any(worker.process.poll() is None for worker in workers):
             raise ConfigError('provider_cleanup_incomplete')
         observer('stopped', supervisor, workers)

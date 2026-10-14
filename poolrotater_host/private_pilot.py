@@ -8,6 +8,7 @@ from .layout import atomic_json,checked_root,load,owner_lease,read_json
 PROFILE='secrets/private-pilot.json'
 ACCESS='secrets/private-pilot-access.json'
 DESIRED='secrets/private-pilot-password.json'
+DISCORD='secrets/private-pilot-discord.json'
 FIELDS={'format','installation_id','generation','session_id','alias'}
 ACCESS_FIELDS=FIELDS|{'room_id','channel_id','password'}
 PRIVATE_TITLE='PoolRotater private test (Standard)'
@@ -43,7 +44,18 @@ def load_profile(root):
 
 def status(root):
     profile=load_profile(root)
-    return {'ok':True,'private_test_configured':profile is not None,'selected_alias':profile.alias if profile else None,'session_id':profile.session_id if profile else None,'access_record_present':bool(profile and os.path.lexists(contained(root,ACCESS))),'service_started':False,'public':False}
+    return {'ok':True,'private_test_configured':profile is not None,'selected_alias':profile.alias if profile else None,'session_id':profile.session_id if profile else None,'access_record_present':bool(profile and os.path.lexists(contained(root,ACCESS))),'service_started':False,'public':False,'discord_status_visible':bool(profile and discord_status_enabled(root,profile))}
+
+def discord_status_enabled(root,profile):
+    """Explicit native Discord-board visibility; website/directory remain private."""
+    if profile!=load_profile(root):raise ConfigError('private pilot profile changed')
+    try:value=_private(root,DISCORD)
+    except FileNotFoundError:return False
+    if (type(value)is not dict or set(value)!=FIELDS|{'discord_status'}
+            or any(value[k]!=profile.record()[k]for k in FIELDS)
+            or type(value['discord_status'])is not bool):raise ConfigError('private pilot Discord visibility requires review')
+    _validated(root,{k:value[k]for k in FIELDS})
+    return value['discord_status']
 
 def desired_password(root,profile):
     if profile!=load_profile(root):raise ConfigError('private pilot profile changed')
@@ -57,28 +69,38 @@ def desired_password(root,profile):
 def _password(value):
     if type(value)is not str or not re.fullmatch('[A-Za-z0-9_-]{8,128}',value):raise ConfigError('private pilot password requires review')
 
-def configure(root,*,alias='room1',password=None,owner_lease_held=False):
+def configure(root,*,alias='room1',password=None,discord_status=None,owner_lease_held=False):
     root=checked_root(root)
     if password is not None:_password(password)
+    if discord_status is not None and type(discord_status)is not bool:raise ConfigError('private pilot Discord visibility input requires review')
     with nullcontext()if owner_lease_held else owner_lease(root):
         current=load_profile(root)
         if current is not None:
             if current.alias!=alias:raise ConfigError('private pilot already configured')
             desired_password(root,current)
+            discord_status_enabled(root,current)
             if password is not None:atomic_json(contained(root,DESIRED),{**current.record(),'password':password})
+            if discord_status is not None:atomic_json(contained(root,DISCORD),{**current.record(),'discord_status':discord_status})
             return status(root)
         marker,_=load(root);value={'format':1,'installation_id':marker['installation_id'],'generation':marker['generation'],'session_id':str(uuid.uuid4()),'alias':alias}
         _validated(root,value)
         if os.path.lexists(contained(root,ACCESS)):raise ConfigError('retained private pilot access requires explicit clear')
         if os.path.lexists(contained(root,DESIRED)):raise ConfigError('retained private pilot password requires explicit clear')
+        if os.path.lexists(contained(root,DISCORD)):raise ConfigError('retained private pilot Discord visibility requires explicit clear')
         atomic_json(contained(root,PROFILE),value)
         if password is not None:atomic_json(contained(root,DESIRED),{**value,'password':password})
+        if discord_status is not None:atomic_json(contained(root,DISCORD),{**value,'discord_status':discord_status})
         return status(root)
 
 def clear(root,*,owner_lease_held=False):
     root=checked_root(root)
     with nullcontext()if owner_lease_held else owner_lease(root):
         profile=load_profile(root)
+        if os.path.lexists(contained(root,DISCORD)):
+            value=_private(root,DISCORD)
+            if type(value)is not dict or set(value)!=FIELDS|{'discord_status'} or type(value['discord_status'])is not bool:raise ConfigError('private pilot Discord visibility requires review')
+            _validated(root,{k:value[k]for k in FIELDS})
+            if profile and any(value[k]!=profile.record()[k]for k in FIELDS):raise ConfigError('private pilot Discord visibility binding requires review')
         if os.path.lexists(contained(root,DESIRED)):
             value=_private(root,DESIRED)
             if type(value)is not dict or set(value)!=FIELDS|{'password'}:raise ConfigError('private pilot password requires review')
@@ -90,6 +112,7 @@ def clear(root,*,owner_lease_held=False):
             _validated(root,{k:value[k]for k in FIELDS})
             if profile and any(value[k]!=profile.record()[k]for k in FIELDS):raise ConfigError('private pilot access binding requires review')
             contained(root,ACCESS).unlink()
+        contained(root,DISCORD).unlink(missing_ok=True)
         contained(root,DESIRED).unlink(missing_ok=True)
         if profile:contained(root,PROFILE).unlink()
         return status(root)
@@ -106,7 +129,12 @@ def private_room(root,room,session):
     profile=load_profile(root)
     if profile is None or profile.session_id!=session or room['alias']!=profile.alias:raise ConfigError('private pilot worker binding changed')
     result=copy.deepcopy(room);result['config_path']=str(directory(root,profile)/(profile.alias+'.json'))
-    result['settings'].update(room_name=PRIVATE_TITLE,hard_restart_interval_seconds=0,auto_empty_reset_seconds=0,discord_public_status_channel_id=0)
+    result['settings'].update(room_name=PRIVATE_TITLE,hard_restart_interval_seconds=0,auto_empty_reset_seconds=0)
+    if discord_status_enabled(root,profile):
+        settings=result['settings']
+        if settings.get('discord_control_enabled')is not True or not int(settings.get('discord_public_status_channel_id',0)or 0):
+            raise ConfigError('private pilot requested Discord board is not configured')
+    else:result['settings']['discord_public_status_channel_id']=0
     return result
 
 def scrub(value):
@@ -130,7 +158,15 @@ def configured_rooms(root,bridge,profile):
     path=Path(private['config_path']);universal=folder/'universal.json';supervisor=folder/'supervisor.json'
     if not path.exists():
         values=read_json(Path(native['config_path']));validate_room_data(values,native['settings']);values.update({k:private['settings'][k]for k in('room_name','hard_restart_interval_seconds','auto_empty_reset_seconds','discord_public_status_channel_id')});atomic_json(path,values)
-    validate_room_data(read_json(path),private['settings'])
+    values=read_json(path);wanted=private['settings']['discord_public_status_channel_id']
+    if type(values.get('discord_public_status_channel_id'))is not type(wanted)or values.get('discord_public_status_channel_id')!=wanted:
+        # Only this fixed session setting may transition under stopped explicit
+        # opt-in. Validate all other pinned values before changing the shadow.
+        old=values.get('discord_public_status_channel_id');original_id=native['settings']['discord_public_status_channel_id']
+        if not ((type(old)is int and old==0)or(type(old)is type(original_id)and old==original_id)):raise ConfigError('private pilot Discord status channel requires review')
+        previous=copy.deepcopy(private['settings']);previous['discord_public_status_channel_id']=old
+        validate_room_data(values,previous);values['discord_public_status_channel_id']=wanted;atomic_json(path,values)
+    validate_room_data(values,private['settings'])
     if not universal.exists():atomic_json(universal,{})
     if read_json(universal)!={}:raise ConfigError('private pilot universal overrides require review')
     if not supervisor.exists():atomic_json(supervisor,{'deployment_empty_seconds':3600})
@@ -147,9 +183,10 @@ def configured_rooms(root,bridge,profile):
     result=[]
     for cfg in original:
         target=shadow if cfg['_instance_name']==profile.alias else cfg
-        # The account transport keeps staff controls/modlog; no public status
-        # replay or rename is permitted for any alias during a private session.
-        target['discord_public_status_channel_id']=0
-        target['_supervisor_overrides']['discord_public_status_channel_id']=0
+        # Only explicit opted-in room1 may use its original native Discord board.
+        # Other aliases stay suppressed; website/directory masking is separate.
+        public_id=private['settings']['discord_public_status_channel_id']if cfg['_instance_name']==profile.alias else 0
+        target['discord_public_status_channel_id']=public_id
+        target['_supervisor_overrides']['discord_public_status_channel_id']=public_id
         result.append(target)
     return result

@@ -19,6 +19,9 @@ def _safe_result(value, action):
             or value.get('public') is not False
             or value.get('service_started') is not False):
         raise ConfigError('private test result refused')
+    visible = value.get('discord_status_visible',False)
+    if type(visible)is not bool or visible and not value['private_test_configured']:
+        raise ConfigError('private test result refused')
     configured = value['private_test_configured']
     if configured != (value['selected_alias'] == 'room1'):
         raise ConfigError('private test result refused')
@@ -35,7 +38,7 @@ def _safe_result(value, action):
     return {'format': 1, 'ok': True, 'action': 'private-test-' + action,
             'private_test_configured': configured, 'selected_alias': value['selected_alias'],
             'session_id': session, 'access_record_present': value['access_record_present'],
-            'public': False, 'protected_runtime_checked': True,
+            'public': False, 'discord_status_visible': visible, 'protected_runtime_checked': True,
             'services_started': False, 'service_started': False,
             'provider_dispatch': False, 'actual_room_testing': False}
 
@@ -64,8 +67,8 @@ def command(instance, action, *, stream=None):
                 if action == 'configure':
                     from .network.contracts import decode, fields
                     value = decode(stream.read(MAX_INPUT + 1), maximum=MAX_INPUT)
-                    fields(value, ('alias', 'password') if type(value) is dict
-                           and 'password' in value else ('alias',))
+                    if type(value)is not dict or 'alias'not in value or set(value)-{'alias','password','discord_status'}:
+                        fields(value,('alias',))
                     if value['alias'] != 'room1':
                         raise ConfigError('private test input refused')
                     options = {'alias': value['alias'], 'owner_lease_held': True}
@@ -75,6 +78,10 @@ def command(instance, action, *, stream=None):
                                 '[A-Za-z0-9_-]{8,128}', value['password']):
                             raise ConfigError('private test password input refused')
                         options['password'] = value['password']
+                    if 'discord_status'in value:
+                        if type(value['discord_status'])is not bool:
+                            raise ConfigError('private test Discord visibility input refused')
+                        options['discord_status']=value['discord_status']
                     result = private_pilot.configure(target['root'], **options)
                 elif action == 'clear':
                     result = private_pilot.clear(target['root'], owner_lease_held=True)

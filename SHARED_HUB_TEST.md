@@ -23,7 +23,7 @@ or destructive outage/restore is part of this tester checklist.
    Only then configure local `share_ratings: true` and start the network agent.
    Enrollment or `observe` permission alone is insufficient: uploading before
    the grant quarantines opinions, and a later grant does not promote them.
-   Submit a good and bad
+   Leave historical seeding out of this first tester run. Submit a good and bad
    vote from actual players. Record the map IDs, approximate times and commands,
    without player identities/private chat. Capture outbox/sync/snapshot counters;
    the maintainer checks deduplication, shared totals and snapshot activation.
@@ -37,7 +37,12 @@ or destructive outage/restore is part of this tester checklist.
    The nominal upload is at most100 events per30-minute scheduler interval;
    manual calls and the global per-player quota need separate review. The
    maintainer must confirm eligible historical acceptance before any later
-   explicit switch to network weighting.
+   explicit switch to network weighting. Uploads are FIFO by event sequence: a
+   large retained owner seed backlog can delay new owner votes for many hours.
+   Check current outbox counts, avoid manual mass flushing, and distinguish a
+   fresh tester vote verified by the owner snapshot from later owner feedback.
+   Starting an intentionally stopped owner agent requires a separately arranged
+   action; enrollment of the tester does not restart the owner or public rooms.
 5. **Directory.** If opted in, check the hub lists only this public room and its
    current range. Private/unknown rooms and player/chat data must not appear.
 6. **Hub outage (coordinate first).** The maintainer performs a bounded hub-only

@@ -122,7 +122,7 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
                         supervisor.dispose(worker)
                         if worker.broker.hub.owned and not worker.broker.uncertain:
                             rid, = worker.broker.hub.owned
-                            worker.broker.close_room(rid)
+                            worker.broker.close_room(rid, require_empty=not supervisor._explicit_shutdown)
                         if worker.broker.hub.owned or worker.broker.uncertain:
                             raise RuntimeError('synthetic room ownership remains unresolved')
                         supervisor.record(worker.alias, phase='stopped', pid=None)

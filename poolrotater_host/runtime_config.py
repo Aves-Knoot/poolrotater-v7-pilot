@@ -20,6 +20,9 @@ from .owner_settings import GAMEPLAY_KEYS, RECORD as GAMEPLAY_RECORD, load_overr
 from . import owner_integrations
 
 EDITABLE_BASE = {'sr_min', 'sr_max', 'auto_difficulty', 'default_response_language'}
+# Native permission commands and the existing hot-loader own these room-local
+# lists. Identity, transport, credentials and Discord role routing stay pinned.
+EDITABLE_STAFF = frozenset({'admins', 'moderators'})
 STATE_FILE = 'state/runtime-config.json'
 ROOM_DIRECTORY = 'config/rooms'
 
@@ -130,7 +133,7 @@ def render_room(root: Path, alias, *, account_id=None, catalog_reference=None, c
 
 def pinned_keys(settings):
     # Installation/account/transport paths remain pinned; gameplay tuning does not.
-    return set(settings) - EDITABLE_BASE - GAMEPLAY_KEYS - {
+    return set(settings) - EDITABLE_BASE - EDITABLE_STAFF - GAMEPLAY_KEYS - {
         'max_length', 'min_passcount', 'pool_limit', 'max_map_age_years',
     }
 
@@ -164,6 +167,7 @@ def validate_room_data(data: dict, base: dict):
         raise ConfigError('auto_difficulty must be boolean')
     if base['ruleset_id'] == 3 and data.get('auto_difficulty', False):
         raise ConfigError('Mania requires fixed difficulty')
+    owner_integrations.validate_settings({k:v for k,v in data.items() if k in EDITABLE_STAFF}, set())
     preset = ('mania-' + str(base['mania_keys']) + 'k') if base['ruleset_id'] == 3 else 'standard-auto'
     validate_settings({k: v for k, v in data.items() if k in GAMEPLAY_KEYS}, preset=preset)
 

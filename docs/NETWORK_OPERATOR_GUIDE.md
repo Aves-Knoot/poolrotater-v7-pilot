@@ -2,8 +2,8 @@
 
 This optional integration enrolls an installation in an invite-only hub, sends
 bounded observations and lists consenting public rooms. It neither authorizes
-an osu! account nor starts/stops a lobby. These instructions accompany the combined
-dev8 candidate; the previously published dev7 does not contain these commands.
+an osu! account nor starts/stops a lobby. These instructions accompany the integrated owner-hub pilot, including the
+current qualified private releases. The original dev7 does not contain these commands.
 The combined release also includes optional M4 feedback synchronization, described
 in RATINGS_OPERATOR_GUIDE.md. Use OWNER_HUB_UPGRADE.md for state-preserving upgrade
 and explicit trust adoption. Technical qualification uses invented identities and
@@ -28,8 +28,10 @@ with this read-only command (replace `first` with your installed instance):
 sudo /usr/bin/python3.12 -I -S -c 'import json; v=json.load(open("/var/lib/poolrotater-v7-pilot/first/.poolrotater-host.json")); print(json.dumps({k:v[k] for k in ("installation_id","generation")}))'
 ```
 
-Send only those two UUIDs, your intended numeric hosting account ID and your
-directory-sharing choice to the hub administrator. The administrator assigns
+Send only those two UUIDs, your instance name/current registered runtime digest,
+intended numeric hosting account ID and directory-sharing choice to the hub
+administrator. Separately state whether you consent to ratings contribution;
+directory enrollment does not imply that consent. The administrator assigns
 the operator UUID and checks the complete binding before issuing the invitation.
 These UUIDs identify the installation; they grant no account or room access.
 Do not send configuration, token files or the entire state directory.
@@ -75,6 +77,16 @@ random network credential and persists the request before dispatch. If a reply i
 lost, inspect `network-status` and run `network-resume`; do not create a second
 identity or remove pending files. Rotation likewise persists the new credential
 before contacting the hub. A completed exact retry recovers the same operation.
+
+Configure and enroll through the same protected entry with the closed JSON on
+private stdin (`network-configure`, then `network-enroll`). Confirm
+`network-status`; if enrollment is pending, use `network-resume` instead of
+creating a second enrollment. For the first shared-vote test, have the maintainer
+grant the enrolled host `contribute` before enabling local ratings sharing.
+Historical seed permission is separate and is unnecessary for fresh player votes.
+The maintainer's already enrolled owner installation retains its existing binding
+and sharing state during compatible upgrades; do not reenroll or regrant it just
+to use a newer runtime.
 
 ## Heartbeat service and local rooms
 
@@ -146,7 +158,9 @@ python -m poolrotater_host.network.admin --root /private/staging-hub serve --cer
 ```
 
 `serve` defaults to loopback and requires explicit TLS files; it installs no unit.
-Do not deploy it into the owner production website during this development goal.
+These commands describe a separate staging hub. The pilot already has a dedicated
+owner hub at the approved9444 origin; testers enroll there instead of initializing
+or serving their own hub. Do not deploy these staging commands into the website.
 `invite` reads JSON with `binding` (operator_id/account_id/installation_id/
 generation/directory), `label` and `expires_seconds` (60..86400). Its stdout includes
 the invitation: handle it privately. `revoke` takes `{"host_id":"…"}` on stdin.
@@ -166,7 +180,7 @@ Protocol: [NETWORK_API_V1.json](NETWORK_API_V1.json) and
 [network.v1.schema.json](../schemas/network.v1.schema.json). Historical draft
 schemas are separate design records. HTTP has bounded bodies, deadlines,
 concurrency and quotas; redirects and ambient proxies/trust are disabled on hosts.
-Earlier M3-only qualification excluded M4 ratings/events and actual rooms. The
-combined dev8 release requires its own M3/M4 installed qualification; consult
+Earlier M3-only qualification excluded M4 ratings/events and actual rooms. Each
+combined release requires its own M3/M4 installed qualification; consult
 the release notes and SHARED_HUB_TEST.md for evidence and remaining gates. Remote room commands
 and actual owner crossover are not authorized by this guide.

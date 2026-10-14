@@ -9776,7 +9776,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         # An AFK or undownloaded player must not hold ready players hostage.
         return r > 0
 
-    def cancel_single_player_start_if_unready(self, status: str | None = None) -> bool:
+    def cancel_single_player_start_if_unready(
+        self, status: str | None = None, *, previously_ready: bool = False,
+    ) -> bool:
         """Cancel a countdown when the lone player explicitly becomes unready.
 
         READY is a hard requirement for a one-player lobby. Ignore gameplay
@@ -9792,9 +9794,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
         # A player/admin who explicitly typed .start asked for the countdown
         # now. Do not immediately undo that request merely because the lone
-        # player has not toggled READY. This bypass lasts only for this STARTING
-        # state and is cleared by set_state() as soon as it ends.
-        if self._manual_start_bypass_ready:
+        # player has not toggled READY. An actual READY -> unready transition
+        # withdraws that readiness even after .start: cancel before the server
+        # consumes this playlist item at the end of a nobody-ready countdown.
+        # The bypass lasts only for this STARTING state and is cleared when it
+        # ends. Initial/repeated unready observations keep the manual behavior.
+        if self._manual_start_bypass_ready and not previously_ready:
             return False
 
         uid = next(iter(active))
@@ -11748,6 +11753,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             uid = int(payload.get("user_id") or 0)
             status = payload.get("status")
             if uid and uid not in self.non_gameplay_user_ids():
+                previously_ready = uid in self.ready and uid in self.gameplay_player_ids()
                 if uid in self.players:
                     self.players[uid]["status"] = status
                 if status == "ready":
@@ -11777,7 +11783,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 # early-start hint. If that lone player unreadies during the
                 # countdown, stop it and wait for READY again. Multi-player
                 # lobbies retain the normal threshold behavior.
-                self.cancel_single_player_start_if_unready(status)
+                self.cancel_single_player_start_if_unready(
+                    status, previously_ready=previously_ready,
+                )
 
                 # Status changes affect the NEXT auto-difficulty calculation.
                 self.mark_auto_retune_pending()

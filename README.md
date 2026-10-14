@@ -38,6 +38,16 @@ code and local generation without response bodies or credentials. The original
 wire-disconnection cause remains unknown; real pilot acceptance is still limited
 to the modes and scenarios actually observed.
 
+The private-controls repair restores native room-local `.admin` and `.mod`
+persistence and hot reload, including private-session staff lists. Existing staff
+remain in place, and admins inherit moderator permissions. Private preferences
+remain separate from the saved public-room defaults. An explicitly requested
+service stop can now close a known owned room with players present; uncertain
+ownership, unresolved roster ordering and normal empty-room maintenance stay
+guarded. A manual `.start` countdown now cancels when the last ready player
+withdraws readiness. This does not establish the cause of every unexpected late
+advance; report any recurrence with times, before/after readiness and support.
+
 ## Fresh independent operator
 
 This frozen pilot targets Ubuntu24.04 Linux x86_64, the pinned system CPython3.12
@@ -49,7 +59,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 8c35ae6259100a577ef747eb0c6e2f5867623cc0114d164595ba43fadd63f4ab --live-pilot
+  --bundle runtime.zip --sha256 fecad01b6e63962b06aa085fa354bce2272b8605058a897bf6b2fe6de0313faa --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.
@@ -183,11 +193,37 @@ It updates the captured access record only after that acknowledgement. An uncert
 settings reply is not replayed; retain the known room and recovery evidence.
 Credentials, URLs, alternate aliases and start flags remain forbidden. The parent
 retains actual access in a private mode0600 record; neither these commands,
-status/support, child arguments, logs nor public room listings may expose it.
+status/support, child arguments, logs nor public projections may expose it.
 Share the confirmed private link/password only with the intended participant.
 Use the normal protected start exactly once during the agreed private test window.
-The runtime creates only this Standard room and suppresses public status updates
-while retaining configured staff controls and moderation.
+The runtime creates only this Standard room. Public Discord status is suppressed
+by default while configured staff controls and moderation remain available.
+
+You may explicitly show the private room on its existing Discord status board:
+
+```sh
+printf '%s\n' '{"alias":"room1","discord_status":true}' | \
+  sudo /usr/bin/python3.12 -I -S \
+  "$pilot_release/poolrotater_host/pilot_admin_entry.py" \
+  --instance first private-test-configure --private-test-stdin
+```
+
+This is another stopped/disabled-service operation, not a live visibility switch.
+The selected room uses its usual configured board and password-protected join
+link. The password is never published there; share it separately with the
+intended players. `discord_status: false` disables this opt-in. The website feed
+and hub directory continue to hide the private room, and the other saved room
+panels/configuration are unchanged. If no Discord status channel is configured,
+leave this option off. The same bounded JSON may include both `password` and
+`discord_status`; neither changes the OAuth account or launches a room.
+
+Native osu! commands such as `.admin add <id>` and `.mod add <id>` now save and
+hot-load staff lists with the existing authorization rules. Admins already have
+moderator permissions. Private-session grants and other `.set` preferences stay
+in the session shadow file; they do not alter the public-room defaults. Use
+positive integer IDs in room JSON, preserving the existing staff list when
+adding a user. Transport, OAuth and Discord routing settings still require the
+existing protected reconfiguration workflow.
 
 After testing, stop cleanly, verify room closure and process absence, disable
 both units if necessary, then run the protected entry with action

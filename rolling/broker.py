@@ -283,7 +283,9 @@ class Broker:
                 return scrub(result)
             return result
         if method in ("discord.send_to_channel", "discord.react_to_map", "discord.update_public_status"):
-            if self.private_pilot is not None and method == 'discord.update_public_status':return False
+            if self.private_pilot is not None and method == 'discord.update_public_status':
+                from poolrotater_host.private_pilot import discord_status_enabled
+                if not discord_status_enabled(self.owner.runtime,self.private_pilot):return False
             channel = kwargs.get("channel_id")
             position = 2 if method == "discord.react_to_map" else 1
             if len(args) > position:

@@ -91,11 +91,17 @@ class RollingSupervisor:
         self.handles = {}
         self.targets = {}
         self.stopping = threading.Event()
+        self._explicit_shutdown = False
         self.rollout_thread = None
         self.rollout_alias = None
         self.schema_baseline = None
         self.status_lock = threading.RLock()
         self.last_status_write = 0
+
+    def request_shutdown(self):
+        """Parent-authorized service stop; never a worker configuration option."""
+        self._explicit_shutdown = True
+        self.stopping.set()
 
     def record(self, alias, **values):
         self.registry.record(alias, **values)
@@ -624,7 +630,7 @@ class RollingSupervisor:
             name = content[0].casefold() if content else ""
             if name == "shutdown" and [v.casefold() for v in content[1:]] == ["all"]:
                 self.discord.send_to_channel("Shutting down all lobby rooms and the supervisor.", command.channel_id)
-                self.stopping.set()
+                self.request_shutdown()
             elif name in ("open", "reopen"):
                 state = self.registry.snapshot()["rooms"].get(alias, {})
                 if self.rollout_alias or state.get("phase") != "parked" or state.get("room_id") or state.get("ownership_unknown"):
@@ -684,8 +690,8 @@ class RollingSupervisor:
         return Path(previous.get("last_good_release") or previous.get("release") or self.release)
 
     def run(self):
-        signal.signal(signal.SIGINT, lambda *_: self.stopping.set())
-        signal.signal(signal.SIGTERM, lambda *_: self.stopping.set())
+        signal.signal(signal.SIGINT, lambda *_: self.request_shutdown())
+        signal.signal(signal.SIGTERM, lambda *_: self.request_shutdown())
         try:
             self.shared.hub.connect()
             self.shared.start_dispatch()
@@ -719,7 +725,7 @@ class RollingSupervisor:
                     self.dispose(worker)
                     if worker.broker.hub.owned and not worker.broker.uncertain:
                         rid, = worker.broker.hub.owned
-                        worker.broker.close_room(rid)
+                        worker.broker.close_room(rid, require_empty=not self._explicit_shutdown)
                     self.record(worker.alias, phase="stopped", pid=None)
                 except Exception:
                     log.exception("shutdown ownership unresolved for %s", worker.alias)
