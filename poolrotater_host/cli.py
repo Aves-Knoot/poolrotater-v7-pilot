@@ -12,10 +12,19 @@ from .layout import load, setup
 from .network.contracts import NetworkError
 
 
+class _PrivateTestParser(argparse.ArgumentParser):
+    def error(self, message):
+        # An unsupported password argument must not be echoed by argparse.
+        self.exit(2, 'private test arguments refused; use bounded stdin\n')
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='poolrotater-host', description=__doc__)
+    arguments = sys.argv[1:] if argv is None else list(argv)
+    parser_class = (_PrivateTestParser if any(value.startswith('pilot-private-test-')
+                    for value in arguments) else argparse.ArgumentParser)
+    parser = parser_class(prog='poolrotater-host', description=__doc__)
     parser.add_argument('--version', action='version', version=__version__)
-    commands = parser.add_subparsers(dest='command', required=True)
+    commands = parser.add_subparsers(dest='command', required=True, parser_class=parser_class)
     download = commands.add_parser('catalog-download', help='verify a prepared catalog over explicitly trusted HTTPS')
     download.add_argument('--origin', required=True)
     download.add_argument('--cache', required=True, type=Path)
@@ -29,6 +38,7 @@ def main(argv=None):
                    'recover', 'pacing-recover', 'catalog-import', 'catalog-recover',
                    'catalog-trust-replace', 'catalog-trust-recover', 'start', 'stop', 'remove',
                    'owner-import', 'owner-status', 'owner-rollback', 'owner-budget-prepare',
+                   'private-test-configure', 'private-test-clear', 'private-test-status',
                    'ownership-review', 'ownership-clear', 'ownership-resume',
                    'network-configure','network-enroll','network-resume','network-rotate','network-leave','network-reset',
                    'network-status','network-support','network-unit','network-start','network-stop','network-remove',
@@ -36,6 +46,8 @@ def main(argv=None):
                    'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch'):
         command = commands.add_parser('pilot-' + action, help='explicit protected pilot ' + action)
         command.add_argument('--instance', required=True)
+        if action == 'private-test-configure':
+            command.add_argument('--private-test-stdin', required=True, action='store_true')
         if action == 'owner-import':
             command.add_argument('--owner-review-stdin', required=True, action='store_true')
             command.add_argument('--snapshot-sha256', required=True)
@@ -82,7 +94,7 @@ def main(argv=None):
         command.add_argument('--root', type=Path, required=True, help='explicit private host directory')
         if name == 'setup': command.add_argument('--preset', action='append', choices=PRESETS)
         if name == 'simulate': command.add_argument('--rounds', type=int, default=3)
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
     logging.basicConfig(level=logging.ERROR)
     try:
         if args.command.startswith('pilot-'):
@@ -113,6 +125,10 @@ def main(argv=None):
                     confirm_lost_creation=getattr(args, 'confirm_lost_creation', False),
                     transaction_id=getattr(args, 'transaction_id', None), decision=getattr(args, 'decision', None))
             elif action in ('start', 'stop'): result = pilot.lifecycle(args.instance, action)
+            elif action.startswith('private-test-'):
+                from .private_pilot_operations import command as private_test_command
+                result = private_test_command(args.instance, action.removeprefix('private-test-'),
+                    stream=sys.stdin.buffer if action == 'private-test-configure' else None)
             elif action.startswith('owner-'):
                 from .owner_operations import command as owner_command
                 result = owner_command(args.instance, action.removeprefix('owner-'),

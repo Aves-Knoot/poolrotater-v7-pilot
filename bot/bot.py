@@ -854,7 +854,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 native_room = render_room(Path(self.cfg['_host_root']), self.cfg['_instance_name'],
                     account_id=self.cfg.get('_authenticated_user_id'),
                     catalog_reference=self.cfg.get('_host_catalog_reference'),
-                    catalog_set=self.cfg.get('_host_catalog_set'))
+                    catalog_set=self.cfg.get('_host_catalog_set'),
+                    private_session=self.cfg.get('_host_private_pilot_session'))
                 if path != Path(native_room['config_path']):
                     raise ValueError('unexpected host-managed configuration path')
             if path.exists():
@@ -3171,7 +3172,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 room = render_room(Path(self.cfg['_host_root']), self.cfg['_instance_name'],
                     account_id=self.cfg.get('_authenticated_user_id'),
                     catalog_reference=self.cfg.get('_host_catalog_reference'),
-                    catalog_set=self.cfg.get('_host_catalog_set'))
+                    catalog_set=self.cfg.get('_host_catalog_set'),
+                    private_session=self.cfg.get('_host_private_pilot_session'))
                 if self._config_path != Path(room['config_path']):
                     raise ValueError('unexpected host-managed configuration path')
                 room_data = read_json(self._config_path)
@@ -7183,7 +7185,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return None
 
     def _record_standard_edit(self, item_id, previous, previous_map, confirmed):
-        """Bounded history of confirmed same-item edits, not guessed server state."""
+        """Bounded local revision history; uncertain attempts require a full audit."""
         if not hasattr(self, '_standard_playlist_edits'):
             self._standard_playlist_edits = {}
         history = self._standard_playlist_edits.setdefault(item_id, {'retired': {}})
@@ -7197,6 +7199,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         while len(history['retired']) > 16:
             history['retired'].pop(next(iter(history['retired'])))
         history.update(expected=signature, pending_audit=False)
+        history.pop('unconfirmed', None)
         while len(self._standard_playlist_edits) > 128:
             self._standard_playlist_edits.pop(next(iter(self._standard_playlist_edits)))
 
@@ -7295,7 +7298,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             invalid = invalid or resolved is None
             if resolved is not None:
                 dt = getattr(resolved, 'is_dt', False)
-                if expected is not None:
+                confirmed_uncertain_edit = (authoritative and edit is not None
+                    and edit.get('unconfirmed')
+                    and self._standard_edit_signature(item) == edit.get('expected'))
+                if expected is not None and not confirmed_uncertain_edit:
                     invalid = invalid or (int(expected.beatmap_id) != beatmap_id
                                           or getattr(expected, 'is_dt', False) != dt)
                 if dt:
@@ -7321,6 +7327,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     edit['pending_audit'] = True
                 elif authoritative and self._standard_edit_signature(item) == edit['expected']:
                     edit['pending_audit'] = False
+                    edit.pop('unconfirmed', None)
             if invalid:
                 self._playlist_maps.pop(item_id, None)
                 log.error('Standard playlist item %s has unknown/mismatched mods or DT rating; holding start', item_id)
@@ -7501,6 +7508,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if current_map is not None:
             self.current_item_id = current_id
             self.current_map = current_map
+            self._sync_countdown_wait_item()
 
         # Ignore any stale active-looking entries that sort before the referee's
         # selected current item; they are not future queue entries.
@@ -7733,13 +7741,29 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         previous = dict(self._server_playlist_items.get(previous_id, {}))
         previous_map = self._playlist_maps.get(previous_id, self.current_map)
         self._prefetch_map_pp(m)
-        resp = self._referee_operation_with_rejoin(
-            "EditCurrentPlaylistItem",
-            lambda: self.hub.edit_current_item(
-                self.room_id, m.beatmap_id,
-                **rules,
-            ),
-        )
+        try:
+            resp = self._referee_operation_with_rejoin(
+                "EditCurrentPlaylistItem",
+                lambda: self.hub.edit_current_item(
+                    self.room_id, m.beatmap_id,
+                    **rules,
+                ),
+            )
+        except HubInvocationUncertain:
+            if previous_id is not None and getattr(self.pool, 'mixed_dt', False):
+                # A lost completion does not prove failure or permit replay.
+                # Retain the exact requested revision without adopting it. Only
+                # a full matching server audit plus catalog verification can
+                # resolve the existing item's old local map binding.
+                self._record_standard_edit(previous_id, previous, previous_map, {
+                    'beatmap_id': m.beatmap_id,
+                    'required_mods': rules['required_mods'],
+                    'freestyle': rules['freestyle'],
+                })
+                pending = self._standard_playlist_edits[previous_id]
+                pending.update(unconfirmed=True, pending_audit=True)
+                self._playlist_dirty = True
+            raise
         if isinstance(resp, dict) and resp.get("id") is not None:
             self.current_item_id = int(resp["id"])
         # EditCurrentPlaylistItem normally retains the playlist item id. Set

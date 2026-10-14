@@ -430,14 +430,28 @@ def _service_observation(target, record, state, *, historical=False):
     return value
 
 
+def _startup_private_profile(target, record):
+    # Absence keeps ordinary startup behavior exact, including fixtures that
+    # intentionally have no installed marker. Private records are read under
+    # their dedicated UID and validated against the installation/configuration.
+    if not os.path.lexists(target['root'] / 'secrets/private-pilot.json'):
+        return None
+    from .ratings.operations import _identity
+    from .private_pilot import load_profile
+    with _identity(record['service_uid']):
+        return load_profile(target['root'])
+
+
 def _wait_ready(target, record, *, timeout=None):
     from .config import validate
     configuration = validate(_control(target['root'] / 'config/host.json', record['service_uid'], private=True))
     expected_rooms = configuration['rooms']
+    private_profile = _startup_private_profile(target, record)
+    expected_room_count = 1 if private_profile is not None else len(expected_rooms)
     if timeout is None:
         # The cold full-catalog load and several checked provider handshakes per
         # room must fit the explicit owner four-room startup observation too.
-        timeout = 75 + 45 * (len(expected_rooms) - 1)
+        timeout = 75 + 45 * (expected_room_count - 1)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         state = _service_state(target['root'].name)
@@ -463,10 +477,12 @@ def _wait_ready(target, record, *, timeout=None):
             if observed['phase'] == 'recovery_required':
                 raise ConfigError('pilot startup requires stopped ownership review')
             if observed['phase'] == 'running':
-                if type(observed.get('room_count')) is not int or observed['room_count'] != len(expected_rooms):
+                if type(observed.get('room_count')) is not int or observed['room_count'] != expected_room_count:
                     raise ConfigError('pilot service did not observe the exact configured room count')
                 if validate(_control(target['root'] / 'config/host.json', record['service_uid'], private=True))['rooms'] != expected_rooms:
                     raise ConfigError('pilot room configuration changed during startup observation')
+                if _startup_private_profile(target, record) != private_profile:
+                    raise ConfigError('private pilot profile changed during startup observation')
                 return state
         time.sleep(.2)
     raise ConfigError('pilot startup observation timed out; inspect existing service without retry')

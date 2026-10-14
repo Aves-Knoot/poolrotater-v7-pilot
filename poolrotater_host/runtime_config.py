@@ -112,7 +112,7 @@ def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=No
                         'rooms': [{k: r[k] for k in ('alias', 'preset', 'catalog')} for r in config['rooms']]}}
 
 
-def render_room(root: Path, alias, *, account_id=None, catalog_reference=None, catalog_set=None):
+def render_room(root: Path, alias, *, account_id=None, catalog_reference=None, catalog_set=None, private_session=None):
     """Worker-local reload without broadening its installed SQLite authority."""
     if catalog_reference is not None:
         if not isinstance(catalog_reference, dict) or catalog_reference.get('set_id') != catalog_set:
@@ -121,7 +121,11 @@ def render_room(root: Path, alias, *, account_id=None, catalog_reference=None, c
         raise ConfigError('worker pinned catalog reference is missing')
     native = render(root, account_id=account_id, room_alias=alias,
                     catalog_reference=catalog_reference)
-    return native['rooms'][0]
+    room = native['rooms'][0]
+    if private_session is not None:
+        from .private_pilot import private_room
+        room = private_room(root, room, private_session)
+    return room
 
 
 def pinned_keys(settings):

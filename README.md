@@ -49,7 +49,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 ca877b9c33b397d2ac2e340d3e304449cd3b9e7889daf126f0123d0f59edcc27 --live-pilot
+  --bundle runtime.zip --sha256 030f20b1eb80e18b19561e39f6c0e456dc15c3ad1dd78da036f29e885ffd046c --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.
@@ -144,3 +144,37 @@ local catalogs. Recovery and trust replacement are explicit stopped operations.
 This is a limited pilot. Automatic software upgrades and owner cutover are not
 enabled. Return redacted support, checklist results and errors manually; no chat,
 token files or private configuration is automatically sent to the maintainer.
+
+## Optional private Standard test
+
+This profile is for an explicitly arranged private test. Keep the existing
+instance and original room settings. It selects only configured Standard room1
+without replacing the other room configurations. Both bot and network services
+must be disabled/stopped, all owned processes gone and ownership clean before
+configuration or clear. It starts no service and performs no authorization.
+
+```sh
+printf '%s' '{"alias":"room1"}' | sudo /usr/bin/python3.12 -I -S \
+  "$pilot_release/poolrotater_host/pilot_admin_entry.py" \
+  --instance first private-test-configure --private-test-stdin
+sudo /usr/bin/python3.12 -I -S \
+  "$pilot_release/poolrotater_host/pilot_admin_entry.py" \
+  --instance first private-test-status
+```
+
+Only the alias is accepted: never supply a password, credential, URL or start
+flag. osu!'s native MakeRoom generates the password. After confirmed creation,
+the parent retains it in a private mode0600 access record; neither these commands,
+status/support, child arguments, logs nor public room listings may expose it.
+Share the confirmed private link/password only with the intended participant.
+Use the normal protected start exactly once during the agreed private test window.
+The runtime creates only this Standard room and suppresses public status updates
+while retaining configured staff controls and moderation.
+
+After testing, stop cleanly, verify room closure and process absence, disable
+both units if necessary, then run the protected entry with action
+`private-test-clear`. Clear deletes the profile/access records and retains isolated
+session preferences for review. It neither overwrites the original four-room
+configuration nor starts the public rooms. Public activation needs a separate
+instruction. Return redacted times, before/active/after support and the commands
+and gameplay actually tested; keep the password/access record and tokens private.

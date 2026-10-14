@@ -189,7 +189,8 @@ class DiscordModLog:
         if event_label in ("JOIN", "LEAVE"):
             return f"{prefix}↳ {message}"
         if event_label in ("BOT", "OSU BOT"):
-            return f"{prefix}PoolRotater: {message}"
+            actor = self._safe_text(self.cfg.get("_authenticated_username"), 80)
+            return f"{prefix}{actor or 'PoolRotater'}: {message}"
         return f"{prefix}⚙ {event_label}: {message}"
 
     def stop(self, timeout: float = 2.0) -> None:

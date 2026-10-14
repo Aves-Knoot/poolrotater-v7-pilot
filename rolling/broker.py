@@ -25,6 +25,9 @@ class EventSink:
 
 class Broker:
     def __init__(self, owner, alias, generation, cfg):
+        self.private_pilot = getattr(owner, 'private_pilot', None)
+        if self.private_pilot is not None and alias != self.private_pilot.alias:
+            raise HubDisconnected('private pilot excludes this room alias')
         self.owner, self.alias, self.generation, self.cfg = owner, alias, generation, cfg
         self.peer = None
         self.active = False
@@ -46,6 +49,9 @@ class Broker:
         self.modlog = owner.modlogs[alias]
 
     def enqueue(self, name, value):
+        if self.private_pilot is not None:
+            from poolrotater_host.private_pilot import scrub
+            value = scrub(value)
         try:
             self.outbox.put_nowait((name, value))
         except queue.Full:
@@ -54,7 +60,15 @@ class Broker:
             if self.peer:
                 self.peer.close()
 
-    def snapshot(self, result):
+    def snapshot(self, result, *, private_creation=False):
+        if self.private_pilot is not None:
+            import re
+            password = result.get('password')
+            if (type(password) is not str or not re.fullmatch('[A-Za-z0-9_-]{8,128}', password)
+                    or not private_creation and self.password != password):
+                self.known = False
+                self.uncertain = True
+                raise HubInvocationUncertain('private pilot password state requires review')
         # Missing fields are unknown, NEVER evidence of an empty room.
         players = result.get("players")
         self.known = isinstance(players, list) and all(isinstance(p, dict) and type(p.get("user_id")) is int for p in players)
@@ -110,12 +124,16 @@ class Broker:
             self.journal(operation="make_pending", ownership_unknown=True)
             self.uncertain = True
             result = self.hub.make_room(*args, **kwargs)
-            self.snapshot(result)
+            self.snapshot(result, private_creation=True)
             self.private = True
             self.pending_public = False
             self.journal(operation="owned", room_id=int(result["room_id"]),
                          channel_id=self.channel, ownership_unknown=False)
             self.uncertain = False
+            if self.private_pilot is not None:
+                from poolrotater_host.private_pilot import capture_access, scrub
+                capture_access(self.owner.runtime, self.private_pilot, room_id=int(result['room_id']), channel_id=self.channel, password=self.password)
+                return scrub(result)
             return result
 
     def close_room(self, rid, *, require_empty=True):
@@ -136,6 +154,9 @@ class Broker:
 
     def publish(self):
         with self.owner.shared.lock:
+            if self.private_pilot is not None:
+                self.pending_public = False
+                return
             if self.pending_public and self.hub.owned:
                 progress = self.hub.roster_progress()
                 if (progress is not None and self.owner.shared.hub.is_connected()
@@ -196,8 +217,11 @@ class Broker:
                     # Explicit room commands retain their existing authority.
                     # Infrastructure/deployment callers use the guarded default.
                     return self.close_room(int(values[0]), require_empty=False)
+                if operation == 'ChangeRoomSettings' and self.private_pilot is not None and 'password' in values[1]:
+                    values = [values[0], {k:v for k,v in values[1].items() if k != 'password'}]
+                    if not values[1]:return None
                 if operation == "ChangeRoomSettings" and self.private and values[1].get("password") == "":
-                    self.pending_public = True
+                    self.pending_public = self.private_pilot is None
                     values = [values[0], {k: v for k, v in values[1].items() if k != "password"}]
                     if not values[1]:
                         return None
@@ -220,6 +244,9 @@ class Broker:
                     self.hub.roster_fenced = False
                 if operation == "ChangeRoomSettings" and "password" in values[1]:
                     self.password = values[1]["password"]
+                if self.private_pilot is not None:
+                    from poolrotater_host.private_pilot import scrub
+                    return scrub(result)
                 return result
         if method.startswith("api.") and method[4:] in Api.METHODS:
             name = method[4:]
@@ -231,8 +258,13 @@ class Broker:
                     kwargs["_authority_check"] = lambda: self.active and not self.fenced and self.channel == channel and bool(self.hub.owned)
             if name in ("room", "room_probe", "room_item_scores") and int(args[0]) not in self.hub.owned:
                 raise ValueError("room API ownership mismatch")
-            return getattr(self.owner.api, name)(*args, **kwargs)
+            result = getattr(self.owner.api, name)(*args, **kwargs)
+            if self.private_pilot is not None:
+                from poolrotater_host.private_pilot import scrub
+                return scrub(result)
+            return result
         if method in ("discord.send_to_channel", "discord.react_to_map", "discord.update_public_status"):
+            if self.private_pilot is not None and method == 'discord.update_public_status':return False
             channel = kwargs.get("channel_id")
             position = 2 if method == "discord.react_to_map" else 1
             if len(args) > position:

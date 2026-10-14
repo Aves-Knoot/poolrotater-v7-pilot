@@ -187,7 +187,14 @@ class ProviderRefereeClient:
             if result is not None: result.put_nowait(value)
         elif kind == 1:
             args = value['arguments']
-            if value['target'] not in EVENTS or len(args) != 1 or type(args[0]) is not dict:
+            if value['target'] not in EVENTS:
+                # Native signalrcore ignores unsolicited methods without an
+                # EVENTS subscriber. Revalidate the wire envelope before doing
+                # the same; never route unknown payloads or grant authority.
+                from .referee_protocol import message
+                message(value)
+                return
+            if len(args) != 1 or type(args[0]) is not dict:
                 raise AuthError('referee_event_refused')
             self._event(value['target'], args[0], generation)
         elif kind == 7:

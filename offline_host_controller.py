@@ -66,12 +66,25 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
         # Identity verification and ownership precede configuration/store/room creation.
         capabilities = ('provider_chat_websocket',) if callable(getattr(api, 'create_chat_websocket', None)) else ()
         bridge = RuntimeConfigBridge(root, account_id=account_id, integration_capabilities=capabilities)
+        from poolrotater_host.private_pilot import load_profile, configured_rooms, directory as private_directory
+        private_pilot = load_profile(root)
         directory = contained(root, 'state/rolling')
         directory.mkdir(mode=0o700, exist_ok=True)
         if directory.stat().st_uid != os.geteuid() or directory.stat().st_mode & 0o077:
             raise ConfigError('runtime ownership directory must be private')
         from rolling.supervisor import RollingSupervisor
-        rooms = bridge.load_rooms()
+        def load_configured_rooms():
+            configs = (configured_rooms(root, bridge, private_pilot) if private_pilot is not None else bridge.load_rooms())
+            if authentication is not None:
+                # Reuse the username from the already verified /me identity,
+                # just as the native supervisor does. Keep it runtime-only and
+                # pinned through configuration reloads and worker hello; no
+                # extra provider request or saved account preference is needed.
+                for config in configs:
+                    config['_authenticated_username'] = account.username
+            return configs
+
+        rooms = load_configured_rooms()
         chat = None
         if any(room.get('chat_websocket_enabled') is True for room in rooms):
             factory = getattr(api, 'create_chat_websocket', None)
@@ -82,9 +95,10 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
                 raise ConfigError('configured chat websocket was not constructed')
         supervisor = RollingSupervisor(rooms, api, hub, queue.Queue(), chat,
                                        release, root, health_seconds=.15, startup_timeout=35,
-                                       config_loader=bridge.load_rooms,
-                                       settings_path=contained(root, 'config/supervisor.json'),
+                                       config_loader=load_configured_rooms,
+                                       settings_path=(private_directory(root, private_pilot) / 'supervisor.json' if private_pilot is not None else contained(root, 'config/supervisor.json')),
                                        runtime_validator=runtime_validator)
+        supervisor.private_pilot = private_pilot
         from poolrotater_host.runtime_registry import PrivateRegistry
         supervisor.registry = PrivateRegistry(supervisor.registry)
         hub.shared = supervisor.shared

@@ -673,6 +673,9 @@ class RollingSupervisor:
                     if key in {"state", "players", "current_map", "queue", "queue_known", "match_started_at"}} if fresh else
                    {"state": "OFFLINE" if closed else "STALE", "players": None,
                     "current_map": None, "queue": [], "queue_known": False, "match_started_at": None})}
+        private = getattr(self, 'private_pilot', None)
+        if private is not None and private.alias in public['rooms']:
+            public['rooms'][private.alias].update(room_id=None, healthy=False, observed_at=None, state='STALE', players=None, current_map=None, queue=[], queue_known=False, match_started_at=None)
         atomic_json(self.directory / "public-status.json", public)
         self.last_status_write = time.monotonic()
 

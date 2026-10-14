@@ -34,7 +34,7 @@ DAILY_RETENTION_DAYS = 366
 MAX_BYTES = 32 * 1024**2
 COUNTERS = ('attempted', 'dispatched', 'replies', 'rate_limited', 'uncertain', 'deferred')
 EXECUTIONS = ('provider-disabled', 'provider-fixture', 'provider-pilot', 'provider-live-pilot')
-WINDOWS = (('30s', 30.), ('1m', 60.), ('5m', 300.), ('10m', 600.), ('30m', 1800.), ('1h', 3600.), ('4h', 14400.))
+WINDOWS = (('5s', 5.), ('30s', 30.), ('1m', 60.), ('5m', 300.), ('10m', 600.), ('30m', 1800.), ('1h', 3600.), ('4h', 14400.))
 log = logging.getLogger(__name__)
 
 SCHEMA = (

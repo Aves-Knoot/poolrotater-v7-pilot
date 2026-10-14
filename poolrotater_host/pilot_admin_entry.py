@@ -77,12 +77,19 @@ def main():
         'cancel', 'recover', 'pacing-recover', 'catalog-import', 'catalog-recover',
         'catalog-trust-replace', 'catalog-trust-recover', 'start', 'stop', 'remove',
         'owner-import', 'owner-status', 'owner-rollback', 'owner-budget-prepare',
+        'private-test-configure', 'private-test-clear', 'private-test-status',
         'ownership-review', 'ownership-clear', 'ownership-resume',
         'network-configure','network-enroll','network-resume','network-rotate','network-leave','network-reset',
         'network-status','network-support','network-unit','network-start','network-stop','network-remove',
         'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
         'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch'))
     args, rest = parser.parse_known_args()
+    if args.action.startswith('private-test-'):
+        expected = ['--private-test-stdin'] if args.action == 'private-test-configure' else []
+        if rest != expected:
+            # Refuse unsupported secret arguments before even the registered
+            # interpreter exec; passwords never belong in child argv.
+            raise ValueError('private test arguments refused')
     release = verified_release(args.instance)
     sys.path.insert(0, str(release))
     from poolrotater_host.pilot_installation import administrative_binding

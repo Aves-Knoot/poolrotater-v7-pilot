@@ -184,7 +184,31 @@ class ProviderApiClient:
         self.auth.transport.gate.interval = max(self.auth.transport.gate.interval, 60. / min(50, per_minute))
 
     def usage_report(self):
-        value = self.auth._require_gate().snapshot()['counters']
-        return ('Provider lifetime requests: attempted={attempted}, dispatched={dispatched}, '
-                'replies={replies}, rate_limited={rate_limited}, uncertain={uncertain}, '
-                'deferred={deferred}').format(**value)
+        from .provider_usage import snapshot
+        pacing = self.auth._require_gate().snapshot()
+        value = pacing['counters']
+        observed = snapshot(self.auth.root, authoritative=value)
+        lines = ['**osu! API usage · rolling averages**']
+        if observed['available']:
+            for row in observed['windows']:
+                if row['label'] == '4h':
+                    continue
+                lines.append(f"{row['label']}: {row['count']} req · {row['rpm']:.1f}/min")
+            budget = pacing['budget']
+            sustained = 60. / budget['minimum_interval_seconds']
+            lines.append(f"Limiter: {sustained:g}/min sustained · burst {budget['burst_capacity']} (shared)")
+            queued = observed['queue']['observed_waiting']
+            wait = observed['queue']['head_ready_seconds']
+            hour = next(row for row in observed['windows'] if row['label'] == '1h')
+            lines.append(f"Queue: {queued} waiting request{'s' if queued != 1 else ''} · head ready in {wait:.1f}s · 429s in 1h: {hour['rate_limited']}")
+            lines.append('Scope: observed v7 HTTP requests, including OAuth and referee handshakes; queue excludes requests waiting for the shared lease.')
+            if observed['telemetry_gap']:
+                lines.append('Coverage: incomplete telemetry; counts may be lower than actual usage.')
+            elif not hour['coverage_complete']:
+                lines.append('Coverage: partial 1h history since v7 observation began; earlier v6 history is retained separately.')
+        else:
+            lines.append('Rolling request history is unavailable; lifetime counters remain available.')
+        lines.append(('Provider lifetime requests: attempted={attempted}, dispatched={dispatched}, '
+                      'replies={replies}, rate_limited={rate_limited}, uncertain={uncertain}, '
+                      'deferred={deferred}').format(**value))
+        return '\n'.join(lines)

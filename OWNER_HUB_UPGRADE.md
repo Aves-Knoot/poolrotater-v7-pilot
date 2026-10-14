@@ -6,10 +6,12 @@ runtime SHA256. The expected dev7 runtime is:
 
 `a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932`.
 
-If already on the published dev8 owner-hub pilot, confirm that its registered
-runtime is `04f3dcd4b059a9f445d3949faf6707b1a8c8c5142c51544dbd4fc84adac84501`
-and use that value for `--upgrade-from-sha256` below. A version label alone is
-insufficient; stop for review if the installed digest is different.
+The published dev8 owner-hub pilot runtime
+`04f3dcd4b059a9f445d3949faf6707b1a8c8c5142c51544dbd4fc84adac84501`
+is not a direct reviewed upgrade origin for this private Standard repair. Keep
+that instance stopped and retain all state; ask the maintainer for its reviewed
+upgrade route rather than substituting a different old digest or reinstalling.
+A version label alone is insufficient.
 
 If upgrading the published dev9 configuration-compatibility release, its
 registered runtime is `0b8f12a7b8e2dfc9a708f8fc331e08583bcabccaa1a1132adb971b7319b81481`.
@@ -24,6 +26,13 @@ and use it for `--upgrade-from-sha256`. The reconnect repair also keeps the same
 package version; compare the exact runtime digest and release tag. Preserve the
 same instance and unresolved ownership evidence until its stopped checks succeed.
 
+If already on the native reconnect repair, confirm registered runtime
+`ca877b9c33b397d2ac2e340d3e304449cd3b9e7889daf126f0123d0f59edcc27`
+and use it for `--upgrade-from-sha256`. This private Standard repair adds only
+exact reviewed shared/storage transitions; the listed dev9 configuration and
+service-parity origins have the same reviewed source contracts as that runtime.
+The package version stays unchanged. Compare the separate tag and exact digest.
+
 Stop the bot cleanly with its existing protected `stop` entry; confirm upstream
 room closure and no dedicated worker processes. If a network agent is installed,
 stop it too. Both services must be disabled/stopped before upgrade. Unknown room
@@ -31,7 +40,7 @@ ownership must be reviewed and resolved without discarding its journal.
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 ca877b9c33b397d2ac2e340d3e304449cd3b9e7889daf126f0123d0f59edcc27 --live-pilot \
+  --bundle runtime.zip --sha256 030f20b1eb80e18b19561e39f6c0e456dc15c3ad1dd78da036f29e885ffd046c --live-pilot \
   --upgrade-from-sha256 a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932
 ```
 

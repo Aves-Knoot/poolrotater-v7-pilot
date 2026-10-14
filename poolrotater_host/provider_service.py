@@ -34,7 +34,7 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                      'live_ready': False}
             if phase == 'running':
                 value.update(version=supervisor.manifest['version'],
-                             room_count=len(supervisor.configs),
+                             room_count=len(workers),
                              worker_pids=[worker.process.pid for worker in workers])
             elif phase == 'stopped':
                 value.update(workers_reaped=True, closed_rooms=len(workers),
@@ -54,7 +54,9 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
         with provider_host_controller(root, release, authentication=authentication,
                                       api=api, hub=hub) as supervisor:
             acquired = True
-            for alias in supervisor.configs:
+            private = getattr(supervisor, 'private_pilot', None)
+            selected = (private.alias,) if private is not None else tuple(supervisor.configs)
+            for alias in selected:
                 if stop.is_set(): break
                 worker = supervisor.prepare(alias, release)
                 workers.append(worker)
