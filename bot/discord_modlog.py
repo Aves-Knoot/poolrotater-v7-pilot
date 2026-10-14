@@ -227,4 +227,4 @@ class DiscordModLog:
                 log.info("sent Discord lobby-log notification")
             except Exception as exc:
                 # Do not include the URL in errors: it contains the webhook secret.
-                log.warning("could not send Discord lobby-log notification: %s", exc)
+                log.warning("could not send Discord lobby-log notification: %s", type(exc).__name__)

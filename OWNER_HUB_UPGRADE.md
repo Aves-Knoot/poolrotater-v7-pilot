@@ -1,4 +1,4 @@
-# Preserve an existing dev7 or dev8 instance
+# Preserve an existing dev7, dev8 or dev9 instance
 
 Use the new private release archive in a fresh folder. Keep the existing `first`
 instance and all its state. Record before-support and the current registered
@@ -11,6 +11,13 @@ runtime is `04f3dcd4b059a9f445d3949faf6707b1a8c8c5142c51544dbd4fc84adac84501`
 and use that value for `--upgrade-from-sha256` below. A version label alone is
 insufficient; stop for review if the installed digest is different.
 
+If upgrading the published dev9 configuration-compatibility release, its
+registered runtime is `0b8f12a7b8e2dfc9a708f8fc331e08583bcabccaa1a1132adb971b7319b81481`.
+Use that exact digest for `--upgrade-from-sha256`. The liveness repair keeps the
+same package version; the runtime digest and separate release tag identify it.
+It preserves the stopped instance and starts no service. Do not reset authorization,
+reimport owner data or discard unresolved room ownership to install the repair.
+
 Stop the bot cleanly with its existing protected `stop` entry; confirm upstream
 room closure and no dedicated worker processes. If a network agent is installed,
 stop it too. Both services must be disabled/stopped before upgrade. Unknown room
@@ -18,7 +25,7 @@ ownership must be reviewed and resolved without discarding its journal.
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 0b8f12a7b8e2dfc9a708f8fc331e08583bcabccaa1a1132adb971b7319b81481 --live-pilot \
+  --bundle runtime.zip --sha256 dc3d5fd5fd0c9790008e134539ab90924c62ddb7af5afdf52345dfc3661fb69b --live-pilot \
   --upgrade-from-sha256 a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932
 ```
 

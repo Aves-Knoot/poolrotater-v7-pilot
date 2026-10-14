@@ -78,16 +78,26 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                 for alias, worker in list(supervisor.workers.items()):
                     phase = phases.get(alias, {}).get('phase')
                     if phase == 'recovery_required':
-                        raise ConfigError('provider worker health failed')
+                        raise ConfigError('provider_worker_ownership_recovery_required')
                     # Tick can intentionally park a worker, or a rollout can
                     # dispose the old generation while activating its successor.
                     if phase == 'parked' or (alias == supervisor.rollout_alias
                             and worker.broker.generation not in supervisor.handles):
                         continue
-                    if not worker.fresh():
-                        raise ConfigError('provider worker health failed')
+                    # Native status comes from the gameplay loop. That loop
+                    # can wait behind another room's authenticated API/referee
+                    # call, so an old observation is not evidence of exit or
+                    # uncertain ownership. Keep Worker.fresh() strict for
+                    # publication, public observations and empty-room actions;
+                    # use the native process/connection signals for teardown.
+                    if worker.failure:
+                        raise ConfigError('provider_worker_failed')
+                    if worker.process.poll() is not None:
+                        raise ConfigError('provider_worker_exited')
+                    if worker.peer.closed.is_set():
+                        raise ConfigError('provider_worker_connection_closed')
         if any(worker.process.poll() is None for worker in workers):
-            raise ConfigError('provider cleanup incomplete')
+            raise ConfigError('provider_cleanup_incomplete')
         observer('stopped', supervisor, workers)
     except Exception as error:
         from .service_diagnostics import failure_details
@@ -104,6 +114,18 @@ def run_fixed_provider_service(root, release):
     from .pilot_identity import provider_execution
     runtime = _runtime_guard(root, release, prepared=True)()
     require_live_provider(provider_execution(runtime))
+    # Restore the existing native supervisor audit sink before integrations or
+    # provider adapters are constructed. Worker processes keep their own logs.
+    from bot.logsetup import configure
+    configure(log_file=str(Path(root) / 'logs/multiroom.log'))
+    formatter = logging.Formatter(
+        "%(asctime)s [%(threadName)s] %(name)s %(levelname)s %(message)s",
+        "%Y-%m-%d %H:%M:%S")
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(formatter)
+    # Third-party Discord DEBUG logs contain raw payloads/private URLs. Native
+    # discord_control events use a separate logger and remain observable.
+    logging.getLogger('discord').setLevel(logging.WARNING)
     from .installed_authorization import installed_provider_authentication
     from .provider_transport import TrustSnapshot
     auth = installed_provider_authentication(root, release, TrustSnapshot.system(prepared=True))

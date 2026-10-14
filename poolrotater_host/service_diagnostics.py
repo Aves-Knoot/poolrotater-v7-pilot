@@ -160,6 +160,9 @@ FAILURE_CODES = FAILURE_CODES | frozenset((
     'provider_api_mutation_uncertain', 'provider_api_reply_refused',
     'provider_api_user_mismatch', 'provider_api_endpoint_refused',
     'provider_chat_access_unavailable', 'provider_chat_cannot_message',
+    'provider_worker_ownership_recovery_required', 'provider_worker_failed',
+    'provider_worker_exited', 'provider_worker_connection_closed',
+    'provider_cleanup_incomplete',
 ))
 
 

@@ -6,7 +6,7 @@ automatic-difficulty room configuration**. Installation starts no room or servic
 and performs no account authorization. Existing installations keep their settings,
 authorization, catalogs and resolved ownership history during the stopped upgrade.
 
-Existing dev7 or dev8 testers: follow [OWNER_HUB_UPGRADE.md](OWNER_HUB_UPGRADE.md). Do not
+Existing dev7, dev8 or dev9 testers: follow [OWNER_HUB_UPGRADE.md](OWNER_HUB_UPGRADE.md). Do not
 reinstall, repeat ownership-clear or sign in again for a clean existing instance.
 Owner four-room migration has a separate private backup/configuration parity gate;
 this kit never discovers or replaces the owner's currently running v6 service.
@@ -22,6 +22,13 @@ Startup queries active owned rooms, so ended room history does not exhaust the
 bounded listing. Existing active rooms and uncertain creation still block startup;
 authorization and exclusive ownership checks remain required.
 
+The liveness repair prevents a worker observation older than 15 seconds from
+closing every room when healthy workers are waiting for the shared authorization
+mutex. Stale observations remain stale and cannot qualify an empty room for
+maintenance or be published as current. Explicit worker connection, process,
+failure and ownership-recovery signals still stop unsafe operation. Upgrade the
+same stopped instance; retain its OAuth, catalogs, settings, ratings and journal.
+
 ## Fresh independent operator
 
 This frozen pilot targets Ubuntu24.04 Linux x86_64, the pinned system CPython3.12
@@ -33,7 +40,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 0b8f12a7b8e2dfc9a708f8fc331e08583bcabccaa1a1132adb971b7319b81481 --live-pilot
+  --bundle runtime.zip --sha256 dc3d5fd5fd0c9790008e134539ab90924c62ddb7af5afdf52345dfc3661fb69b --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.
@@ -69,7 +76,7 @@ short-lived invitation privately. Installing or upgrading does not enroll you.
 
 Use your own osu! account and an OAuth client owned by that account. Register
 `http://127.0.0.1:51111/oauth/callback` exactly in its OAuth settings. Know your
-numeric osu! user ID. Existing dev7/dev8 operators keep their authorization and skip
+numeric osu! user ID. Existing dev7/dev8/dev9 operators keep their authorization and skip
 these steps unless the protected status explicitly requires reauthorization.
 
 From the extracted kit folder, run:
