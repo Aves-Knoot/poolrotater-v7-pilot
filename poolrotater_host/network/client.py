@@ -175,21 +175,43 @@ class Client:
         self.unlink(self.pending_path)
         return {'ok':True,'action':pending['kind'],'host_id':result['host_id'],'phase':'complete','live_rooms_affected':False}
 
+    def display_protocol(self, transport):
+        from .display import CAPABILITIES
+        try: result = transport.request("GET", "/v2/capabilities")
+        except NetworkError as exc:
+            if exc.status == 404 and exc.code == "route_not_found":return 1
+            raise
+        require(type(result) is dict and result == CAPABILITIES
+                and type(result.get("ok")) is bool
+                and type(result.get("protocol_version")) is int
+                and type(result.get("display_version")) is int, "incompatible_display_capabilities", 409)
+        return 2
+
     def publish(self,observation):
         with file_lease(self.lock_path):
             profile=self.profile();self.check_account(profile['account_id']);require(self.pending(profile) is None,'network_pending_requires_resume');credential=self.credential();require(credential is not None,'network_not_enrolled')
             require(type(observation) is dict and set(observation)=={'code_version','catalog_version','rooms'},'invalid_observation')
             if not profile['directory']:observation={**observation,'rooms':[]}
             state=self.heartbeat_state(credential) or {'format':1,**self.marker,'host_id':credential['host_id'],'next_sequence':0,'pending':None,'last_received':None}
-            body={'protocol_version':1,**self.marker,'sequence':state['next_sequence'],**observation};body.pop('format')
-            heartbeat(body)
+            from .display import heartbeat_any, v1_observation
+            transport = self.transport(profile)
+            # Pending v1 resolves with a higher-sequence v1 receipt before
+            # upgrading families. Pending v2 can withdraw via v1 after an
+            # explicit read-only 404 proves a rolled-back hub: never retry a
+            # mutation blindly or replay the stale pending public observation.
+            protocol = (1 if state['pending'] is not None and state['pending']['protocol_version'] == 1
+                        else self.display_protocol(transport) if state['pending'] is not None or any('display' in r for r in observation['rooms']) else 1)
+            wire = v1_observation(observation) if protocol == 1 else observation
+            body={'protocol_version':protocol,**self.marker,'sequence':state['next_sequence'],**wire};body.pop('format')
+            if protocol == 2:body['sent_at'] = time.time()
+            heartbeat_any(body)
             # A new observation supersedes an uncertain heartbeat. Its higher
             # durable sequence also prevents replaying formerly public data.
             if state['pending'] is not None:
-                heartbeat(state['pending']);require(state['pending']['sequence']<state['next_sequence'],'invalid_pending_sequence')
+                heartbeat_any(state['pending']);require(state['pending']['sequence']<state['next_sequence'],'invalid_pending_sequence')
             state={**state,'next_sequence':state['next_sequence']+1,'pending':body}
             atomic_json(self.sequence_path,state)
-            result=self.transport(profile).request('POST','/v1/hosts/self/heartbeat',body=body,token=credential['credential'])
+            result=transport.request('POST',f'/v{protocol}/hosts/self/heartbeat',body=body,token=credential['credential'])
             fields(result,('ok','sequence','replayed','received_at'));integer(result['sequence'],0);require(result['sequence']==body['sequence'] and type(result['replayed']) is bool,'network_heartbeat_reply_mismatch')
             atomic_json(self.sequence_path,{**state,'pending':None,'last_received':number(result['received_at'])})
             return {'ok':True,'sequence':result['sequence'],'pending':False,'live_rooms_affected':False}
@@ -202,7 +224,8 @@ class Client:
         integer(state['next_sequence'],0)
         if state['last_received'] is not None:number(state['last_received'])
         if state['pending'] is not None:
-            heartbeat(state['pending']);self._bound(state['pending'])
+            from .display import heartbeat_any
+            heartbeat_any(state['pending']);self._bound(state['pending'])
             require(state['pending']['sequence']<state['next_sequence'],'invalid_pending_sequence')
         return state
 

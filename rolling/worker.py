@@ -151,6 +151,28 @@ class Lifecycle:
         if (bot.state in (STARTING, PLAYING) and shown and bot.current_map
                 and shown.beatmap_id != bot.current_map.beatmap_id):
             upcoming.insert(0, bot.current_map)
+        match = getattr(bot, "_display_match", None) if bot.state == PLAYING else None
+        if (not match or not shown or match.get("beatmap_id") != shown.beatmap_id
+                or match.get("playlist_item_id") != bot.playing_item_id
+                or match.get("started_at") != bot._match_started_at):
+            match = None
+        players = bot.players
+        playing_players = None
+        if (bot.state == PLAYING and hasattr(bot, "non_gameplay_user_ids")
+                and all(type(info) is dict and type(info.get("status")) is str for info in players.values())):
+            excluded = bot.non_gameplay_user_ids()
+            playing_players = sum(info.get("status") == "playing" for uid, info in players.items() if uid not in excluded)
+        display = {"settings": {
+            "ruleset_id": int(bot.cfg.get("ruleset_id", 0)),
+            "keys": bot.cfg.get("mania_keys") if bot.cfg.get("ruleset_id") == 3 else None,
+            "auto_difficulty": bool(bot.cfg.get("auto_difficulty", True) and not bot.manual_range),
+            "selection_style": str(getattr(bot.pool, "mania_source_mode", None) or
+                                   getattr(bot.pool, "source_mode", "variety")),
+            "allowed_mods": list(bot.cfg.get("allowed_mods", [])),
+            "required_mods": list(bot.cfg.get("required_mods", [])),
+            "freestyle": bool(bot.cfg.get("freestyle", False)),
+            "countdown_seconds": bot.cfg.get("countdown_seconds", 15)},
+            "playing_players": playing_players, "match": match}
         return {
             "version": bot.cfg["version"], "room_id": bot.room_id,
             "ready": bool(bot._room_ready), "running": bool(bot.running),
@@ -162,7 +184,8 @@ class Lifecycle:
             "ruleset": bot.cfg.get("ruleset_id", 0), "loved": bool(bot.cfg.get("loved_mode", False)),
             "network": {"title": str(getattr(bot, "_current_room_name", "")),
                         "min_stars": bot.pool.sr_min, "max_stars": bot.pool.sr_max,
-                        "catalog_version": bot.cfg.get('_host_catalog_set') or 'unavailable'},
+                        "catalog_version": bot.cfg.get('_host_catalog_set') or 'unavailable',
+                        "display": display},
             "public": {"state": bot.state, "players": len(bot.players),
                        "current_map": map_info(shown), "queue": [map_info(m) for m in upcoming[:8]],
                        "queue_known": bool(bot._room_ready),

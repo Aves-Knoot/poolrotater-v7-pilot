@@ -12,6 +12,14 @@ from .oauth import AuthError
 from .provider_api_contract import ID, prepare_api
 
 
+class ProviderKeepaliveUnavailable(AuthError):
+    """Only the idempotent chat ACK may tolerate known dispatched uncertainty.
+
+    The owned transport has already recorded uncertainty and its persistent
+    cooldown. This class does not grant an immediate retry or recover a ledger.
+    """
+
+
 class ProviderApiClient:
     def __init__(self, auth):
         from .provider_rooms import _authority
@@ -73,6 +81,7 @@ class ProviderApiClient:
         # Validate before a refresh could make a request on behalf of bad input.
         prepare_api(method, full, bearer='request-validation', params=params, json_body=body)
         mutation = method != 'GET'
+        keepalive = method == 'POST' and full == '/api/v2/chat/ack'
         if before is not None:
             if not callable(before): raise AuthError('provider_api_arguments_refused')
             try: before()
@@ -88,12 +97,17 @@ class ProviderApiClient:
                 try:
                     code, value = permit.api_request(method, full, bearer=token,
                                                     params=params, json_body=body)
-                except AuthError:
+                except AuthError as error:
+                    if (keepalive and permit.used and error.code in
+                            ('provider_deadline_exceeded', 'provider_transport_uncertain')):
+                        raise ProviderKeepaliveUnavailable(error.code, http_status=error.http_status) from None
                     if mutation and permit.used:
                         raise AuthError('provider_api_mutation_uncertain') from None
                     raise
                 if mutation and 500 <= code < 600:
                     self.auth.transport.gate.uncertain()
+                    if keepalive:
+                        raise ProviderKeepaliveUnavailable('provider_chat_keepalive_unavailable', http_status=code)
                     raise AuthError('provider_api_mutation_uncertain')
                 if code in (200, 201, 204):
                     sequence = bool(re.fullmatch(r'/api/v2/users/' + ID + r'/scores/best', full)

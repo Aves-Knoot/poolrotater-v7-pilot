@@ -1,3 +1,7 @@
+# Community display pilot - state-preserving dev11 upgrade
+
+Existing operators: follow COMMUNITY_DISPLAY_UPGRADE.md first. Keep your current instance, OAuth, catalogs, titles, ratings and hub enrollment. The kit starts no services. New display timing requires the coordinated hub activation. The following setup reference is cumulative; do not reinstall an existing instance.
+
 # PoolRotater integrated owner-hub pilot
 
 The dev10 operator onboarding release adds protected stopped room settings and
@@ -82,7 +86,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 199e4e228e833d6ce051d76b47817e558f261d0224d2cd9c88e3d7eadf0b7b81 --live-pilot
+  --bundle runtime.zip --sha256 54b662a08bbfda597ae8db59f21e78a50f1dbf3fe266e7a8f9ca7991c2cef78f --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.

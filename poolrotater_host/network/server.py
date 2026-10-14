@@ -78,12 +78,15 @@ class Handler(BaseHTTPRequestHandler):
             self.server.admission();require(len(self.path)<=256,'invalid_route')
             target=urlsplit(self.path);require(not target.scheme and not target.netloc and not target.fragment,'invalid_route')
             path=target.path;store=self.server.store
-            if method=='GET' and path=='/v1/capabilities':
+            if method=='GET' and path=='/v2/capabilities':
+                from .display import CAPABILITIES
+                require(not target.query,'unexpected_query');result=dict(CAPABILITIES)
+            elif method=='GET' and path=='/v1/capabilities':
                 require(not target.query,'unexpected_query');result=store.capabilities()
-            elif method=='GET' and path in ('/v1/rooms','/directory'):
+            elif method=='GET' and path in ('/v1/rooms','/v2/rooms','/directory'):
                 params=parse_qs(target.query,keep_blank_values=True,strict_parsing=True)
                 require(set(params)<={'offset','limit'} and all(len(v)==1 and v[0].isdigit() and len(v[0])<=7 for v in params.values()),'invalid_pagination')
-                result=store.directory(offset=int(params.get('offset',['0'])[0]),limit=int(params.get('limit',['50'])[0]))
+                result=store.directory(offset=int(params.get('offset',['0'])[0]),limit=int(params.get('limit',['50'])[0]),protocol_version=2 if path=='/v2/rooms' else 1)
                 if path=='/directory':
                     from .directory import render
                     html=render(result)
@@ -106,7 +109,7 @@ class Handler(BaseHTTPRequestHandler):
                 require(not target.query,'unexpected_query')
                 if path=='/v1/enrollments':
                     require(not self.headers.get_all('Authorization'),'unexpected_authorization');result=store.enroll(self.body())
-                elif path=='/v1/hosts/self/heartbeat':result=store.heartbeat(self.token(),self.body())
+                elif path in ('/v1/hosts/self/heartbeat','/v2/hosts/self/heartbeat'):result=store.heartbeat(self.token(),self.body(),protocol_version=2 if path.startswith('/v2/') else 1)
                 elif path=='/v1/hosts/self/token-rotation':result=store.rotate(self.token(),self.body())
                 elif path=='/v1/hosts/self/leave':
                     token=self.token();value=self.body();fields(value,('protocol_version',));base(value);result=store.leave(token)

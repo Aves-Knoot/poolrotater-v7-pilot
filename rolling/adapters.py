@@ -92,9 +92,12 @@ class Api:
             except RemoteError as exc:
                 # Typed gate refusals establish no dispatch. Never infer this
                 # from a generic OAuth error string or an uncertain RPC reply.
-                if name in ('chat_ack', 'chat_messages') and exc.kind == 'ProviderAdmissionDeferred':
+                if name in ('chat_ack', 'chat_messages', 'chat_send', 'user', 'user_top_scores', 'room_item_scores') and exc.kind == 'ProviderAdmissionDeferred':
                     from bot.api import ApiAdmissionDeferred
                     raise ApiAdmissionDeferred(str(exc)) from exc
+                if name == 'chat_ack' and exc.kind == 'ProviderKeepaliveUnavailable':
+                    from bot.api import ApiKeepaliveUnavailable
+                    raise ApiKeepaliveUnavailable(str(exc)) from exc
                 raise
         return invoke
 

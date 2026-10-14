@@ -58,15 +58,34 @@ def project(snapshot, config, *, now, code_version, catalog_version='unavailable
         current = public.get('current_map')
         if current is not None:
             if type(current) is not dict:continue
-            current = {'beatmap_id': current.get('beatmap_id'), 'title': current.get('label'), 'stars': current.get('stars')}
+            label = current.get('label')
+            current = {'beatmap_id': current.get('beatmap_id'), 'title': label[:160] if type(label) is str else label, 'stars': current.get('stars')}
         observation = {'alias': alias, 'osu_room_id': row.get('room_id'), 'preset': settings['preset'],
             'state': state, 'occupants': status.get('players'), 'visibility': 'public',
-            'title': details.get('title'), 'min_stars': details.get('min_stars'), 'max_stars': details.get('max_stars'),
+            'title': details.get('title')[:160] if type(details.get('title')) is str else details.get('title'), 'min_stars': details.get('min_stars'), 'max_stars': details.get('max_stars'),
             'observed_at': generated-age, 'code_version': status.get('version'),
             'catalog_version': details.get('catalog_version',catalog_version), 'current_map': current}
         try:room(observation)
         except NetworkError:continue
         if observation['osu_room_id'] in {r['osu_room_id'] for r in result['rooms']}:continue
+        from .display import display as validate_display
+        import copy
+        proposed = copy.deepcopy(details.get("display"))
+        if type(proposed) is not dict: proposed = None
+        if proposed is not None:
+            try: validate_display(proposed)
+            except (NetworkError, KeyError, TypeError): proposed = None
+        if proposed is not None:
+            # A paused/transitioning/mismatched map cannot retain old progress.
+            if state != "playing" or not current:
+                proposed["match"] = None
+                proposed["playing_players"] = None
+            elif proposed.get("match") and proposed["match"].get("beatmap_id") != current["beatmap_id"]:
+                proposed["match"] = None
+        observation["display"] = proposed
+        from .display import room_v2
+        try: room_v2(observation)
+        except NetworkError: observation["display"] = None
         result['rooms'].append(observation)
     pinned={r['catalog_version'] for r in result['rooms']}
     if len(pinned)==1:result['catalog_version']=pinned.pop()

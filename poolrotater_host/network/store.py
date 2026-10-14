@@ -177,8 +177,9 @@ class Store:
             db.execute('UPDATE hosts SET revoked=1,heartbeat=NULL WHERE id=?',(host['id'],));self._audit(db,'left',host['id'])
             return {'ok':True,'host_id':host['id'],'revoked':True}
 
-    def heartbeat(self,token,value):
-        heartbeat(value);hashed=verifier(token);digest=fingerprint(value);now=self.clock()
+    def heartbeat(self,token,value,*,protocol_version=1):
+        from .display import heartbeat_v2
+        (heartbeat_v2 if protocol_version == 2 else heartbeat)(value);hashed=verifier(token);digest=fingerprint(value);now=self.clock()
         with self.transaction() as db:
             host,credential=self._authenticate(db,hashed,'heartbeat')
             require(value['installation_id']==host['installation_id'] and value['generation']==host['generation'],'host_identity_mismatch',403)
@@ -191,11 +192,18 @@ class Store:
                 return {'ok':True,'sequence':sequence,'replayed':True,'received_at':host['received']}
             # Receipt quota prevents a host from amplifying status/audit writes.
             require(host['received'] is None or now-host['received']>=5,'heartbeat_rate_limited',429)
+            stored = value
+            if protocol_version == 2:
+                from .display import V1_ROOM_FIELDS
+                # Older hub readers enumerate only rooms; never let a rollback
+                # accidentally expose v2 additions through the closed v1 route.
+                stored = {**value, 'rooms': [{k:r[k] for k in V1_ROOM_FIELDS} for r in value['rooms']],
+                          'display_rooms': {r['alias']:r['display'] for r in value['rooms']}}
             db.execute('UPDATE hosts SET last_sequence=?,last_payload_hash=?,received=?,heartbeat=? WHERE id=?',
-                       (sequence,digest,now,canonical(value).decode(),host['id']))
+                       (sequence,digest,now,canonical(stored).decode(),host['id']))
             return {'ok':True,'sequence':sequence,'replayed':False,'received_at':now}
 
-    def directory(self,*,offset=0,limit=50):
+    def directory(self,*,offset=0,limit=50,protocol_version=1):
         integer(offset,0,1000000);integer(limit,1,100);now=self.clock()
         with self.transaction() as db:
             epoch=db.execute("SELECT value FROM meta WHERE key='epoch'").fetchone()[0]
@@ -203,18 +211,32 @@ class Store:
         rooms=[]
         for host in rows:
             payload=json.loads(host['heartbeat'])
-            for observation in payload['rooms']:
-                age=max(0,now-min(host['received'],observation['observed_at']))
+            for stored in payload['rooms']:
+                from .display import V1_ROOM_FIELDS
+                observation = {k: stored[k] for k in V1_ROOM_FIELDS}
+                skew = host['received'] - payload['sent_at'] if payload.get('protocol_version') == 2 else None
+                correction = skew if skew is not None and abs(skew) <= 30 else None
+                observed = observation['observed_at'] + (correction or 0)
+                age=max(0,now-min(host['received'],observed))
                 if age>=600: continue
                 stale=age>=180
-                rooms.append({**observation,'host_id':host['id'],'operator':host['label'],
+                rich = None
+                display_value = payload.get('display_rooms',{}).get(stored['alias'])
+                if protocol_version == 2 and display_value is not None:
+                    import copy
+                    rich = copy.deepcopy(display_value)
+                    if stale:
+                        rich['match'] = None; rich['playing_players'] = None
+                    elif rich['match']:
+                        rich['match']['clock_skew_seconds'] = correction
+                rooms.append({**observation,**({'display':rich} if protocol_version == 2 else {}),'host_id':host['id'],'operator':host['label'],
                               'age_seconds':round(age,2),'freshness':'stale' if stale else 'fresh',
                               'state':'unavailable' if stale else observation['state'],
                               'occupants':None if stale else observation['occupants'],
                               'current_map':None if stale else observation['current_map'],
                               'join_url':None if stale or observation['state']=='unavailable' else 'https://osu.ppy.sh/multiplayer/rooms/'+str(observation['osu_room_id']),
                               'distribution':'self-reported'})
-        return {'ok':True,'protocol_version':1,'server_epoch':epoch,'generated_at':now,'rooms':rooms[offset:offset+limit],
+        return {'ok':True,'protocol_version':protocol_version,'server_epoch':epoch,'generated_at':now,'rooms':rooms[offset:offset+limit],
                 'next_offset':offset+limit if len(rooms)>offset+limit else None}
 
     def capabilities(self):

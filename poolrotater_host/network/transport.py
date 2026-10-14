@@ -14,7 +14,7 @@ from ..provider_transport import TrustSnapshot
 from .contracts import NetworkError, require, canonical, decode, number
 
 RATING_ROUTES={'/v1/events/batches','/v1/ratings/state-query','/v1/ratings/snapshots/current','/v1/ratings/snapshot-page'}
-ROUTES={'/v1/capabilities','/v1/enrollments','/v1/rooms','/v1/hosts/self','/v1/hosts/self/heartbeat','/v1/hosts/self/token-rotation','/v1/hosts/self/leave','/v1/ratings/stream-state'}|RATING_ROUTES
+ROUTES={'/v2/capabilities','/v2/rooms','/v2/hosts/self/heartbeat','/v1/capabilities','/v1/enrollments','/v1/rooms','/v1/hosts/self','/v1/hosts/self/heartbeat','/v1/hosts/self/token-rotation','/v1/hosts/self/leave','/v1/ratings/stream-state'}|RATING_ROUTES
 # Diagnostics never repeat arbitrary strings supplied by a remote endpoint.
 REMOTE_ERRORS=frozenset(('credential_required','credential_refused','credential_expired',
     'credential_retired','host_revoked','scope_refused','invitation_refused',

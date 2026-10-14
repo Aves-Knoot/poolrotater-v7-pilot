@@ -1,3 +1,7 @@
+# Community display pilot - state-preserving dev11 upgrade
+
+Existing operators: follow COMMUNITY_DISPLAY_UPGRADE.md first. Keep your current instance, OAuth, catalogs, titles, ratings and hub enrollment. The kit starts no services. New display timing requires the coordinated hub activation. The following setup reference is cumulative; do not reinstall an existing instance.
+
 # Standard + Mania 4K operator handoff
 
 Already installed `two` on dev9: use OWNER_HUB_UPGRADE.md to upgrade that exact
@@ -63,14 +67,14 @@ then `sha256sum -c SHA256SUMS.txt` for the extracted contents.
 | Object | SHA256 |
 | --- | --- |
 | Archive | Independently verify against the published GitHub release notes before extracting. |
-| runtime.zip | `199e4e228e833d6ce051d76b47817e558f261d0224d2cd9c88e3d7eadf0b7b81` |
+| runtime.zip | `54b662a08bbfda597ae8db59f21e78a50f1dbf3fe266e7a8f9ca7991c2cef78f` |
 | bootstrap.json | `2892f9fda822c2aade05fe5b28f354a57623b66555f75f2fb09fd4c0101f7a74` |
 | ca.crt | `60a0dac90855a1b0006062e9820c2144ba2240fc097cd685a6ca0b6fcb445f39` |
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance two \
   --bundle runtime.zip \
-  --sha256 199e4e228e833d6ce051d76b47817e558f261d0224d2cd9c88e3d7eadf0b7b81 \
+  --sha256 54b662a08bbfda597ae8db59f21e78a50f1dbf3fe266e7a8f9ca7991c2cef78f \
   --live-pilot --preset standard-auto --preset mania-4k
 ```
 
@@ -78,7 +82,7 @@ Set `pilot_release` to the exact installed path printed by the installer. For
 this release it should be:
 
 ```sh
-pilot_release=/opt/poolrotater-v7-pilot/two/releases/v7.0.1-199e4e228e833d6c
+pilot_release=/opt/poolrotater-v7-pilot/two/releases/v7.0.1-54b662a08bbfda59
 pr() {
   sudo /usr/bin/python3.12 -I -S \
     "$pilot_release/poolrotater_host/pilot_admin_entry.py" --instance two "$@"

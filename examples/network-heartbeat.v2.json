@@ -1,0 +1,55 @@
+{
+  "protocol_version": 2,
+  "installation_id": "11111111-1111-4111-8111-111111111111",
+  "generation": "22222222-2222-4222-8222-222222222222",
+  "sequence": 7,
+  "code_version": "7.0.1.dev11",
+  "catalog_version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "sent_at": 1792000012,
+  "rooms": [
+    {
+      "alias": "room1",
+      "osu_room_id": 12345,
+      "preset": "standard-auto",
+      "state": "playing",
+      "occupants": 2,
+      "visibility": "public",
+      "title": "Invented Standard (Auto Difficulty)",
+      "min_stars": 4.5,
+      "max_stars": 5.5,
+      "observed_at": 1792000010,
+      "code_version": "7.0.1.dev11",
+      "catalog_version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "current_map": {
+        "beatmap_id": 100,
+        "title": "Invented map",
+        "stars": 4.65
+      },
+      "display": {
+        "settings": {
+          "ruleset_id": 0,
+          "keys": null,
+          "auto_difficulty": true,
+          "selection_style": "variety",
+          "allowed_mods": [
+            "NF",
+            "HD"
+          ],
+          "required_mods": [
+            "DT"
+          ],
+          "freestyle": false,
+          "countdown_seconds": 15
+        },
+        "playing_players": 1,
+        "match": {
+          "playlist_item_id": 99,
+          "beatmap_id": 100,
+          "started_at": 1792000000,
+          "clock_rate": 1.5,
+          "participants": null
+        }
+      }
+    }
+  ]
+}
