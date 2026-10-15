@@ -196,6 +196,12 @@ def _provision(root, prefix, bundle, expected_sha256, *, uid, execution, reserve
             raise ConfigError('protected installation belongs to another root/generation/operator')
         with tempfile.TemporaryDirectory(prefix='package-',dir=prefix / '.staging') as directory:
             stage = Path(directory)
+            # Attribute crash leftovers before copying any input. Cleanup holds
+            # this same provisioning lease and preserves all pending identities.
+            import time
+            _write(stage/'.retention.json',{'format':1,'purpose':'poolrotater-runtime-stage',
+                'installation_id':marker['installation_id'],'generation':marker['generation'],
+                'bundle_sha256':expected_sha256,'stage':str(stage),'created_at':time.time()})
             # Stabilize user-provided input under root ownership before inspection/extraction.
             archive_path = stage / 'input.zip'
             fd = os.open(bundle,os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -252,7 +258,10 @@ def _provision(root, prefix, bundle, expected_sha256, *, uid, execution, reserve
             if current and current['bundle_sha256'] != expected_sha256:
                 return {'status':'candidate_staged','release':str(release),'environment':str(environment),'live_ready':False}
             if current and current != proposal: raise ConfigError('protected release binding changed')
-            if current is None: _write(installation_path,proposal)
+            if current is None:
+                from .runtime_defaults import prepare as prepare_defaults
+                prepare_defaults(root,marker,uid=uid)
+                _write(installation_path,proposal)
             if pointer is None: _write(pointer_path,expected_pointer,owner=uid,private=True)
             return {'status':'existing' if current else 'installed','release':str(release),
                     'environment':str(environment),'bundle_sha256':expected_sha256,'live_ready':False}

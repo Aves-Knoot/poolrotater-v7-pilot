@@ -14,6 +14,7 @@ from ..provider_transport import TrustSnapshot
 from .contracts import NetworkError, require, canonical, decode, number
 
 RATING_ROUTES={'/v1/events/batches','/v1/ratings/state-query','/v1/ratings/snapshots/current','/v1/ratings/snapshot-page'}
+UPDATE_ROUTES={'/v1/hosts/self/updates'}
 ROUTES={'/v2/capabilities','/v2/rooms','/v2/hosts/self/heartbeat','/v1/capabilities','/v1/enrollments','/v1/rooms','/v1/hosts/self','/v1/hosts/self/heartbeat','/v1/hosts/self/token-rotation','/v1/hosts/self/leave','/v1/ratings/stream-state'}|RATING_ROUTES
 # Diagnostics never repeat arbitrary strings supplied by a remote endpoint.
 REMOTE_ERRORS=frozenset(('credential_required','credential_refused','credential_expired',
@@ -49,7 +50,7 @@ class Transport:
     def request(self,method,path,*,body=None,token=None):
         from ..process_target import OwnedChild, require_child_platform
         require_child_platform()
-        require(method in ('GET','POST') and path.split('?',1)[0] in ROUTES and len(path)<=256,'invalid_network_route')
+        require(method in ('GET','POST') and path.split('?',1)[0] in ROUTES|UPDATE_ROUTES and len(path)<=256,'invalid_network_route')
         if token is not None:
             from .contracts import verifier
             verifier(token)

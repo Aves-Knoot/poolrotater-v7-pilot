@@ -218,10 +218,17 @@ def prepare(destination,*,wheel_cache):
 
 def install_assets(kit,*,expected_inventory_sha256,cert,key,served,custody,
                    prefix=PREFIX,state=STATE,user=USER,bind='127.0.0.1',port=9445):
-    """Root reviewed fresh asset installation; leaves units/timer inactive."""
+    return _install_assets(kit,expected_inventory_sha256=expected_inventory_sha256,cert=cert,key=key,
+        served=served,custody=custody,prefix=prefix,state=state,user=user,bind=bind,port=port,
+        bootstrap=BOOTSTRAP,unit_factory=units,unit_names=(UNIT,REFRESH,TIMER))
+
+
+def _install_assets(kit,*,expected_inventory_sha256,cert,key,served,custody,
+                   prefix,state,user,bind,port,bootstrap,unit_factory,unit_names):
+    """Shared reviewed fresh origin installer; no unit/service activation."""
     import pwd
     require(os.geteuid()==0,'catalog_administrator_required')
-    units(prefix=prefix,state=state,user=user,custody=custody,served=served)
+    unit_factory(prefix=prefix,state=state,user=user,custody=custody,served=served)
     account=pwd.getpwnam(user);require(account.pw_uid>0,'catalog_identity_refused')
     config=listener_settings({'format':1,'bind':bind,'port':port,'served':str(served),'service_uid':account.pw_uid})
     no_links(served);no_links(custody)
@@ -238,7 +245,7 @@ def install_assets(kit,*,expected_inventory_sha256,cert,key,served,custody,
     require(re.fullmatch('[a-f0-9]{64}',expected_inventory_sha256 or '') is not None
             and sha256(runtime/'inventory.json')==expected_inventory_sha256
             and type(record['format']) is int and record['format']==1 and type(record['files']) is dict
-            and record['files'].get('bootstrap.py')==hashlib.sha256(BOOTSTRAP.encode()).hexdigest(),'catalog_inventory_refused')
+            and record['files'].get('bootstrap.py')==hashlib.sha256(bootstrap.encode()).hexdigest(),'catalog_inventory_refused')
     actual={p.relative_to(runtime).as_posix() for p in runtime.rglob('*') if not p.is_dir()}
     require(actual=={'inventory.json',*record['files']},'catalog_inventory_refused')
     from .runtime_package import safe_name
@@ -251,18 +258,21 @@ def install_assets(kit,*,expected_inventory_sha256,cert,key,served,custody,
         path_word(path);protected(path.parent,directory=True);require(not os.path.lexists(path),'fresh_catalog_installation_required')
     created=[]
     try:
-        prefix.mkdir(mode=0o755);created.append(prefix)
+        prefix.mkdir(mode=0o755);prefix.chmod(0o755);created.append(prefix)
         for name in (*record['files'],'inventory.json'):
             target=prefix/name;target.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
             shutil.copyfile(runtime/name,target);target.chmod(0o644)
-        state.mkdir(mode=0o755);created.append(state)
+        # Root maintenance commonly uses umask077. Executable code is public
+        # and immutable; explicitly grant traversal to the dedicated listener.
+        for directory in (p for p in prefix.rglob('*') if p.is_dir()):directory.chmod(0o755)
+        state.mkdir(mode=0o755);state.chmod(0o755);created.append(state)
         atomic_json(state/'listener.json',config);(state/'listener.json').chmod(0o644)
         for source,name in ((cert,'tls.crt'),(key,'tls.key')):
             target=state/name;shutil.copyfile(source,target);target.chmod(0o600);os.chown(target,account.pw_uid,account.pw_gid)
-        for name,data in units(prefix=prefix,state=state,user=user,custody=custody,served=served).items():
+        for name,data in unit_factory(prefix=prefix,state=state,user=user,custody=custody,served=served).items():
             (prefix/name).write_text(data);(prefix/name).chmod(0o644)
         # Units enter the protected runtime receipt as part of admission.
-        files={**record['files'],**{name:sha256(prefix/name) for name in (UNIT,REFRESH,TIMER)}}
+        files={**record['files'],**{name:sha256(prefix/name) for name in unit_names}}
         atomic_json(prefix/'inventory.json',{'format':1,'files':files});(prefix/'inventory.json').chmod(0o644)
         return {'ok':True,'service_installed':False,'listener_started':False,'timer_enabled':False,'refresh_configured':False,
                 'installed_inventory_sha256':sha256(prefix/'inventory.json')}

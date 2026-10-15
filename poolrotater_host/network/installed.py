@@ -16,7 +16,7 @@ from .agent import Agent
 from .contracts import NetworkError, require, decode, fields, number
 from .projection import read_status, project
 
-ACTIONS=('configure','enroll','resume','rotate','leave','reset','status','support')
+ACTIONS=('configure','enroll','resume','rotate','leave','reset','status','support','update-report')
 
 
 def guard(root,release):
@@ -28,7 +28,16 @@ def guard(root,release):
 
 def execute(client,action,stream=None):
     require(action in ACTIONS,'invalid_network_action')
-    require((stream is not None)==(action in ('configure','enroll','reset')),'network_private_input_required')
+    require((stream is not None)==(action in ('configure','enroll','reset','update-report')),'network_private_input_required')
+    if action=='update-report':
+        from ..updates.telemetry import report
+        from ..layout import file_lease
+        value=report(decode(stream.read(8193)))
+        with file_lease(client.lock_path):
+            profile=client.profile();client.check_account(profile['account_id'])
+            require(client.pending(profile)is None,'network_pending_requires_resume')
+            credential=client.credential();require(credential is not None,'network_not_enrolled')
+            return client.transport(profile).request('POST','/v1/hosts/self/updates',body=value,token=credential['credential'])
     if action=='status':return client.status()
     if action=='support':return diagnostics(client)
     if action=='configure':

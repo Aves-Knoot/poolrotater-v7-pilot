@@ -454,7 +454,7 @@ def _wait_ready(target, record, *, timeout=None):
     if timeout is None:
         # The cold full-catalog load and several checked provider handshakes per
         # room must fit the explicit owner four-room startup observation too.
-        timeout = 75 + 45 * (expected_room_count - 1)
+        timeout = 120 + 90 * (expected_room_count - 1)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         state = _service_state(target['root'].name)

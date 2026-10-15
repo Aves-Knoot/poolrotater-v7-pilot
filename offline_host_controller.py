@@ -45,10 +45,12 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
         from poolrotater_host.provisioning import load_provisioned
         if prepared:
             load_provisioned(root, release=release, prepared=True)
-            runtime_validator = lambda candidate: load_provisioned(root, release=candidate, prepared=True)
+            from poolrotater_host.worker_releases import load_worker
+            runtime_validator = lambda candidate: load_worker(root, candidate, prepared=True)
         else:
             load_provisioned(root,release=release)
-            runtime_validator = lambda candidate: load_provisioned(root, release=candidate)
+            from poolrotater_host.worker_releases import load_worker
+            runtime_validator = lambda candidate: load_worker(root, candidate)
     lease = authentication.verified_owner() if authentication is not None else owner_lease(root, account_id=account_id)
     with lease as account:
         if authentication is not None: account_id = account.user_id
@@ -94,10 +96,12 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
             if chat is None:
                 raise ConfigError('configured chat websocket was not constructed')
         supervisor = RollingSupervisor(rooms, api, hub, queue.Queue(), chat,
-                                       release, root, health_seconds=.15, startup_timeout=35,
+                                       release, root, health_seconds=.15, startup_timeout=180,
                                        config_loader=load_configured_rooms,
                                        settings_path=(private_directory(root, private_pilot) / 'supervisor.json' if private_pilot is not None else contained(root, 'config/supervisor.json')),
                                        runtime_validator=runtime_validator)
+        if runtime_validator is not None:
+            supervisor.protected_parent = load_provisioned(root, prepared=prepared)['registration']
         supervisor.private_pilot = private_pilot
         from poolrotater_host.runtime_registry import PrivateRegistry
         supervisor.registry = PrivateRegistry(supervisor.registry)

@@ -182,6 +182,8 @@ class RollingSupervisor:
         if not cfg.get('_host_root') and not context.is_absolute() and (worker.release / context).is_file():
             cfg["ai_context_file"] = str(worker.release / context)
             cfg["_supervisor_overrides"]["ai_context_file"] = cfg["ai_context_file"]
+        # Updated workers retain their actual parent maintenance authority.
+        cfg['_rolling_controller_release'] = str(self.release)
         broker.cfg = copy.deepcopy(cfg)
         return cfg
 
@@ -358,6 +360,8 @@ class RollingSupervisor:
         aliases = list(dict.fromkeys(aliases))
         if not aliases or any(alias not in self.configs for alias in aliases):
             raise ValueError("select existing room aliases")
+        if self.runtime_validator is not None:
+            self.runtime_validator(Path(release))
         candidate = load_release(release)
         require_compatible(self.manifest, candidate)
         for existing in [self.manifest] + [w.manifest for w in self.workers.values()]:
@@ -516,6 +520,13 @@ class RollingSupervisor:
         finally:
             self.rollout_alias = None
 
+    def _protected_requests(self):
+        from poolrotater_host.worker_deployment import poll
+        try:
+            poll(self)
+        except Exception:
+            log.exception('protected worker deployment held; existing workers retained')
+
     def _requests(self):
         inbox = self.directory / "requests"
         inbox.mkdir(parents=True, exist_ok=True)
@@ -575,6 +586,10 @@ class RollingSupervisor:
                     log.warning('native configuration refresh rejected; retaining running room settings (%s)', type(exc).__name__)
                 self.config_error = type(exc).__name__
         self.reload_deployment_settings()
+        # Consume protected cancellation before choosing the next empty alias.
+        # A completed handoff must not immediately launch its sibling ahead of
+        # an already queued cancellation acknowledgement.
+        self._protected_requests()
         now = time.monotonic()
         for alias, worker in list(self.workers.items()):
             if alias == self.rollout_alias:
@@ -715,7 +730,20 @@ class RollingSupervisor:
 
     def start_release_for(self, alias):
         previous = self.registry.snapshot()["rooms"].get(alias, {})
-        return Path(previous.get("last_good_release") or previous.get("release") or self.release)
+        pinned = Path(previous.get("last_good_release") or previous.get("release") or self.release)
+        if self.runtime_validator is not None and pinned != self.release:
+            try:
+                approved = self.runtime_validator(pinned)
+                require_compatible(self.manifest, approved['manifest'])
+            except Exception:
+                # A stopped coordinated controller upgrade intentionally retires
+                # the old parent's shared contract. Only its exact committed
+                # predecessor may fall back to the new registered controller.
+                from poolrotater_host.worker_releases import retired_controller
+                if not retired_controller(getattr(self, 'protected_parent', None), pinned, previous):
+                    raise
+                return self.release
+        return pinned
 
     def run(self):
         signal.signal(signal.SIGINT, lambda *_: self.request_shutdown())

@@ -7,6 +7,7 @@ import math
 import logging
 import re
 import threading
+from contextlib import contextmanager
 
 from .oauth import AuthError
 from .provider_api_contract import ID, prepare_api
@@ -51,6 +52,23 @@ class ProviderApiClient:
             return getattr(OsuApi, name).__get__(self, type(self))
         raise AttributeError(name)
 
+    @contextmanager
+    def _call_authority(self, name):
+        # Routine maintenance must not sit behind another room's paced HTTPS
+        # exchange while its gameplay/control loop cannot publish fresh state.
+        # Failure here is positively undispatched: no token, gate or transport
+        # is consulted. Existing bounded deferral handling owns the next try.
+        routine = name in ('chat_ack', 'chat_messages', 'chat_send', 'user',
+                           'user_top_scores', 'room_item_scores')
+        if routine:
+            if not self.auth._mutex.acquire(blocking=False):
+                from .provider_pacing import ProviderAdmissionDeferred
+                raise ProviderAdmissionDeferred('provider_authority_busy')
+            try: yield
+            finally: self.auth._mutex.release()
+        else:
+            with self.auth._mutex: yield
+
     def call(self, name, *args, **kwargs):
         from bot.api import OsuApi
         from rolling.adapters import Api
@@ -61,7 +79,7 @@ class ProviderApiClient:
         if check is not None and not callable(check): raise AuthError('room_api_authority_changed')
         # Hold the lifetime mutex through pacing/I/O: owner exit cannot retire
         # verified authority while a bounded exchange is still in progress.
-        with self.auth._mutex:
+        with self._call_authority(name):
             _bearer(self.auth)  # Cache hits and local settings require authority too.
             previous = getattr(self._context, 'check', None)
             self._context.check = check

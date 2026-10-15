@@ -20,7 +20,8 @@ def main():
             or args.expected_user_id <= 0 or not sys.stdin.isatty() or not sys.stdout.isatty()):
         raise ValueError('private interactive operator terminal required')
     expected = Path('/opt/poolrotater-v7-pilot') / args.instance / 'releases'
-    if args.release.parent != expected or not re.fullmatch('v7\\.0\\.1-[a-f0-9]{16}', args.release.name):
+    if args.release.parent != expected or not re.fullmatch(
+            r'v[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}-[a-f0-9]{16}', args.release.name):
         raise ValueError('use the exact installed live pilot release')
     entry = args.release / 'poolrotater_host/pilot_admin_entry.py'
     command = ['sudo', '-n', '/usr/bin/python3.12', '-I', '-S', str(entry), '--instance', args.instance]

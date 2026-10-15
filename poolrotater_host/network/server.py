@@ -113,6 +113,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=='/v1/hosts/self/token-rotation':result=store.rotate(self.token(),self.body())
                 elif path=='/v1/hosts/self/leave':
                     token=self.token();value=self.body();fields(value,('protocol_version',));base(value);result=store.leave(token)
+                elif path=='/v1/hosts/self/updates':
+                    from ..updates.telemetry import Reports
+                    result=Reports(store).accept(self.token(),self.body())
                 elif path in ('/v1/events/batches','/v1/ratings/state-query','/v1/ratings/stream-state'):
                     from ..ratings.repository import Repository
                     repository=Repository(store)

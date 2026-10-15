@@ -14,7 +14,7 @@ import re
 from .oauth import AuthError
 
 POLICY_NAME = 'poolrotater_host/pilot_release.json'
-VERSION = 'v7.0.1'
+VERSION = 'v7.0.2'
 INSTALLATION = 'pilot-live'
 PROVIDER = 'provider-live-pilot'
 
@@ -43,7 +43,8 @@ def registered_policy_path():
     prefix = release.parent.parent
     if (release.parent.name != 'releases' or prefix.parent != Path('/opt/poolrotater-v7-pilot')
             or not re.fullmatch('[a-z][a-z0-9-]{0,15}', prefix.name)
-            or not re.fullmatch(r'v7\.0\.1-[a-f0-9]{16}', release.name)
+            or not re.fullmatch(r'v7\.[0-9]+\.[0-9]+-[a-f0-9]{16}', release.name)
+            or tuple(map(int, release.name.split('-')[0][1:].split('.'))) < tuple(map(int, VERSION[1:].split('.')))
             or os.geteuid() == 0):
         raise ValueError
     protected(release)

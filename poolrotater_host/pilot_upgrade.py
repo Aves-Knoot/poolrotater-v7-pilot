@@ -54,15 +54,16 @@ def require_repair_compatible(before, after):
     identical; neither path executes migrations. Full inventories are verified
     independently before this check.
     """
-    if before.get('version') != 'v7.0.1' or after.get('version') != 'v7.0.1':
+    if (before.get('version'), after.get('version')) not in (
+            ('v7.0.1','v7.0.1'), ('v7.0.1','v7.0.2'), ('v7.0.2','v7.0.2'),
+            ('v7.0.2','v7.0.5'), ('v7.0.5','v7.0.5'), ('v7.0.1','v7.0.6'), ('v7.0.5','v7.0.6'), ('v7.0.6','v7.0.6')):
         raise ConfigError('pilot repair requires its reviewed runtime family')
     for key in ('protocol', 'storage_epoch', 'requirements', 'python_hash', 'environment_hash'):
         if key not in before or before[key] != after.get(key):
             raise ConfigError('pilot repair persistent/runtime contract changed: ' + key)
     if before.get('migrations') != [] or after.get('migrations') != []:
         raise ConfigError('pilot repair cannot execute migrations')
-    if (type(before.get('shared')) is not dict or type(after.get('shared')) is not dict
-            or before['shared'].keys() != after['shared'].keys()):
+    if (type(before.get('shared')) is not dict or type(after.get('shared')) is not dict):
         raise ConfigError('pilot repair shared inventory changed')
     from .integrated_upgrade import admits
     if admits(before, after):
@@ -71,6 +72,10 @@ def require_repair_compatible(before, after):
         # _locked requires stopped services, no children and clean ownership.
         # M4 ledger preparation remains a separate explicit stopped operation.
         return
+    if before.get('version') != after.get('version'):
+        raise ConfigError('new controller family requires an exact reviewed transition')
+    if before['shared'].keys() != after['shared'].keys():
+        raise ConfigError('pilot repair shared inventory changed')
     if 'storage' not in before or before['storage'] != after.get('storage'):
         raise ConfigError('pilot repair persistent/runtime contract changed: storage')
     for key in before['shared']:
@@ -276,12 +281,19 @@ def _finish(target, marker, path, value, decision):
         candidate_raw = _code(runtime['release'] / 'poolrotater_host/service_bootstrap.py')
         if candidate_raw != bytes.fromhex(value['bootstrap_' + side]):
             raise ConfigError('upgrade bootstrap differs from frozen release')
-    require_repair_compatible(manifests['before'], manifests['after'])
+    from .updates.approval import require_upgrade
+    require_upgrade(manifests['before'], manifests['after'], value['before'], value['after'], recovering=True)
     if _control(prefix / NAME, maximum=512*1024) != value:
         raise ConfigError('upgrade journal changed')
     if transition is None or (predecessor is not None and transition == predecessor):
         _write(transition_path(prefix, marker['installation_id']), _transition(value, 'prepared'))
     side = 'after' if decision == 'complete' else 'before'
+    if decision == 'complete':
+        from .runtime_defaults import prepare as prepare_defaults
+        prepare_defaults(target['root'],marker,uid=value['before']['service_uid'],
+                         previous_release=value['before']['release'])
+        from .worker_deployment import retire_after_controller_upgrade
+        retire_after_controller_upgrade(target, value['before'])
     desired_raw = bytes.fromhex(value['bootstrap_' + side])
     if raw != desired_raw: _replace_code(prefix / 'bootstrap.py', desired_raw)
     _write(prefix / 'bootstrap.json', _bootstrap_record(desired_raw))
@@ -365,7 +377,8 @@ def upgrade(instance, bundle, expected_sha256, *, from_sha256, recover=None, tra
         if staged['status'] != 'candidate_staged': raise ConfigError('upgrade candidate was not staged')
         after = _control(prefix / 'candidates' / marker['installation_id'] / (expected_sha256 + '.json'))
         new = validate_runtime(after, prefix)
-        require_repair_compatible(validate_runtime(current, prefix)['manifest'], new['manifest'])
+        from .updates.approval import require_upgrade
+        require_upgrade(validate_runtime(current, prefix)['manifest'], new['manifest'], current, after)
         replacement = _code(new['release'] / 'poolrotater_host/service_bootstrap.py')
         from .pilot_operations import unit_text
         value = {'format':1, 'phase':'prepared', 'transition_id':str(uuid.uuid4()),

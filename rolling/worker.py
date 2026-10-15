@@ -254,6 +254,8 @@ def run(sock, release):
     try:
         cfg = peer.call("worker.hello", {"protocol": PROTOCOL, "version": manifest["version"],
                                         "files": manifest["files"]})
+        # Authenticated parent hello pins controller maintenance authority.
+        lifecycle.maintenance.release = Path(cfg.get('_rolling_controller_release', release)).resolve()
         cfg.update(version=manifest["version"], _rolling_worker=True, close_room_on_exit=False)
         cfg.setdefault("_supervisor_overrides", {}).update(version=manifest["version"],
                                                           _rolling_worker=True, close_room_on_exit=False)

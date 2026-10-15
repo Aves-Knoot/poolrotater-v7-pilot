@@ -28,6 +28,18 @@ STATE_BASE = Path('/var/lib/poolrotater-v7-pilot')
 RESERVE = 5 * 1024**3
 
 
+def require_fresh_controller_version(version):
+    from . import __version__
+    from .live_release import VERSION
+    # Policy VERSION is the retained provider-authority family. A newer
+    # controller can retain that policy while its protected package version
+    # advances. A worker-only artifact retains its parent's package version,
+    # and must still be staged under that existing controller.
+    controller = 'v' + __version__.removeprefix('v').split('.dev', 1)[0]
+    if version not in (VERSION, controller):
+        raise ConfigError('worker artifact must be staged under its existing controller')
+
+
 def paths(instance):
     if type(instance) is not str or not re.fullmatch('[a-z][a-z0-9-]{0,15}', instance):
         raise ConfigError('pilot instance requires a short lowercase identifier')
@@ -184,6 +196,8 @@ def _install(instance, bundle, expected_sha256, *, presets, execution):
     from .config import validate
     validate(config)
     spec = inspect(bundle, expected_sha256, execution=execution)
+    if execution == LIVE:
+        require_fresh_controller_version(spec['version'])
     from .runtime_package import digest
     if spec['interpreter_sha256'] != digest('/usr/bin/python3.12'):
         raise ConfigError('pilot interpreter differs from approved artifact')

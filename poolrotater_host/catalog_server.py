@@ -37,6 +37,7 @@ class CatalogServer(ThreadingHTTPServer):
     daemon_threads=False
     block_on_close=True
     request_queue_size=8
+    route = staticmethod(route)
 
     def __init__(self,root,address,*,context=None,protected_uid=None):
         self.root=no_links(root);info=self.root.stat()
@@ -50,6 +51,9 @@ class CatalogServer(ThreadingHTTPServer):
         self.root_fd=os.open(self.root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
         try:super().__init__(address,CatalogHandler)
         except BaseException:os.close(self.root_fd);raise
+
+    def cache_control(self,name):
+        return 'no-cache'if name=='metadata/timestamp.json'else'public, max-age=86400, immutable'
 
     def get_request(self):
         incoming,address=super().get_request();incoming.settimeout(10)
@@ -143,7 +147,7 @@ class CatalogHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):self.error(405)
 
     def transfer(self,*,head):
-        try:name,limit=route(self.path)
+        try:name,limit=self.server.route(self.path)
         except ConfigError:self.error(404);return
         try:handle,info=self.server.open_target(name,limit)
         except (OSError,ConfigError):self.error(404);return
@@ -165,7 +169,7 @@ class CatalogHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Length',str(end-start+1));self.send_header('ETag',etag)
             self.send_header('Accept-Ranges','bytes');self.send_header('X-Content-Type-Options','nosniff')
             self.send_header('Content-Type','application/json' if name.endswith('.json') else 'application/octet-stream')
-            self.send_header('Cache-Control','no-cache' if name=='metadata/timestamp.json' else 'public, max-age=86400, immutable')
+            self.send_header('Cache-Control',self.server.cache_control(name))
             if partial:self.send_header('Content-Range',f'bytes {start}-{end}/{size}')
             self.end_headers()
             if head:return

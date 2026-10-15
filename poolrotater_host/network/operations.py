@@ -14,7 +14,7 @@ from .installed import ACTIONS
 
 def command(instance,action,stream=None):
     require(action in ACTIONS,'invalid_network_action')
-    require((stream is not None)==(action in ('configure','enroll','reset')),'network_private_input_required')
+    require((stream is not None)==(action in ('configure','enroll','reset','update-report')),'network_private_input_required')
     target,_,record=administrative_binding(instance)
     # Integrity guard at the actual service UID before reading even explicit input.
     pilot._service_command(target,record,['--pilot-check'])

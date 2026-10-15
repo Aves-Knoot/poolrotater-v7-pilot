@@ -171,6 +171,11 @@ class ProviderRoomApi:
         return value
 
     def room_probe(self, room_id):
+        # A busy shared authority supplies no liveness evidence. Return the
+        # existing conservative unavailable result promptly so routine idle /
+        # pre-start probes cannot starve native control/status heartbeats.
+        # Direct room reads, ownership checks and mutations keep their guards.
+        if not self.auth._mutex.acquire(blocking=False): return 'unavailable', None
         try:
             value = self.room(room_id)
             if _room(value, self.auth._active, room_id)['ended']: return 'missing', None
@@ -178,6 +183,8 @@ class ProviderRoomApi:
         except AuthError:
             # 404/omission/error are never positive evidence of absence.
             return 'unavailable', None
+        finally:
+            self.auth._mutex.release()
 
     def preflight_start(self, user_id):
         code, values = _fetch(self.auth, OWNED_PATH)

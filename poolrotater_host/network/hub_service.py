@@ -214,10 +214,11 @@ def install_assets(kit, *, expected_inventory_sha256, cert, key,
     tls(cert,key)
     created=[]
     try:
-        prefix.mkdir(mode=0o755);created.append(prefix)
+        prefix.mkdir(mode=0o755);prefix.chmod(0o755);created.append(prefix)
         for name in (*inventory['files'],'inventory.json'):
             target=prefix/name;target.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
             target.write_bytes((runtime/name).read_bytes());target.chmod(0o644)
+        for directory in (p for p in prefix.rglob('*') if p.is_dir()):directory.chmod(0o755)
         state.mkdir(mode=0o700);created.append(state)
         from .hub_layout import initialize
         from ..ratings.hub_migration import migrate
@@ -275,6 +276,11 @@ def backup_package(root, destination):
             backup=stage/'network.sqlite3'
             snapshot_ledger(store.path,backup,deadline_seconds=10)
             files={'network.sqlite3':private_digest(backup)}
+            updates=hub_root/'updates.sqlite3'
+            if updates.exists():
+                private_digest(updates)
+                snapshot_ledger(updates,stage/'updates.sqlite3',deadline_seconds=10)
+                files['updates.sqlite3']=private_digest(stage/'updates.sqlite3')
             if policy is not None:
                 atomic_json(stage/'ratings-policy.json',policy)
                 files['ratings-policy.json']=private_digest(stage/'ratings-policy.json',512*1024)
@@ -290,7 +296,7 @@ def backup_package(root, destination):
             try:os.fsync(fd)
             finally:os.close(fd)
             return {'ok':True,'backup_created':True,'contains_private_identity_data':True,
-                    'ratings_policy_included':ratings,'service_started':False}
+                    'ratings_policy_included':ratings,'update_reports_included':'updates.sqlite3'in files,'service_started':False}
         finally:
             if stage.exists():shutil.rmtree(stage)
 
@@ -309,7 +315,7 @@ def restore_package(source, destination, *, latest_ratings_policy=None):
     from .contracts import identifier
     identifier(manifest['hub_id'])
     require(type(manifest['format']) is int and manifest['format']==1 and type(manifest['files']) is dict
-            and set(manifest['files']) in ({'network.sqlite3'},{'network.sqlite3','ratings-policy.json'}),
+            and 'network.sqlite3'in manifest['files'] and set(manifest['files'])<= {'network.sqlite3','ratings-policy.json','updates.sqlite3'},
             'hub_backup_manifest_refused')
     require({p.name for p in source.iterdir()}=={'manifest.json',*manifest['files']},'hub_backup_manifest_refused')
     for name,digest in manifest['files'].items():
@@ -319,7 +325,15 @@ def restore_package(source, destination, *, latest_ratings_policy=None):
     ratings='ratings-policy.json' in manifest['files']
     require(not ratings or latest_ratings_policy is not None,'latest_ratings_policy_required',409)
     require(ratings or latest_ratings_policy is None,'unexpected_ratings_policy')
-    return restore(source/'network.sqlite3',destination,ratings_policy=latest_ratings_policy)
+    result=restore(source/'network.sqlite3',destination,ratings_policy=latest_ratings_policy)
+    if 'updates.sqlite3'in manifest['files']:
+        # Restore rotates authority and revokes hosts. Retain diagnostic history
+        # without presenting old reports as fresh observations of the new epoch.
+        target=Path(destination)/'retained-update-reports.sqlite3'
+        shutil.copyfile(source/'updates.sqlite3',target);target.chmod(0o600)
+        with target.open('rb')as stream:os.fsync(stream.fileno())
+    return {**result,'historical_update_reports_retained':'updates.sqlite3'in manifest['files'],
+            'current_update_reports_restored':False}
 
 
 def check_tls(root):
@@ -340,7 +354,7 @@ def main(argv=None):
     parser.add_argument('action',choices=('serve','check','backup','restore','admin'))
     parser.add_argument('admin_action',nargs='?',choices=('invite','revoke','inspect','ratings-grant',
                         'ratings-inspect','ratings-link-replacement','ratings-grant-seed',
-                        'ratings-policy','ratings-policy-recover'))
+                        'ratings-policy','ratings-policy-recover','updates-inspect'))
     parser.add_argument('--destination',type=Path)
     parser.add_argument('--source',type=Path)
     parser.add_argument('--latest-ratings-policy',type=Path)

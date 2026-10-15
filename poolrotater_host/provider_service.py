@@ -79,7 +79,7 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
             selected = (private.alias,) if private is not None else tuple(supervisor.configs)
             for alias in selected:
                 if stop.is_set(): break
-                worker = supervisor.prepare(alias, release)
+                worker = supervisor.prepare(alias, supervisor.start_release_for(alias))
                 workers.append(worker)
                 supervisor.activate(worker)
             if not stop.is_set(): observer('running', supervisor, workers)
@@ -132,6 +132,10 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                         # Failure is emitted before the worker's finally block
                         # closes its own room. Let that bounded cleanup settle;
                         # the native tick parks a positively closed/reaped alias.
+                        # A process/RPC can exit between tick() and this check.
+                        # Give the next tick its chance to reconcile that exact
+                        # dead alias too. Unknown ownership is escalated by tick;
+                        # the grace never claims closure or replays a mutation.
                         # Never use a stale status snapshot to claim closure.
                         key=(alias,id(worker))
                         seen=failing_workers.setdefault(key,time.monotonic())

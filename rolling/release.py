@@ -82,7 +82,8 @@ def require_immutable(root, manifest):
     paths += [p for folder in ("bin", "lib") for p in (environment / folder).rglob("*")]
     for path in paths:
         if (path.stat().st_uid != 0 or path.parent.stat().st_uid != 0
-                or os.access(path, os.W_OK) or os.access(path.parent, os.W_OK)):
+                or os.access(path, os.W_OK, effective_ids=True)
+                or os.access(path.parent, os.W_OK, effective_ids=True)):
             raise IncompatibleRelease(f"service account can modify release/environment: {path}")
 
 

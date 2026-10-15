@@ -44,9 +44,33 @@ def main(argv=None):
                    'network-status','network-support','network-unit','network-start','network-stop','network-remove',
                    'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
                    'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch',
-                   'room-settings-configure','room-settings-status'):
+                   'room-settings-configure','room-settings-status',
+                   'worker-stage','worker-queue','worker-cancel','worker-status',
+                   'update-configure','update-check','update-download','update-apply','update-pause','update-resume',
+                   'update-status','update-tick','update-recover','update-unit','update-start','update-stop','update-cleanup',
+        'release-init','release-publish','release-promote','release-renew','release-resume','release-status'):
         command = commands.add_parser('pilot-' + action, help='explicit protected pilot ' + action)
         command.add_argument('--instance', required=True)
+        if action == 'worker-stage':
+            command.add_argument('--bundle', required=True, type=Path)
+            command.add_argument('--sha256', required=True)
+        if action == 'worker-queue':
+            command.add_argument('--sha256', required=True)
+            command.add_argument('--room', action='append')
+        if action.startswith('release-'):
+            command.add_argument('--custody',required=True,type=Path)
+            if action=='release-init':command.add_argument('--served',required=True,type=Path)
+            if action=='release-publish':
+                command.add_argument('--bundle',required=True,type=Path);command.add_argument('--sha256',required=True)
+                command.add_argument('--before-bundle',required=True,type=Path);command.add_argument('--before-sha256',required=True)
+                command.add_argument('--channel',choices=('pilot','stable'),default='pilot')
+            if action=='release-promote':
+                command.add_argument('--sha256',required=True);command.add_argument('--channel',required=True,choices=('pilot','stable'))
+        if action=='update-recover':
+            command.add_argument('--operation-id')
+            command.add_argument('--decision',choices=('review','retry','cancel','complete','rollback'))
+        if action == 'update-configure':
+            command.add_argument('--updates-stdin', required=True, action='store_true')
         if action == 'private-test-configure':
             command.add_argument('--private-test-stdin', required=True, action='store_true')
         if action == 'owner-import':
@@ -109,6 +133,22 @@ def main(argv=None):
                 result = getattr(pilot, action.replace('-', '_'))(args.instance)
             elif action == 'unit': result = pilot.install_unit(args.instance)
             elif action == 'remove': result = pilot.remove_unit(args.instance)
+            elif action.startswith('worker-'):
+                from .worker_operations import command as worker_command
+                result=worker_command(args.instance,action.removeprefix('worker-'),
+                    bundle=getattr(args,'bundle',None),sha256=getattr(args,'sha256',None),
+                    rooms=getattr(args,'room',None))
+            elif action.startswith('release-'):
+                from .updates.authority import command as release_command
+                result=release_command(action.removeprefix('release-'),custody=args.custody,
+                    served=getattr(args,'served',None),bundle=getattr(args,'bundle',None),sha256=getattr(args,'sha256',None),
+                    before_bundle=getattr(args,'before_bundle',None),before_sha256=getattr(args,'before_sha256',None),
+                    channel=getattr(args,'channel',None))
+            elif action.startswith('update-'):
+                from .updates.operations import command as update_command
+                result=update_command(args.instance,action.removeprefix('update-'),
+                    stream=sys.stdin.buffer if action=='update-configure' else None,
+                    operation_id=getattr(args,'operation_id',None),decision=getattr(args,'decision',None))
             elif action.startswith('room-settings-'):
                 from .room_settings_operations import command as settings_command
                 result=settings_command(args.instance,action.removeprefix('room-settings-'),

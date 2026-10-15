@@ -614,6 +614,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         # add a website line to an already busy lobby.
         self._last_website_announcement = time.time()
         self._website_notified_players: set[int] = set()
+        self._discord_notified_players: set[int] = set()
+        self._last_discord_reminder_text = ""
+        self._next_community_link_is_discord = False
         self.discord_modlog = discord_modlog if discord_modlog is not None else DiscordModLog(self.cfg)
         self.cfg.setdefault("discord_control_enabled", True)
         self.cfg.setdefault(
@@ -1146,7 +1149,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         return f"Discord: {url}" if url else ""
 
     def _maybe_announce_website(self) -> None:
-        """Occasionally share the website after a completed map, never mid-play."""
+        """Alternate community links on the existing post-match reminder timer."""
         try:
             interval = max(
                 0.0,
@@ -1162,14 +1165,33 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if now - self._last_website_announcement < interval:
             return
         active = set(self.gameplay_player_ids())
-        notified = getattr(self, "_website_notified_players", set())
         # Keep the existing cadence even when an unchanged group needs no
         # repeat. A newcomer becomes eligible at the next scheduled interval.
         self._last_website_announcement = now
-        if active and active.issubset(notified):
-            return
-        self.say("Website: https://poolrotater.com/", automatic=True)
-        self._website_notified_players = active
+        discord = self._discord_invite_text()
+        discord_notified = (
+            getattr(self, "_discord_notified_players", set())
+            if discord == getattr(self, "_last_discord_reminder_text", "")
+            else set()
+        )
+        links = [
+            (False, "Website: https://poolrotater.com/",
+             getattr(self, "_website_notified_players", set())),
+            (True, discord, discord_notified),
+        ]
+        if getattr(self, "_next_community_link_is_discord", False):
+            links.reverse()
+        for is_discord, message, notified in links:
+            if not message or (active and active.issubset(notified)):
+                continue
+            self.say(message, automatic=True)
+            if is_discord:
+                self._discord_notified_players = active
+                self._last_discord_reminder_text = message
+            else:
+                self._website_notified_players = active
+            self._next_community_link_is_discord = not is_discord
+            break
 
     def _join_help_tip(self, user_id: int) -> str:
         """Introduce controls once to a familiar player, not on every rejoin."""
@@ -3600,6 +3622,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # shared provider ledger; the message is never queued or replayed.
             log.warning('room chat delivery uncertain; message will not be resent')
 
+
     def _queue_room_chat(self, entry):
         pending = getattr(self, '_pending_room_chat', None)
         if pending is None:
@@ -3619,6 +3642,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 pending.popleft()
                 log.warning('oldest room chat expired while delivery queue is full')
         pending.append(entry)
+
 
     def _flush_room_chat(self):
         """Bounded, ordered delivery without blocking gameplay on pacing waits.
@@ -3654,6 +3678,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         pending.popleft()
         self._room_chat_deferred_count = 0
         self._room_chat_retry_at = 0.0
+
 
     def _deliver_room_chat(self, text, *, automatic, lobby_only, discord_reply_channel):
         """One delivery; dispatched uncertain sends keep their existing fence."""
@@ -10826,99 +10851,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             pending[uid] = work  # rotate behind other due profiles, avoiding starvation
             return
 
-    def _profile_fields(self, user_id, profile):
-        """Unknown statistics stay unknown; only a qualified reply enriches PP."""
-        if type(profile) is not dict or not profile:
-            return None
-        if profile.get("id") is not None and profile.get("id") != user_id:
-            return None
-        name = profile.get("username")
-        if type(name) is not str or not name:
-            return None
-        stats = profile.get("statistics")
-        pp = stats.get("pp") if type(stats) is dict else None
-        if pp is not None and (type(pp) not in (int, float) or not math.isfinite(pp) or pp < 0):
-            return None
-        return {"name": name, "country_code": profile.get("country_code"), "pp": pp}
-
-    def _defer_player_profile(self, user_id, *, profile=None):
-        """Record the join once, then queue enrichment independently of READY."""
-        fields = self._profile_fields(user_id, profile)
-        self.players.setdefault(user_id, {"pp": None, "name": str(user_id), "status": "idle"})
-        if fields is not None:
-            self.players[user_id].update(fields)
-        self._record_lobby_join(user_id, self.players[user_id])
-        if fields is not None and fields["pp"] is not None:
-            self.mark_auto_retune_pending()
-        pending = getattr(self, "_pending_player_profiles", None)
-        if pending is None:
-            pending = self._pending_player_profiles = {}
-        if len(pending) >= 32:
-            log.warning("profile enrichment queue full; keeping unknown roster statistics")
-            return
-        now = time.monotonic()
-        pending[user_id] = {"room_id": self.room_id, "channel_id": self.channel_id,
-                            "expires_at": now + 300, "retry_at": now + 1,
-                            "attempts": 1, "profile": profile if fields is not None else None,
-                            "player": self.players[user_id]}
-
-    def _flush_player_profiles(self):
-        """At most one pending roster enrichment per tick; never sleep or rejoin."""
-        pending = getattr(self, "_pending_player_profiles", None)
-        if not pending:
-            return
-        now = time.monotonic()
-        for uid, work in list(pending.items()):
-            if (now >= work["expires_at"] or uid not in self.players
-                    or self.players[uid] is not work["player"]
-                    or (self.room_id, self.channel_id) != (work["room_id"], work["channel_id"])
-                    or uid in self.non_gameplay_user_ids() or self._is_project_banned(uid)):
-                pending.pop(uid, None)
-        for uid, work in list(pending.items()):
-            if now < work["retry_at"]:
-                continue
-            mode_kwargs = {"mode": "mania"} if self.cfg.get("ruleset_id", 0) == 3 else {}
-            fields = None
-            try:
-                profile = work["profile"]
-                if profile is None:
-                    profile = self.api.user(uid, **mode_kwargs)
-                fields = self._profile_fields(uid, profile)
-                if fields is not None:
-                    work["profile"] = profile
-                    raw = self.api.user_top_scores(uid, limit=100, **mode_kwargs)
-                    if type(raw) is list:
-                        top = []
-                        for score in raw:
-                            if type(score) is not dict:
-                                continue
-                            pp = score.get("pp")
-                            beatmap = score.get("beatmap")
-                            if type(pp) not in (int, float) or not math.isfinite(pp) or pp <= 0:
-                                continue
-                            bid = beatmap.get("id", 0) if type(beatmap) is dict else 0
-                            if type(bid) is not int or bid < 0:
-                                continue
-                            top.append((pp, bid))
-                        top.sort(reverse=True)
-                        fields.update(top=top, threshold=top[-1][0] if len(top) >= 100 else 0.0)
-                        self.players[uid].update(fields)  # retain current READY/playing/lobby metadata
-                        if fields["pp"] is not None:
-                            self.mark_auto_retune_pending()
-                        pending.pop(uid, None)
-                        return
-            except ApiAdmissionDeferred:
-                pass  # proven pre-dispatch refusal; generic/auth/uncertain errors propagate
-            if fields is not None:
-                self.players[uid].update(fields)
-                if fields["pp"] is not None:
-                    self.mark_auto_retune_pending()
-            pending.pop(uid, None)
-            work["attempts"] = min(work["attempts"] + 1, 5)
-            work["retry_at"] = now + min(15, 2 ** (work["attempts"] - 1))
-            pending[uid] = work  # rotate behind other due profiles, avoiding starvation
-            return
-
     def mark_auto_retune_pending(self) -> None:
         """Remember that roster changes should affect the NEXT queue refill."""
         if self.cfg.get("auto_difficulty", True) and not self.manual_range:
@@ -12109,7 +12041,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 self._save_departing_preference(uid, kicked=name == "UserKicked")
                 info = self.players.pop(uid, None)
                 getattr(self, "_pending_player_profiles", {}).pop(uid, None)
-                getattr(self, "_pending_player_profiles", {}).pop(uid, None)
                 self._on_difficulty_voter_left(uid)
                 player_name = str((info or {}).get("name") or uid)
                 action = "was kicked" if name == "UserKicked" else "left"
@@ -12632,7 +12563,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             self._drain_ai_results()
             self._drain_discord_control_commands()
             self._flush_room_chat()
-            self._flush_player_profiles()
             self._flush_player_profiles()
 
             # This is snapshot-driven, so the inexpensive call below only

@@ -31,15 +31,24 @@ TARGET = {'os': 'linux', 'architecture': 'x86_64', 'python': '3.12', 'reference_
 REVIEWED_SINGLE_ROOM_BASELINES = frozenset({
     'a340b0b719081c958853ec7435d90112588a26d348d46de057ce5bb9f8591932',
 })
+REVIEWED_V701_BASELINES = frozenset({
+    'ad33e8eea1ca5dcd8367d6bce7658ba21e6a84432d271b2dbe979420f6a11ec8',
+    '182615d79647a68dfca9f75ed440b77081dee52682a7d1bc737e913fd36bbd96',
+    '199e4e228e833d6ce051d76b47817e558f261d0224d2cd9c88e3d7eadf0b7b81',
+    '53a1e98f0057a965cdbbb4d1afa4d1434296f91a7492e0d704fdf409717fae64',
+    '54b662a08bbfda597ae8db59f21e78a50f1dbf3fe266e7a8f9ca7991c2cef78f',
+    'b014b75a68fe9adb1612700f74e0038e3d689a7e71debde59518d41a469f10e1',
+})
 
 
 def _reviewed_live_policy(expected_sha256, actual):
     from .live_release import policy, policy_bytes
     if actual == policy_bytes():
         return True
-    historical = {**policy(), 'maximum_rooms': 1}
-    return (expected_sha256 in REVIEWED_SINGLE_ROOM_BASELINES
-            and actual == json_bytes(historical))
+    historical = {**policy(), 'release':'v7.0.1'}
+    return ((expected_sha256 in REVIEWED_SINGLE_ROOM_BASELINES
+             and actual == json_bytes({**historical, 'maximum_rooms':1}))
+            or (expected_sha256 in REVIEWED_V701_BASELINES and actual == json_bytes(historical)))
 
 
 def fixture_only():
@@ -106,9 +115,9 @@ def build_pilot(root, cache, output, *, version='v7.0.0', catalog_cache):
     return _build(root, cache, output, version=version, catalog_cache=catalog_cache, execution='pilot-candidate')
 
 
-def build_live_pilot(root, cache, output, *, catalog_cache):
+def build_live_pilot(root, cache, output, *, catalog_cache, version=None):
     from .live_release import VERSION, INSTALLATION
-    return _build(root, cache, output, version=VERSION, catalog_cache=catalog_cache, execution=INSTALLATION)
+    return _build(root, cache, output, version=version or VERSION, catalog_cache=catalog_cache, execution=INSTALLATION)
 
 
 def _build(root, cache, output, *, version, catalog_cache, execution):
@@ -122,7 +131,7 @@ def _build(root, cache, output, *, version, catalog_cache, execution):
     generated = {}
     from .live_release import INSTALLATION, VERSION, POLICY_NAME, policy_bytes
     if execution == INSTALLATION:
-        if version != VERSION or catalog_cache is None:
+        if tuple(map(int, version[1:].split('.'))) < tuple(map(int, VERSION[1:].split('.'))) or catalog_cache is None:
             raise ConfigError('live pilot requires its reviewed version and catalog dependency closure')
         generated['payload/' + POLICY_NAME] = policy_bytes()
     caches = [cache]
@@ -250,7 +259,8 @@ def inspect(path, expected_sha256, *, execution='offline-fixture'):
             from .live_release import INSTALLATION, VERSION, POLICY_NAME, policy_bytes
             policy_member = 'payload/' + POLICY_NAME
             if execution == INSTALLATION:
-                if (spec['version'] != VERSION or policy_member not in names
+                legacy = expected_sha256 in REVIEWED_V701_BASELINES | REVIEWED_SINGLE_ROOM_BASELINES
+                if ((tuple(map(int, spec['version'][1:].split('.'))) < tuple(map(int, VERSION[1:].split('.'))) and not legacy) or policy_member not in names
                         or not _reviewed_live_policy(expected_sha256, archive.read(policy_member))):
                     raise ConfigError('live pilot release policy differs from reviewed artifact')
             elif policy_member in names:

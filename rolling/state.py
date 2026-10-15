@@ -15,6 +15,59 @@ from deployment.sqlite_readonly import readonly_database
 from .release import atomic_json
 
 
+# Only successful full verification of sealed, administrator-owned versions is
+# memoized. This is process-local evidence, never a persisted trust grant. Every
+# use repeats protected ownership/type/seal checks and cryptographic file hashes,
+# inode metadata, receipt bytes and trust. Only the expensive row validation is
+# reused. Mutable operator DBs bypass it.
+_CATALOG_VERIFICATIONS = {}
+_CATALOG_VERIFICATION_LOCK = threading.RLock()
+
+
+def _catalog_stamp(store, identity):
+    folder = store.path / 'versions' / identity
+    store._check_path(folder, directory=True)
+    if folder.stat().st_mode & 0o222:
+        raise ValueError('catalog version directory is not sealed')
+    children = sorted(folder.iterdir())
+    if len(children) > 5:
+        raise ValueError('catalog version inventory exceeded')
+    for path in children:
+        store._check_path(path)
+        if path.stat().st_mode & 0o222:
+            raise ValueError('catalog version file is not sealed')
+    receipt = store._read('receipts/' + identity + '.json')
+    trust = store.trust.identity
+    def metadata(path):
+        info = path.stat()
+        content = None
+        if path != folder:
+            with path.open('rb') as stream:
+                content = hashlib.file_digest(stream, 'sha256').hexdigest()
+        return (str(path), info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                info.st_mode, info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns, content)
+    return (trust, json.dumps(receipt, sort_keys=True, allow_nan=False),
+            tuple(metadata(path) for path in [folder, *children]))
+
+
+def _verified_catalog_paths(store, mode, identity):
+    key = (str(store.path), mode, identity)
+    with _CATALOG_VERIFICATION_LOCK:
+        before = _catalog_stamp(store, identity)
+        previous = _CATALOG_VERIFICATIONS.get(key)
+        if previous is not None and previous[0] == before:
+            return previous[1]
+        folder, manifest = store.version(mode, identity)
+        after = _catalog_stamp(store, identity)
+        if before != after:
+            raise ValueError('catalog changed during full verification')
+        paths = frozenset(str(folder / row['name']) for row in manifest['files'])
+        if len(_CATALOG_VERIFICATIONS) >= 128:
+            _CATALOG_VERIFICATIONS.clear()
+        _CATALOG_VERIFICATIONS[key] = (after, paths)
+        return paths
+
+
 class Registry:
     def __init__(self, path):
         self.path = Path(path)
@@ -49,16 +102,20 @@ def _managed_immutable_paths(configs):
     Mutable operator DBs and unprovisioned fixture copies retain owner-safe reads.
     """
     from poolrotater_host.catalog_store import CatalogStore
-    result = set()
+    result = set(); stores = {}; seen = set()
     for cfg in configs:
         reference = cfg.get('_host_catalog_reference')
         if not cfg.get('_host_managed_catalogs') or not reference: continue
-        store = CatalogStore.open(Path(cfg['_host_root']))
+        root = Path(cfg['_host_root'])
+        if root not in stores: stores[root] = CatalogStore.open(root)
+        store = stores[root]
         reference = store._validate_reference(reference)
         if store.fixture: continue
         for mode, identity in reference['modes'].items():
-            folder, manifest = store.version(mode, identity)
-            result.update(str(folder/file['name']) for file in manifest['files'])
+            key = (str(store.path), mode, identity)
+            if key in seen: continue
+            seen.add(key)
+            result.update(_verified_catalog_paths(store, mode, identity))
     return result
 
 
