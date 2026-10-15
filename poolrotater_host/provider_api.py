@@ -20,6 +20,18 @@ class ProviderKeepaliveUnavailable(AuthError):
     """
 
 
+class ProviderChatReadUnavailable(AuthError):
+    """Known transient read failure; no cursor advancement or inline retry."""
+
+
+class ProviderChatDeliveryUncertain(AuthError):
+    """One chat send may have arrived. Drop it; retain gate uncertainty/cooldown.
+
+    This is never used for room/referee mutations, unsafe child cleanup, expired
+    authorization, malformed local state or an uncertain RPC channel itself.
+    """
+
+
 class ProviderApiClient:
     def __init__(self, auth):
         from .provider_rooms import _authority
@@ -82,6 +94,8 @@ class ProviderApiClient:
         prepare_api(method, full, bearer='request-validation', params=params, json_body=body)
         mutation = method != 'GET'
         keepalive = method == 'POST' and full == '/api/v2/chat/ack'
+        chat_send = method == 'POST' and bool(re.fullmatch(r'/api/v2/chat/channels/' + ID + r'/messages', full))
+        chat_read = method == 'GET' and bool(re.fullmatch(r'/api/v2/chat/channels/' + ID + r'/messages', full))
         if before is not None:
             if not callable(before): raise AuthError('provider_api_arguments_refused')
             try: before()
@@ -98,8 +112,14 @@ class ProviderApiClient:
                     code, value = permit.api_request(method, full, bearer=token,
                                                     params=params, json_body=body)
                 except AuthError as error:
+                    if permit.used and error.code in ('provider_deadline_exceeded', 'provider_transport_uncertain'):
+                        if chat_send:
+                            raise ProviderChatDeliveryUncertain('provider_chat_delivery_uncertain', http_status=error.http_status) from None
+                        if chat_read:
+                            raise ProviderChatReadUnavailable('provider_chat_read_unavailable', http_status=error.http_status) from None
                     if (keepalive and permit.used and error.code in
                             ('provider_deadline_exceeded', 'provider_transport_uncertain')):
+                        logging.getLogger(__name__).warning('chat ACK unavailable: %s; retaining pacing cooldown and retrying maintenance later', error.code)
                         raise ProviderKeepaliveUnavailable(error.code, http_status=error.http_status) from None
                     if mutation and permit.used:
                         raise AuthError('provider_api_mutation_uncertain') from None
@@ -107,8 +127,13 @@ class ProviderApiClient:
                 if mutation and 500 <= code < 600:
                     self.auth.transport.gate.uncertain()
                     if keepalive:
+                        logging.getLogger(__name__).warning('chat ACK unavailable: HTTP %d; retaining pacing cooldown', code)
                         raise ProviderKeepaliveUnavailable('provider_chat_keepalive_unavailable', http_status=code)
+                    if chat_send:
+                        raise ProviderChatDeliveryUncertain('provider_chat_delivery_uncertain', http_status=code)
                     raise AuthError('provider_api_mutation_uncertain')
+                if chat_read and 500 <= code < 600:
+                    raise ProviderChatReadUnavailable('provider_chat_read_unavailable', http_status=code)
                 if code in (200, 201, 204):
                     sequence = bool(re.fullmatch(r'/api/v2/users/' + ID + r'/scores/best', full)
                                     or method == 'GET' and bool(re.fullmatch(r'/api/v2/chat/channels/' + ID + r'/messages', full)))
@@ -118,6 +143,11 @@ class ProviderApiClient:
                     if invalid:
                         if mutation:
                             self.auth.transport.gate.uncertain()
+                            if keepalive:
+                                logging.getLogger(__name__).warning('chat ACK reply refused: HTTP %d; retaining pacing cooldown', code)
+                                raise ProviderKeepaliveUnavailable('provider_chat_keepalive_reply_refused', http_status=code)
+                            if chat_send:
+                                raise ProviderChatDeliveryUncertain('provider_chat_delivery_uncertain', http_status=code)
                             raise AuthError('provider_api_mutation_uncertain')
                         raise AuthError('provider_api_reply_refused')
             if code == 401:

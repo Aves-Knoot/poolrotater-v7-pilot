@@ -595,6 +595,34 @@ class RollingSupervisor:
             if worker.process.poll() is not None:
                 if state.get("phase") not in ("recovery_required", "parked"):
                     try:
+                        if ((worker.failure or not worker.exited) and not worker.broker.uncertain
+                                and state.get('operation') == 'owned'
+                                and state.get('ownership_unknown') is False
+                                and len(worker.broker.hub.owned) == 1
+                                and state.get('room_id') in worker.broker.hub.owned
+                                and worker.broker.known
+                                and worker.broker.hub.is_connected()
+                                and worker.broker.snapshot_generation == worker.broker.hub._generation()):
+                            # This process has already died. Its own positively
+                            # owned room can be closed through the still-live
+                            # scoped referee view; siblings retain their views,
+                            # processes, matches and shared connection. Uncertain
+                            # authority/cleanup remains on the recovery path.
+                            rid, = worker.broker.hub.owned
+                            worker.broker.close_room(rid, require_empty=False)
+                            self.dispose(worker)
+                            self.record(alias, phase='parked', pid=None, error=None)
+                            continue
+                        # A failed worker's own finally block may already have
+                        # positively closed its room. That journal evidence and
+                        # empty owned set authorize parking this alias, never a
+                        # shutdown of unrelated occupied rooms or blind restart.
+                        if (state.get('operation') == 'closed' and not state.get('room_id')
+                                and state.get('ownership_unknown') is False
+                                and not worker.broker.uncertain and not worker.broker.hub.owned):
+                            self.dispose(worker)
+                            self.record(alias, phase='parked', pid=None, error=None)
+                            continue
                         if not worker.exited or worker.failure or worker.broker.uncertain:
                             raise RuntimeError(worker.failure or "Worker exited unexpectedly; ownership retained")
                         if worker.status.get("reopenable") and not worker.broker.empty():

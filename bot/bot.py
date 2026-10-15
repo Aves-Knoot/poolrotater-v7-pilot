@@ -48,7 +48,8 @@ from .discord_reports import DiscordReports
 from .lazer_coordinator import LazerCoordinator
 from .process_control import SharedProcessControl
 from .custom_greetings import JOIN_GREETING_COOLDOWN, configured_greeting
-from .api import ApiAdmissionDeferred, ApiKeepaliveUnavailable
+from .api import (ApiAdmissionDeferred, ApiKeepaliveUnavailable,
+                  ApiChatReadUnavailable, ApiChatDeliveryUncertain)
 
 log = logging.getLogger("bot")
 _UNIVERSAL_CONFIG_WRITE_LOCK = threading.Lock()
@@ -3593,6 +3594,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # This typed refusal proves that no message was dispatched.
             self._queue_room_chat(entry)
             self._room_chat_retry_at = time.monotonic() + 1.0
+        except ApiChatDeliveryUncertain:
+            # Losing a cosmetic/command reply is preferable to aborting all
+            # occupied rooms. Its dispatch outcome remains uncertain in the
+            # shared provider ledger; the message is never queued or replayed.
+            log.warning('room chat delivery uncertain; message will not be resent')
 
     def _queue_room_chat(self, entry):
         pending = getattr(self, '_pending_room_chat', None)
@@ -3643,6 +3649,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             self._room_chat_deferred_count = failures
             self._room_chat_retry_at = now + min(15.0, float(2 ** (failures - 1)))
             return
+        except ApiChatDeliveryUncertain:
+            log.warning('queued room chat delivery uncertain; message will not be resent')
         pending.popleft()
         self._room_chat_deferred_count = 0
         self._room_chat_retry_at = 0.0
@@ -4009,7 +4017,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return False, None
         try:
             result = getattr(self.api, method)(*args, **kwargs)
-        except (ApiAdmissionDeferred, ApiKeepaliveUnavailable):
+        except (ApiAdmissionDeferred, ApiKeepaliveUnavailable, ApiChatReadUnavailable):
             failures = min(5, getattr(self, '_chat_api_deferred_count', 0) + 1)
             delay = min(15.0, float(2 ** (failures - 1)))
             self._chat_api_deferred_count = failures
@@ -10722,6 +10730,102 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         log.info("joined: %s (%.0fpp, #100 = %.0f)", name, pp, threshold)
         self.mark_auto_retune_pending()
 
+
+    def _profile_fields(self, user_id, profile):
+        """Unknown statistics stay unknown; only a qualified reply enriches PP."""
+        if type(profile) is not dict or not profile:
+            return None
+        if profile.get("id") is not None and profile.get("id") != user_id:
+            return None
+        name = profile.get("username")
+        if type(name) is not str or not name:
+            return None
+        stats = profile.get("statistics")
+        pp = stats.get("pp") if type(stats) is dict else None
+        if pp is not None and (type(pp) not in (int, float) or not math.isfinite(pp) or pp < 0):
+            return None
+        return {"name": name, "country_code": profile.get("country_code"), "pp": pp}
+
+
+    def _defer_player_profile(self, user_id, *, profile=None):
+        """Record the join once, then queue enrichment independently of READY."""
+        fields = self._profile_fields(user_id, profile)
+        self.players.setdefault(user_id, {"pp": None, "name": str(user_id), "status": "idle"})
+        if fields is not None:
+            self.players[user_id].update(fields)
+        self._record_lobby_join(user_id, self.players[user_id])
+        if fields is not None and fields["pp"] is not None:
+            self.mark_auto_retune_pending()
+        pending = getattr(self, "_pending_player_profiles", None)
+        if pending is None:
+            pending = self._pending_player_profiles = {}
+        if len(pending) >= 32:
+            log.warning("profile enrichment queue full; keeping unknown roster statistics")
+            return
+        now = time.monotonic()
+        pending[user_id] = {"room_id": self.room_id, "channel_id": self.channel_id,
+                            "expires_at": now + 300, "retry_at": now + 1,
+                            "attempts": 1, "profile": profile if fields is not None else None,
+                            "player": self.players[user_id]}
+
+
+    def _flush_player_profiles(self):
+        """At most one pending roster enrichment per tick; never sleep or rejoin."""
+        pending = getattr(self, "_pending_player_profiles", None)
+        if not pending:
+            return
+        now = time.monotonic()
+        for uid, work in list(pending.items()):
+            if (now >= work["expires_at"] or uid not in self.players
+                    or self.players[uid] is not work["player"]
+                    or (self.room_id, self.channel_id) != (work["room_id"], work["channel_id"])
+                    or uid in self.non_gameplay_user_ids() or self._is_project_banned(uid)):
+                pending.pop(uid, None)
+        for uid, work in list(pending.items()):
+            if now < work["retry_at"]:
+                continue
+            mode_kwargs = {"mode": "mania"} if self.cfg.get("ruleset_id", 0) == 3 else {}
+            fields = None
+            try:
+                profile = work["profile"]
+                if profile is None:
+                    profile = self.api.user(uid, **mode_kwargs)
+                fields = self._profile_fields(uid, profile)
+                if fields is not None:
+                    work["profile"] = profile
+                    raw = self.api.user_top_scores(uid, limit=100, **mode_kwargs)
+                    if type(raw) is list:
+                        top = []
+                        for score in raw:
+                            if type(score) is not dict:
+                                continue
+                            pp = score.get("pp")
+                            beatmap = score.get("beatmap")
+                            if type(pp) not in (int, float) or not math.isfinite(pp) or pp <= 0:
+                                continue
+                            bid = beatmap.get("id", 0) if type(beatmap) is dict else 0
+                            if type(bid) is not int or bid < 0:
+                                continue
+                            top.append((pp, bid))
+                        top.sort(reverse=True)
+                        fields.update(top=top, threshold=top[-1][0] if len(top) >= 100 else 0.0)
+                        self.players[uid].update(fields)  # retain current READY/playing/lobby metadata
+                        if fields["pp"] is not None:
+                            self.mark_auto_retune_pending()
+                        pending.pop(uid, None)
+                        return
+            except ApiAdmissionDeferred:
+                pass  # proven pre-dispatch refusal; generic/auth/uncertain errors propagate
+            if fields is not None:
+                self.players[uid].update(fields)
+                if fields["pp"] is not None:
+                    self.mark_auto_retune_pending()
+            pending.pop(uid, None)
+            work["attempts"] = min(work["attempts"] + 1, 5)
+            work["retry_at"] = now + min(15, 2 ** (work["attempts"] - 1))
+            pending[uid] = work  # rotate behind other due profiles, avoiding starvation
+            return
+
     def _profile_fields(self, user_id, profile):
         """Unknown statistics stay unknown; only a qualified reply enriches PP."""
         if type(profile) is not dict or not profile:
@@ -12005,6 +12109,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 self._save_departing_preference(uid, kicked=name == "UserKicked")
                 info = self.players.pop(uid, None)
                 getattr(self, "_pending_player_profiles", {}).pop(uid, None)
+                getattr(self, "_pending_player_profiles", {}).pop(uid, None)
                 self._on_difficulty_voter_left(uid)
                 player_name = str((info or {}).get("name") or uid)
                 action = "was kicked" if name == "UserKicked" else "left"
@@ -12527,6 +12632,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             self._drain_ai_results()
             self._drain_discord_control_commands()
             self._flush_room_chat()
+            self._flush_player_profiles()
             self._flush_player_profiles()
 
             # This is snapshot-driven, so the inexpensive call below only

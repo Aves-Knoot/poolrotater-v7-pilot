@@ -1,23 +1,12 @@
-# PoolRotater dev13 — playlist stall repair
+# PoolRotater dev14 — resilience repair
 
-Existing dev12 Xikeon `two`: follow **PLAYLIST_REPAIR_UPGRADE.md** and run the
-included `bash UPGRADE_XIKEON.sh dev12` in a clean stopped window. Download the
-attached `poolrotater-7.0.1.dev13-live-pilot.zip`, not the Source ZIP.
+Existing dev12/dev13 `two`: use RESILIENCE_UPGRADE.md. Download the attached
+`poolrotater-7.0.1.dev14-live-pilot.zip`, not Source ZIP. Preserve existing settings,
+OAuth, titles, ranges, catalogs, ratings and enrollment; no retuning or reinstall.
 
-Preserves all current settings, titles, ranges, OAuth, catalogs, ratings, sharing
-and enrollment. No reinstall, reauthorization or retuning. Keep healthy rooms
-running continuously after acceptance. Complete prepared catalogs remain unchanged.
-
-Fixes explicit Approved special-map playlist audit, pending server-ID binding,
-repeated inconclusive pre-start probes and late chat during requested shutdown.
-Includes short help and full feedback command wording in all supported languages.
-Unknown speed/ruleset variants still refuse startup. Existing chat/backpressure
-and display compatibility repairs remain. General worker fault isolation and
-optional .NET 8 PP runtime installation are separate from this repair.
-
-Fresh installs retain the owner-tuned presets introduced in dev12 and default to
-ONE Standard Auto room; existing operators retain their own saved settings.
-No credentials, research databases or private signing keys are bundled.
+Ports the owner v7.0.5 chat-timeout and scoped failed-worker containment fixes.
+No unfinished automatic updater is bundled or enabled. Known uncertainty and
+ownership safeguards remain. Keep healthy rooms running after acceptance.
 
 The following cumulative installation reference is retained for NEW setups only.
 Existing operators should use the upgrade instructions above instead.
@@ -110,7 +99,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 ad33e8eea1ca5dcd8367d6bce7658ba21e6a84432d271b2dbe979420f6a11ec8 --live-pilot
+  --bundle runtime.zip --sha256 182615d79647a68dfca9f75ed440b77081dee52682a7d1bc737e913fd36bbd96 --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.

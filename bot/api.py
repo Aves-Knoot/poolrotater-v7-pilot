@@ -34,6 +34,14 @@ class ApiKeepaliveUnavailable(RuntimeError):
     """An idempotent chat ACK was unavailable; retry only in maintenance later."""
 
 
+class ApiChatReadUnavailable(RuntimeError):
+    """Transient read failure; retain the chat cursor and retry maintenance later."""
+
+
+class ApiChatDeliveryUncertain(RuntimeError):
+    """The one chat message may have arrived. Never automatically resend it."""
+
+
 class RateLimiter:
     # Four-hour operations reports need a complete local request window. Keep
     # two extra hours so report scheduling jitter cannot truncate the sample.

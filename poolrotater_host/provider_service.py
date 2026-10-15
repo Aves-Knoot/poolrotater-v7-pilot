@@ -12,6 +12,8 @@ from .layout import atomic_json
 from .provider_contract import require_live_provider
 from .provider_rooms import ProviderRoomApi, ProviderRoomHub, _authority, provider_host_controller
 
+WORKER_FAILURE_CLEANUP_SECONDS = 30
+
 
 @contextmanager
 def _managed_service_controller(*args, **kwargs):
@@ -68,6 +70,7 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
     previous = {number: signal.signal(number, requested_stop)
                 for number in (signal.SIGTERM, signal.SIGINT)}
     last_usage_log = 0.
+    failing_workers = {}
     try:
         with _managed_service_controller(root, release, authentication=authentication,
                                       api=api, hub=hub) as supervisor:
@@ -99,10 +102,11 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                     phase = phases.get(alias, {}).get('phase')
                     if phase == 'recovery_required':
                         raise ConfigError('provider_worker_ownership_recovery_required')
-                    # Tick can intentionally park a worker, or a rollout can
-                    # dispose the old generation while activating its successor.
-                    if phase == 'parked' or (alias == supervisor.rollout_alias
-                            and worker.broker.generation not in supervisor.handles):
+                    # The native rolling engine owns the handoff alias until
+                    # activation or safe rollback has settled. Let it handle
+                    # candidate failure and planned retirement; siblings and
+                    # uncertain ownership still remain terminal.
+                    if phase == 'parked' or alias == supervisor.rollout_alias:
                         continue
                     # Native status comes from the gameplay loop. That loop
                     # can wait behind another room's authenticated API/referee
@@ -110,12 +114,34 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                     # uncertain ownership. Keep Worker.fresh() strict for
                     # publication, public observations and empty-room actions;
                     # use the native process/connection signals for teardown.
+                    failure_code = None
                     if worker.failure:
-                        raise ConfigError('provider_worker_failed')
-                    if worker.process.poll() is not None:
-                        raise ConfigError('provider_worker_exited')
-                    if worker.peer.closed.is_set():
-                        raise ConfigError('provider_worker_connection_closed')
+                        failure_code = 'provider_worker_failed'
+                    elif worker.process.poll() is not None:
+                        failure_code = 'provider_worker_exited'
+                    elif worker.peer.closed.is_set():
+                        failure_code = 'provider_worker_connection_closed'
+                    if failure_code:
+                        # Retirement may start AFTER the fast check above.
+                        # Recheck delegation after observing the signal; also
+                        # ignore a stale reference once the native engine has
+                        # replaced it with its healthy successor.
+                        if supervisor.workers.get(alias) is not worker or (
+                                alias == supervisor.rollout_alias):
+                            continue
+                        # Failure is emitted before the worker's finally block
+                        # closes its own room. Let that bounded cleanup settle;
+                        # the native tick parks a positively closed/reaped alias.
+                        # Never use a stale status snapshot to claim closure.
+                        key=(alias,id(worker))
+                        seen=failing_workers.setdefault(key,time.monotonic())
+                        if (worker.failure
+                                and time.monotonic()-seen < WORKER_FAILURE_CLEANUP_SECONDS):
+                            if not getattr(worker,'_failure_containment_logged',False):
+                                logging.getLogger(__name__).warning('room worker failed; waiting for alias-scoped closure before escalation: %s',alias)
+                                worker._failure_containment_logged=True
+                            continue
+                        raise ConfigError(failure_code)
             if stop.is_set() or supervisor.stopping.is_set():
                 supervisor.request_shutdown()
         if any(worker.process.poll() is None for worker in workers):

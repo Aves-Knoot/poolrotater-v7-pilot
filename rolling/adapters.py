@@ -98,6 +98,12 @@ class Api:
                 if name == 'chat_ack' and exc.kind == 'ProviderKeepaliveUnavailable':
                     from bot.api import ApiKeepaliveUnavailable
                     raise ApiKeepaliveUnavailable(str(exc)) from exc
+                if name == 'chat_messages' and exc.kind == 'ProviderChatReadUnavailable':
+                    from bot.api import ApiChatReadUnavailable
+                    raise ApiChatReadUnavailable(str(exc)) from exc
+                if name == 'chat_send' and exc.kind == 'ProviderChatDeliveryUncertain':
+                    from bot.api import ApiChatDeliveryUncertain
+                    raise ApiChatDeliveryUncertain(str(exc)) from exc
                 raise
         return invoke
 

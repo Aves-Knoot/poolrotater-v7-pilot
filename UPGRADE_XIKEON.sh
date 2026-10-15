@@ -3,13 +3,14 @@
 set -Eeuo pipefail
 umask 077
 kit="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-if [[ "${1:-}" != dev12 ]]; then
-    printf 'Usage: bash UPGRADE_XIKEON.sh dev12\n' >&2; exit 2
-fi
-old_sha=53a1e98f0057a965cdbbb4d1afa4d1434296f91a7492e0d704fdf409717fae64
-new_sha=ad33e8eea1ca5dcd8367d6bce7658ba21e6a84432d271b2dbe979420f6a11ec8
+case "${1:-}" in
+    dev12) old_sha=53a1e98f0057a965cdbbb4d1afa4d1434296f91a7492e0d704fdf409717fae64 ;;
+    dev13) old_sha=ad33e8eea1ca5dcd8367d6bce7658ba21e6a84432d271b2dbe979420f6a11ec8 ;;
+    *) printf 'Usage: bash UPGRADE_XIKEON.sh dev12|dev13\n' >&2; exit 2 ;;
+esac
+new_sha=182615d79647a68dfca9f75ed440b77081dee52682a7d1bc737e913fd36bbd96
 pilot_release="/opt/poolrotater-v7-pilot/two/releases/v7.0.1-${old_sha:0:16}"
-reports="$(mktemp -d "$HOME/poolrotater-dev13-reports.XXXXXX")"
+reports="$(mktemp -d "$HOME/poolrotater-dev14-reports.XXXXXX")"
 trap 'printf "Stopped at line %s. Retain state and inspect reports: %s. Do not retry startup blindly.\n" "$LINENO" "$reports" >&2' ERR
 (cd "$kit" && sha256sum -c SHA256SUMS.txt)
 sudo -v
@@ -66,4 +67,4 @@ capture start pr start  # Once only. No stop/restart retry loop.
 for action in status support network-support ratings-support; do
     capture "running-$action" pr "$action"
 done
-printf 'Dev13 startup completed. Obtain both room links and leave healthy rooms running.\nReports: %s\nProtected entry: %s\n' "$reports" "$pilot_release/poolrotater_host/pilot_admin_entry.py"
+printf 'Dev14 startup completed. Obtain both room links and leave healthy rooms running.\nReports: %s\nProtected entry: %s\n' "$reports" "$pilot_release/poolrotater_host/pilot_admin_entry.py"
