@@ -182,7 +182,7 @@ alone, commands, single greetings or quoted titles. Ambiguity means no offer.
 TEXT = {
     "offer": ("需要中文提示？输入 {p}lang zh。", "한국어 안내는 {p}lang ko로 설정하세요.", "¿Prefieres español? {p}lang es.", "Нужен русский? {p}lang ru."),
     "chosen": ("已启用中文；英文始终保留。{p}lang en 返回纯英文。", "한국어 안내 설정 완료. 영어도 유지됩니다. {p}lang en: 영어만.", "Español activado; inglés siempre visible. {p}lang en: solo inglés.", "Русский включён; английский остаётся. {p}lang en: только английский."),
-    "help_short": ("{p}help 命令名：查看说明；{p}variety：恢复多种风格。", "{p}help 명령어: 사용법. {p}variety: 다양한 패턴으로 복귀.", "{p}help comando: ayuda. {p}variety: mezcla de estilos.", "{p}help команда: справка. {p}variety: разные стили."),
+    "help_short": ("完整命令见上方链接；{p}help 命令名：查看说明。", "전체 명령어는 위 링크. {p}help 명령어: 사용법.", "Todos los comandos en el enlace; {p}help comando: ayuda.", "Все команды по ссылке; {p}help команда: справка."),
     "not_running": ("当前没有正在进行的谱面。", "진행 중인 맵이 없습니다.", "No hay un mapa en curso.", "Сейчас карта не играется."),
     "time_unknown": ("剩余时间未知；下一局轮到你。", "남은 시간은 알 수 없습니다. 다음 판에 참가합니다.", "Tiempo restante no disponible; entras en la próxima.", "Остаток времени неизвестен; играешь со следующей карты."),
     "finishing": ("即将结束；下一局轮到你。", "곧 끝납니다. 다음 판에 참가합니다.", "Está terminando; entras en la próxima.", "Карта заканчивается; играешь со следующей."),
@@ -197,7 +197,7 @@ TEXT = {
 _INDEX = {"zh": 0, "ko": 1, "es": 2, "ru": 3}
 
 HELP = {
-    "help": ("显示命令列表或单条说明。", "명령어 목록 또는 개별 사용법을 표시합니다.", "Lista de comandos o ayuda de uno.", "Список команд или справка по одной."),
+    "help": ("显示常用命令和完整列表链接，或单条说明。", "자주 쓰는 명령어와 전체 목록 링크 또는 개별 도움말.", "Comandos comunes y enlace a la lista completa, o ayuda de uno.", "Частые команды и ссылка на полный список, либо справка по одной."),
     "help2": ("显示完整命令列表。", "전체 명령어 목록을 표시합니다.", "Muestra la lista completa.", "Полный список команд."),
     "time": ("查看当前谱面的大致剩余时间。", "진행 중인 맵의 대략적인 남은 시간.", "Tiempo aproximado restante del mapa actual.", "Примерное время до конца текущей карты."),
     "variety": ("恢复混合选图；Mania 恢复多种风格。", "다양한 맵/패턴 선택으로 돌아갑니다.", "Vuelve a una mezcla de mapas y estilos.", "Возвращает смешанный подбор карт и стилей."),

@@ -100,7 +100,7 @@ _REPLAY_COMMANDS = frozenset({"redo", "replay", "repeat", "again"})
 # Keep one-line command help short enough for osu! chat. Keys are canonical
 # names; the lookup below accepts the same aliases as the command handlers.
 _COMMAND_HELP = {
-    "help": ("help [command]", "Show the short command list or explain one command."),
+    "help": ("help [command]", "Show common commands and the full reference link, or explain one command."),
     "help2": ("help2", "Show the full command list for your permission level."),
     "queue": ("queue", "Show the current map and upcoming picks."),
     "pool": ("pool", "Show the active map pool, range and filters."),
@@ -1232,7 +1232,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return False
         self._sending_feedback_hint = True
         try:
-            self.say(f"Last map: {self.prefix}g / {self.prefix}b?", automatic=True)
+            self.say(
+                f"Rate the last map: {self.prefix}good / {self.prefix}bad / {self.prefix}ok (neutral).",
+                automatic=True,
+            )
         finally:
             self._sending_feedback_hint = False
         self._last_rating_prompt_at = time.time()
@@ -3646,11 +3649,17 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
     def _deliver_room_chat(self, text, *, automatic, lobby_only, discord_reply_channel):
         """One delivery; dispatched uncertain sends keep their existing fence."""
+        def stopping():
+            return getattr(self, '_shutdown_started', False) or not getattr(self, 'running', True)
+        if stopping():
+            return
         coordinator = getattr(self, "lazer_coordinator", None)
 
         gap = time.time() - self._last_sent
         if gap < 1.5:
             time.sleep(1.5 - gap)
+        if stopping():
+            return
 
         def prepare_chat_send(*, force: bool = False) -> bool:
             if coordinator is None:
@@ -3664,11 +3673,20 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         # Run room ownership after the API limiter wait and immediately before
         # HTTP. A long API queue can otherwise outlast the dwell lease and let
         # the other room move lazer before this request is sent.
-        sent = self.api.chat_send(
-            self.channel_id,
-            text,
-            before_request=prepare_chat_send,
-        )
+        try:
+            sent = self.api.chat_send(
+                self.channel_id,
+                text,
+                before_request=prepare_chat_send,
+            )
+        except Exception:
+            if not stopping():
+                raise
+            # A clean stop can retire shared API authority while a late help
+            # reply waits in RPC. Ownership/uncertainty remain the parent's
+            # responsibility; don't label that cancelled reply a worker crash.
+            log.debug('room chat delivery interrupted during requested shutdown', exc_info=True)
+            return
 
         # If the coordinator database was stale because lazer was moved by
         # hand, force a leave/rejoin sequence before the one recovery attempt.
@@ -4338,15 +4356,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 else:
                     self.say(f"Unknown command. Type {p}help or {p}help2 for available commands.")
             else:
-                source = f"{p}style" if mania else (
-                    "Loved maps" if getattr(self.pool, "loved_mode", False)
-                    else f"{p}farm/{p}stream/{p}jump/{p}variety")
                 self.say(
-                    f"{p}queue · {p}time · {p}pp · {p}start (ready up!) · {p}s skip · "
-                    f"{p}wait (add 10s/cancel countdown) · "
-                    f"{p}replay last map · "
-                    f"{p}harder/{p}easier · {p}g/{p}b/{p}ok rate · "
-                    f"{source} · {p}lang · {p}discord · {p}help <command> · {p}help2 more"
+                    f"{p}queue · {p}skip · {p}start · {p}harder/{p}easier · "
+                    f"{p}good/{p}bad rate last map | All commands: https://poolrotater.com/commands"
                 )
 
         elif cmd == "help2":
@@ -7333,6 +7345,20 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         return any(h.get('pending_audit') and item_id in active
                    for item_id, h in getattr(self, '_standard_playlist_edits', {}).items())
 
+    def _resolve_standard_playlist_map(self, beatmap_id, mods, expected=None):
+        resolved = self.pool.get_variant_map(beatmap_id, mods)
+        if resolved is not None:
+            return resolved
+        # The explicit novelty request owns its built-in Approved NM chart.
+        # General Ranked catalog lookup intentionally excludes Approved rows.
+        # Do not extend that exception to unrequested server items, DT/NC/HT,
+        # arbitrary maps or unrecognized fixed mods.
+        if (expected is _FREEDOM_DIVE and beatmap_id == _FREEDOM_DIVE.beatmap_id
+                and set(mods) <= {'NF', 'HD', 'HR'}):
+            return expected
+        return None
+
+
     def _remember_playlist_item(self, item: dict, *, authoritative=False):
         """Normalize one server item and bind its real id to our PoolMap."""
         if not isinstance(item, dict):
@@ -7385,7 +7411,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             if expected is None and self.current_item_id == item_id:
                 expected = self.current_map
             if expected is None:
-                expected = next((m for qid, m in self.queued if qid == item_id), None)
+                expected = next((m for qid, m in self.queued if qid == item_id
+                    or qid is None and m.beatmap_id == beatmap_id), None)
             raw_mods = item.get('required_mods', previous.get('required_mods'))
             mods = None if not isinstance(raw_mods, (list, tuple)) else [
                 str(mod.get('acronym', '') if isinstance(mod, dict) else mod).upper()
@@ -7393,7 +7420,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             normalized['required_mods'] = mods or []
             invalid = (beatmap_id is None or item.get('ruleset_id', 0) != 0 or mods is None
                        or ('required_mods' not in item and previous.get('standard_invalid', False)))
-            resolved = None if invalid else self.pool.get_variant_map(beatmap_id, mods)
+            resolved = None if invalid else self._resolve_standard_playlist_map(beatmap_id, mods, expected)
             invalid = invalid or resolved is None
             if resolved is not None:
                 dt = getattr(resolved, 'is_dt', False)
@@ -7433,6 +7460,13 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             else:
                 self._playlist_maps[item_id] = resolved
                 self.queued = [(qid, resolved if qid == item_id else m) for qid, m in self.queued]
+                # An AddPlaylistItem response may omit its id. Bind the first
+                # matching pending request only after this real event/snapshot
+                # has passed all variant checks; never guess a server id.
+                for index, (qid, pending) in enumerate(self.queued):
+                    if qid is None and pending is expected:
+                        self.queued[index] = (item_id, resolved)
+                        break
             self._playlist_dirty = True
             return normalized
         if self.cfg.get("ruleset_id", 0) == 3:
@@ -7658,6 +7692,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return self.reconcile_playlist(reason, fetch_remote=True,
                                            ensure_depth=ensure_depth, trim_extras=trim_extras)
         if fetch_remote:
+            # Ready players can request pre-start reconciliation every loop.
+            # Do not let inconclusive probes turn that into an API-budget storm.
+            # A backoff is a hold, never cached permission to mutate or start.
+            if (getattr(self, '_playlist_probe_retry_room', None) == self.room_id
+                    and time.monotonic() < getattr(self, '_playlist_probe_retry_at', 0.0)):
+                return False
             room = None
             probe = getattr(self.api, "room_probe", None)
             if callable(probe):
@@ -7682,11 +7722,18 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     return False
                 elif status == "ok":
                     self._room_missing_confirmations = 0
+                    self._playlist_probe_retry_at = 0.0
+                    self._playlist_probe_failures = 0
                 else:
                     # Network/5xx/rate-limit uncertainty must never be treated
                     # as proof the room disappeared. For a pre-start audit, be
                     # conservative and wait for the next successful snapshot.
                     log.warning("room liveness unknown during %s; postponing mutation", reason)
+                    failures = (getattr(self, '_playlist_probe_failures', 0)
+                        if getattr(self, '_playlist_probe_retry_room', None) == self.room_id else 0) + 1
+                    self._playlist_probe_retry_room = self.room_id
+                    self._playlist_probe_failures = min(failures, 4)
+                    self._playlist_probe_retry_at = time.monotonic() + min(15.0, 2.0 ** min(failures, 4))
                     self._last_playlist_audit = time.time()
                     return False
             else:

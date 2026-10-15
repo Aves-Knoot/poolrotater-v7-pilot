@@ -1,117 +1,71 @@
-# Dev12 — owner-tuned defaults and continuous two-room pilot
+# Dev13 playlist and pacing repair — existing dev12 `two`
 
-Download `poolrotater-7.0.1.dev12-live-pilot.zip` from the private GitHub release,
-not GitHub's Source ZIP. Verify the archive hash in the release notes before
-extracting, then run `sha256sum -c SHA256SUMS.txt` inside the extracted kit.
-This replaces the earlier dev11 upgrade instructions for Xikeon's `two`.
+Keep the same installation, OAuth, catalogs, titles, ranges, settings, hub enrollment,
+sharing and local ratings. Do not reinstall, sign in again, repeat ownership-clear,
+create votes again, or apply owner defaults again. Keep `first` stopped.
 
-Fresh installs now use the owner's saved gameplay defaults for each preset.
-Explicit host ranges and saved per-room overrides retain precedence. Fresh
-installation still defaults to ONE Standard Auto room; additional presets must
-be explicitly chosen. Existing `two` is already Standard Auto + Mania 4K; retain
-that topology. No reinstall, sign-in, invitation, grant, ratings migration or
-catalog re-download is needed. Keep the older `first` instance stopped.
+Download the attached `poolrotater-7.0.1.dev13-live-pilot.zip` from the private
+GitHub release, not GitHub's Source ZIP. Extract into a NEW directory. This repair
+uses the v7.0.1 native runtime family; dev13 is the package version.
 
-## Xikeon's existing installation
+## 1. Clean stopped window
 
-Your account is Xikeon (36451), instance `two`, public operator label Xikeon,
-with existing enrollment and ratings sharing. Keep your chosen PoolRotator
-Community titles. The maintainer explicitly requests replacing gameplay tuning
-with their saved defaults; this is the one intentional configuration change.
+This script is for Xikeon's already stopped dev12 `two` (both rooms local_clean).
+If healthy rooms are running, leave players undisturbed and arrange a clean,
+empty-room stop through the existing protected entry first. Do not force a stop
+or discard ownership state. Both bot and network units must be stopped and disabled.
+The script checks this and refuses otherwise. A stale failed unit with MainPID 0
+is accepted; no manual reset-failed is required.
 
-- Standard Auto: empty/default range **4.00–5.00★**, bias **+0.70★**, half-width
-  **0.35★**, pool **1,200**, minimum passes **10,000**, maximum map age **8 years**,
-  stream share **50%**. Difficulty retunes with players.
-- Mania 4K: fixed default range **3.00–4.00★**, pool **400**, minimum passes
-  **1,000**, with the owner's style, farm and performance evidence tuning.
-- Both: **15-second countdown**, freestyle, one queued map ahead, **45-second
-  empty-room reset**, and the remaining saved gameplay/timing/voting defaults.
+## 2. Upgrade and start once
 
-Do not interrupt occupied rooms for this release. If `two` is currently running,
-arrange an empty/quiet window; use its protected `stop` once, verify actual
-upstream room closure, then `network-stop`. Both units must be disabled/stopped,
-with no surviving service processes and clean ownership. If ownership is
-uncertain, retain state and follow REPAIR_UPGRADE.md for the actual instance/IDs
-before proceeding. A filtered room list, elapsed time or 404 is not closure proof.
+From the extracted kit as the normal operator:
 
-From the verified extracted kit:
-
-```bash
-# Existing dev10 runtime 199e4e228e833d6c:
-bash UPGRADE_XIKEON.sh dev10
-
-# ONLY if already upgraded to dev11 runtime 54b662a08bbfda59, use instead:
-# bash UPGRADE_XIKEON.sh dev11
+```sh
+sha256sum -c SHA256SUMS.txt
+bash UPGRADE_XIKEON.sh dev12
 ```
 
-Local `start_allowed:false` with `startup_admission_not_evaluated_by_local_status`
-is expected: startup performs fresh account/client/scope/room checks. A real
-`recovery_required` state must be resolved before starting.
+The script verifies the kit, collects private before reports, checks both local_clean
+rooms, upgrades only from the exact dev12 runtime, checks saved room settings are
+identical, and starts the network agent and bot once. It never retunes the instance.
+The installer preserves all existing operator state. No collectors or analysis run
+locally; the same complete prepared catalogs remain in use.
 
-Choose one command matching the actual current registered runtime. Do not run
-both. The script verifies checksums and stopped admission, captures private
-before reports, upgrades the SAME installation, verifies upgrade preservation,
-then applies the reviewed tuning and checks titles/authorization/catalogs/
-enrollment/clean ownership before starting the network agent and bot ONCE.
-Healthy rooms remain running. It stops on errors without a restart loop.
-The new runtime is `53a1e98f0057a965cdbbb4d1afa4d1434296f91a7492e0d704fdf409717fae64` and its protected entry is:
+New runtime SHA256: `ad33e8eea1ca5dcd8367d6bce7658ba21e6a84432d271b2dbe979420f6a11ec8`
 
-```text
-/opt/poolrotater-v7-pilot/two/releases/v7.0.1-53a1e98f0057a965/poolrotater_host/pilot_admin_entry.py
-```
+New protected entry:
+`/opt/poolrotater-v7-pilot/two/releases/v7.0.1-ad33e8eea1ca5dcd/poolrotater_host/pilot_admin_entry.py`
 
-If already on dev12, do not rerun the upgrade script. Report the current status
-and use the documented protected commands for that registered release. Other
-origins require maintainer review rather than substituting a guessed old hash.
+If any step fails, retain the instance and report folder, send the redacted error,
+and stop there. Do not rerun startup blindly. Reports contain account IDs and private
+hashes: redact them before sharing. Never send credentials or token/state databases.
 
-The settings helper requires explicit instance/account binding, verifies installed
-code and registration, holds stopped ownership/network-admin guards, and backs
-up only the previous host/gameplay configuration in a private directory under
-`config/tuning-backup-<UUID>/`. It never edits OAuth, catalogs, enrollment, ratings,
-journals or runtime source. Host and gameplay files are separately atomic writes,
-not one transaction; on any failure keep stopped and inspect state/backups before
-starting. Do not share those private backups.
+## 3. Useful real-use acceptance
 
-## First checks and continuous running
+Send both room links and start time, redacted support / network-support /
+ratings-support, and whether existing titles and ranges were preserved. Let healthy
+rooms run continuously. Test normal joins, READY/unready/AFK, countdown, map progression,
+`.help`, `.easier`/`.harder`, `.skip`, `.start`, `.good`/`.bad`/`.ok` when convenient.
+For the specific repair, in Standard request `.freedomdive`, skip to it while idle,
+and confirm it can start and finish while 4K continues normally. Do not abort an
+occupied match just for this check. This hidden command remains unadvertised publicly.
+Its existing shared cooldown is preserved. If the earlier test still has it cooling
+down, report the remaining time and test later; do not clear or reset the cooldown.
 
-Send both room links and redacted running support/network-support/ratings-support
-JSON. Confirm titles, ranges, mode/keys and default tuning. Play 3–5 maps per room
-when possible; try `.help`, queue, `.g`, `.b`, skip, Standard easier/harder,
-countdowns, READY/unready/AFK with at least two players, and mid-match joins.
-Never mark untested checks as passed. The hosting account should not join its own
-rooms as a player; use other players for gameplay feedback.
+The repair recognizes only the explicitly queued built-in Approved normal-speed
+chart, binds pending playlist IDs after validation, and backs off inconclusive
+liveness probes. Unknown or mismatched speed/ruleset variants remain refused. A
+late chat response during explicit shutdown no longer marks a worker crash.
+General worker fault isolation is still future work; this is not a claim that all
+provider failures are recoverable.
 
-Leave healthy rooms and the network agent running continuously. The first
-60–90 minutes are focused checks, not a shutdown deadline. After the first hour,
-send uptime, completed matches per room, any confusing responses and errors.
-Thereafter a brief daily report is enough until a failure or next upgrade window.
-Do not repeatedly poll expensive diagnostics or provoke outages in occupied rooms.
-No automatic restart/enable policy is changed by this request.
+If anything stalls, capture time, command, both room links, redacted support and
+relevant journal lines including failure code/HTTP status. Retain state; check
+ownership before retrying. No need for constant manual reports when healthy: a
+summary after several hours plus any incident is enough. Pending ratings remain
+local until upload acknowledgment; do not recreate them.
 
-For a NEW `.g`/`.b` vote, note map ID, direction and timestamp, then inspect ratings
-support after the normal approximately 30–60-minute upload window. Report locally
-captured, pending, accepted and rejection counts; acceptance must be confirmed by
-the hub, not inferred from local capture. The two historical votes are already
-accepted: do not recreate them. Do not reenroll or request another grant.
-
-On a failure, retain all instance state and send safe failure code/HTTP status,
-times/timezone, redacted support/network/ratings and a short relevant traceback.
-If service has stopped, get ownership-review with the network agent also stopped;
-resolve actual room ownership before restarting. Do not blindly retry startup,
-delete journals/tokens, reinstall or recreate the instance. Clean-stop acceptance
-can be checked at the next planned shutdown; it is not a reason to stop healthy
-rooms now. Send no credentials, tokens, OAuth URLs/codes, invitations, private
-pacing hashes, raw state, backups or unredacted player chat.
-
-## Display and catalogs
-
-The same full prepared Standard+DT, 4K+farm and 7K+farm catalogs are retained or
-downloaded from the owner's VPS; research/player-score DBs and collection/analysis
-stay on the owner's machine. Reduced file size does not mean sampled catalogs.
-
-Dev11's chat ACK, queued chat-send, profile and score deferral repairs remain.
-The compatible website is deployed. New v2 settings/progress observations still
-require the maintainer's separate central-hub activation; old-hub fallback is
-expected and not an operator failure. Do not install the hub on this container.
-Map art/duration can resolve centrally without v2 timing. Progress, when present,
-is Estimated and may hide for unknown timing or freestyle rate changes.
+Short `.help` and clearer `.good` / `.bad` feedback prompts are included. Optional
+PP projection still needs the separately installed .NET 8 runtime; its absence does
+not explain this playlist jam and .NET is not bundled in this repair.

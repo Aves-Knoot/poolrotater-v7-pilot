@@ -1,26 +1,23 @@
-# PoolRotater dev12 — owner-tuned defaults
+# PoolRotater dev13 — playlist stall repair
 
-Existing Xikeon `two`: follow **TUNED_DEFAULTS_UPGRADE.md**. Download the attached
-`poolrotater-7.0.1.dev12-live-pilot.zip`, not the Source ZIP. This single kit includes
-`UPGRADE_XIKEON.sh`; no separate settings attachment is needed. It preserves your
-installation, OAuth, catalogs, chosen titles, enrollment and ratings, explicitly
-applies the owner-requested tuning, and starts each service once after checks.
-Keep healthy rooms running continuously after acceptance. Do not interrupt players
-merely to upgrade. No production service is changed by downloading this kit.
+Existing dev12 Xikeon `two`: follow **PLAYLIST_REPAIR_UPGRADE.md** and run the
+included `bash UPGRADE_XIKEON.sh dev12` in a clean stopped window. Download the
+attached `poolrotater-7.0.1.dev13-live-pilot.zip`, not the Source ZIP.
 
-Fresh installations default to ONE Standard Auto room with the owner's tuned
-preset. Explicitly selected additional presets also use their corresponding saved
-owner defaults. Standard Auto: 4–5 stars, bias +0.70, half-width 0.35, pool 1,200,
-minimum 10,000 passes. Standard Fixed: 3.5–4.5 stars. Mania 4K/7K: 3–4 stars,
-pool 400, minimum 1,000 passes. Countdown is 15 seconds; freestyle is enabled.
-Explicit ranges and saved gameplay overrides retain precedence. Full reviewed
-public gameplay defaults are in `owner-defaults.json`; no credentials or owner
-integration configuration is included. Existing instances are not silently retuned
-by the plain installer; Xikeon's script performs the explicitly requested change.
+Preserves all current settings, titles, ranges, OAuth, catalogs, ratings, sharing
+and enrollment. No reinstall, reauthorization or retuning. Keep healthy rooms
+running continuously after acceptance. Complete prepared catalogs remain unchanged.
 
-The dev11 chat/profile/score deferral repairs and v1/v2 display compatibility remain.
-The central v2 hub activation is still a separate maintainer step. Full prepared
-catalogs come from the owner's VPS; collection/research analysis stays central.
+Fixes explicit Approved special-map playlist audit, pending server-ID binding,
+repeated inconclusive pre-start probes and late chat during requested shutdown.
+Includes short help and full feedback command wording in all supported languages.
+Unknown speed/ruleset variants still refuse startup. Existing chat/backpressure
+and display compatibility repairs remain. General worker fault isolation and
+optional .NET 8 PP runtime installation are separate from this repair.
+
+Fresh installs retain the owner-tuned presets introduced in dev12 and default to
+ONE Standard Auto room; existing operators retain their own saved settings.
+No credentials, research databases or private signing keys are bundled.
 
 The following cumulative installation reference is retained for NEW setups only.
 Existing operators should use the upgrade instructions above instead.
@@ -113,7 +110,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 53a1e98f0057a965cdbbb4d1afa4d1434296f91a7492e0d704fdf409717fae64 --live-pilot
+  --bundle runtime.zip --sha256 ad33e8eea1ca5dcd8367d6bce7658ba21e6a84432d271b2dbe979420f6a11ec8 --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.

@@ -3,7 +3,7 @@ CODES = ('ja', 'pl', 'id', 'fr', 'de')
 TEXT = {
 'offer': ('日本語の案内は {p}lang ja で設定できます。', 'Wolisz polski? {p}lang pl.', 'Untuk bahasa Indonesia: {p}lang id.', 'Pour le français : {p}lang fr.', 'Deutsch gewünscht? {p}lang de.'),
 'chosen': ('日本語の案内を有効にしました。英語も表示します。{p}lang en で英語のみに戻せます。', 'Polski włączony; angielski zostaje. {p}lang en: tylko angielski.', 'Bahasa Indonesia aktif; Inggris tetap ada. {p}lang en: Inggris saja.', 'Français activé ; anglais conservé. {p}lang en : anglais seul.', 'Deutsch aktiviert; Englisch bleibt. {p}lang en: nur Englisch.'),
-'help_short': ('{p}help コマンド名で説明、{p}variety で多様な選択に戻せます。', '{p}help komenda: pomoc. {p}variety: różnorodny wybór.', '{p}help perintah: bantuan. {p}variety: pilihan beragam.', '{p}help commande : aide. {p}variety : sélection variée.', '{p}help Befehl: Hilfe. {p}variety: gemischte Auswahl.'),
+'help_short': ('全コマンドは上のリンクへ。{p}help コマンド名で説明。', 'Wszystkie komendy pod linkiem; {p}help komenda: pomoc.', 'Semua perintah ada di tautan; {p}help perintah: bantuan.', 'Toutes les commandes via le lien ; {p}help commande : aide.', 'Alle Befehle über den Link; {p}help Befehl: Hilfe.'),
 'not_running': ('現在プレイ中のマップはありません。', 'Żadna mapa nie jest teraz rozgrywana.', 'Tidak ada map yang sedang dimainkan.', 'Aucune map en cours.', 'Es läuft gerade keine Map.'),
 'time_unknown': ('残り時間は不明です。次のラウンドから参加できます。', 'Pozostały czas nieznany; zagrasz od następnej mapy.', 'Waktu tersisa tidak tersedia; kamu ikut ronde berikutnya.', 'Temps restant indisponible ; vous jouez à la prochaine.', 'Restzeit unbekannt; du spielst ab der nächsten Map mit.'),
 'finishing': ('もうすぐ終了します。次のラウンドから参加できます。', 'Runda się kończy; zagrasz od następnej mapy.', 'Ronde hampir selesai; kamu ikut ronde berikutnya.', 'La manche se termine ; vous jouez à la prochaine.', 'Die Runde endet gleich; du bist bei der nächsten dabei.'),
@@ -20,7 +20,7 @@ TEXT = {
 'join_player': ('スタイルを変更するにはプレイヤーとして参加してください。', 'Dołącz jako gracz, aby zmienić styl.', 'Masuk sebagai pemain untuk mengubah pola.', 'Rejoignez comme joueur pour changer le style.', 'Tritt als Spieler bei, um den Stil zu ändern.'),
 }
 HELP = {
-'help': ('コマンド一覧または個別の説明を表示します。', 'Lista komend lub pomoc dla jednej.', 'Daftar perintah atau bantuan satu perintah.', 'Liste des commandes ou aide ciblée.', 'Befehlsliste oder Hilfe zu einem Befehl.'),
+'help': ('よく使うコマンドと全コマンドへのリンク、または個別の説明。', 'Popularne komendy i link do pełnej listy lub pomoc dla jednej.', 'Perintah umum dan tautan daftar lengkap, atau bantuan satu perintah.', 'Commandes courantes et lien vers la liste complète, ou aide ciblée.', 'Häufige Befehle und Link zur vollständigen Liste oder gezielte Hilfe.'),
 'help2': ('詳しいコマンド一覧を表示します。', 'Pełna lista komend.', 'Tampilkan daftar perintah lengkap.', 'Affiche la liste complète des commandes.', 'Zeigt die vollständige Befehlsliste.'),
  'time': ('現在のマップの残り時間の目安を確認します。', 'Przybliżony czas do końca obecnej mapy.', 'Perkiraan waktu tersisa pada map saat ini.', 'Estime le temps restant de la map actuelle.', 'Geschätzte Restzeit der aktuellen Map.'),
 'variety': ('多様なマップ選択に戻します。Mania は多様なスタイルに戻します。', 'Wróć do różnorodnych map i stylów.', 'Kembali ke pilihan map dan pola yang beragam.', 'Revient à une sélection variée de maps et de styles.', 'Kehrt zur gemischten Map- und Stilauswahl zurück.'),

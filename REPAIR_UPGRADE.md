@@ -1,6 +1,6 @@
 # Ownership recovery reference
 
-For dev12 code upgrades, use TUNED_DEFAULTS_UPGRADE.md. The historical
+For dev13 code upgrades, use PLAYLIST_REPAIR_UPGRADE.md. The historical
 single-room code-upgrade recipe is intentionally omitted. The recovery examples
 below use `first` and old room IDs: use your ACTUAL instance, CURRENT registered
 protected entry and confirmed room IDs. Xikeon uses `two`; keep `first` stopped.
