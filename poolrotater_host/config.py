@@ -6,10 +6,10 @@ import re
 from pathlib import Path, PurePosixPath
 
 PRESETS = {
-    'standard-auto': {'ruleset': 0, 'keys': None, 'auto_difficulty': True, 'sr_min': 4.5, 'sr_max': 5.5},
-    'standard-fixed': {'ruleset': 0, 'keys': None, 'auto_difficulty': False, 'sr_min': 4.5, 'sr_max': 5.5},
-    'mania-4k': {'ruleset': 3, 'keys': 4, 'auto_difficulty': False, 'sr_min': 2.5, 'sr_max': 4.5},
-    'mania-7k': {'ruleset': 3, 'keys': 7, 'auto_difficulty': False, 'sr_min': 2.5, 'sr_max': 4.5},
+    'standard-auto': {'ruleset': 0, 'keys': None, 'auto_difficulty': True, 'sr_min': 4.0, 'sr_max': 5.0},
+    'standard-fixed': {'ruleset': 0, 'keys': None, 'auto_difficulty': False, 'sr_min': 3.5, 'sr_max': 4.5},
+    'mania-4k': {'ruleset': 3, 'keys': 4, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
+    'mania-7k': {'ruleset': 3, 'keys': 7, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
 }
 LANGUAGES = ('en', 'zh', 'ko', 'es', 'ru', 'ja', 'pl', 'id', 'fr', 'de')
 

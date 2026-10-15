@@ -98,6 +98,8 @@ def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=No
             'ai_context_file': '', 'map_pp_display_enabled': False,
             'allowed_mods': [], 'required_mods': [], 'freestyle': False,
         }
+        from .gameplay_defaults import settings_for as default_gameplay
+        settings.update(default_gameplay(room['preset']))
         if resolved is not None:
             settings.update(settings_for(room, resolved))
         if room['alias'] in gameplay:

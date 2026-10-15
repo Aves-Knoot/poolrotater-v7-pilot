@@ -1,76 +1,10 @@
-# Upgrade an existing pilot installation to the single-room release
+# Ownership recovery reference
 
-Use the replacement installer archive supplied by the maintainer. This procedure
-keeps the same instance, dedicated UID, account/client configuration, authorization,
-catalogs and ownership journal. It does not start a service, authorize again,
-close/adopt a room, or clear uncertain ownership during the upgrade.
-
-Keep the existing service stopped. Do not delete its journal or install another
-instance to bypass it. Only the dedicated pilot unit is addressed here.
-
-## 1. Upgrade protected code
-
-Verify the replacement archive against the maintainer's independently supplied
-archive digest, then extract it into a new directory. Set these variables in the
-same shell. The replacement runtime digest must match the maintainer's release
-record; the archive digest and runtime digest are different.
-
-```bash
-kit_directory=/absolute/path/to/extracted/replacement
-old_runtime_sha=e4db2fbe600ccc14ad323ba2d6ded80840718744613ff5de876a9765890219ab
-new_runtime_sha=54b662a08bbfda597ae8db59f21e78a50f1dbf3fe266e7a8f9ca7991c2cef78f
-sudo /usr/bin/python3.12 -I -S "$kit_directory/install.py" \
-  --instance first --bundle "$kit_directory/runtime.zip" \
-  --sha256 "$new_runtime_sha" --live-pilot \
-  --upgrade-from-sha256 "$old_runtime_sha"
-```
-
-The old digest above identifies the published dev6 runtime. This is the expected
-starting point for the existing tester whose recovery already committed and whose
-fresh ownership-review passed. For an installation still on dev5, use
-`d75450d2d2f06f131dcc9b84b0951be0c471d85c90f82ae440b1e0e113f06ec2`
-only after confirming that installed version. For an installation still on dev2, use
-`e4bc5bf8fe8d70e3b859cc92f5b126048f53e7b5bc73b31e2661a8d9cd664bad`
-only after confirming that installed version. For an
-installation still on published dev1, the independently recorded old runtime digest
-is `5637ca212115ee50bfa4f1b9d6d287dca9a3bf7785ec9b1c771459016a7cda8d`.
-Use that value only after confirming the installation is still dev1. If your
-installed digest differs from these known versions, stop and ask the maintainer. Do not guess.
-Use your existing instance name instead of `first` if applicable. No preset or
-account change belongs in this transaction.
-
-Success reports `upgraded` (or `already_upgraded` for an exact completed repeat),
-`service_started: false` and the new registered `release` path. Copy that path:
-
-```bash
-pilot_release=/exact/release/path/from/successful/upgrade
-sudo /usr/bin/python3.12 -I -S "$pilot_release/poolrotater_host/pilot_admin_entry.py" \
-  --instance first status
-```
-
-The repair upgrade may proceed with an uncertain room journal, but preserves that
-uncertainty. Startup remains blocked until a separate recovery succeeds. The
-dedicated unit retains graceful parent shutdown and gains a final cgroup kill
-fallback after its 90-second stop timeout. Killing a process does not prove that
-its upstream room closed.
-
-If upgrade execution is interrupted, keep the service stopped and inspect the
-durable transaction using the same pinned installer:
-
-```bash
-sudo /usr/bin/python3.12 -I -S "$kit_directory/install.py" \
-  --instance first --bundle "$kit_directory/runtime.zip" \
-  --sha256 "$new_runtime_sha" --live-pilot \
-  --upgrade-from-sha256 "$old_runtime_sha" --upgrade-status
-```
-
-With its exact `transition_id`, explicitly resume using `--upgrade-recover complete
---transaction-id ID`, or abort using `--upgrade-recover abort --transaction-id ID`.
-Aborting is allowed while the transition remains prepared; a committed decision
-cannot be reversed through resume. A prepared upgrade requires explicit recovery;
-an ordinary retry never guesses which code/bootstrap should become active. If no
-transaction exists, or files/bindings differ, stop and return the redacted error.
-Do not edit the protected records or bootstrap.
+For dev12 code upgrades, use TUNED_DEFAULTS_UPGRADE.md. The historical
+single-room code-upgrade recipe is intentionally omitted. The recovery examples
+below use `first` and old room IDs: use your ACTUAL instance, CURRENT registered
+protected entry and confirmed room IDs. Xikeon uses `two`; keep `first` stopped.
+Never repeat a committed ownership-clear or guess a room ID.
 
 ## 2. Check already committed recovery, or recover a failed creation
 

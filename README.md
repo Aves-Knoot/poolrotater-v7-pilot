@@ -1,3 +1,30 @@
+# PoolRotater dev12 — owner-tuned defaults
+
+Existing Xikeon `two`: follow **TUNED_DEFAULTS_UPGRADE.md**. Download the attached
+`poolrotater-7.0.1.dev12-live-pilot.zip`, not the Source ZIP. This single kit includes
+`UPGRADE_XIKEON.sh`; no separate settings attachment is needed. It preserves your
+installation, OAuth, catalogs, chosen titles, enrollment and ratings, explicitly
+applies the owner-requested tuning, and starts each service once after checks.
+Keep healthy rooms running continuously after acceptance. Do not interrupt players
+merely to upgrade. No production service is changed by downloading this kit.
+
+Fresh installations default to ONE Standard Auto room with the owner's tuned
+preset. Explicitly selected additional presets also use their corresponding saved
+owner defaults. Standard Auto: 4–5 stars, bias +0.70, half-width 0.35, pool 1,200,
+minimum 10,000 passes. Standard Fixed: 3.5–4.5 stars. Mania 4K/7K: 3–4 stars,
+pool 400, minimum 1,000 passes. Countdown is 15 seconds; freestyle is enabled.
+Explicit ranges and saved gameplay overrides retain precedence. Full reviewed
+public gameplay defaults are in `owner-defaults.json`; no credentials or owner
+integration configuration is included. Existing instances are not silently retuned
+by the plain installer; Xikeon's script performs the explicitly requested change.
+
+The dev11 chat/profile/score deferral repairs and v1/v2 display compatibility remain.
+The central v2 hub activation is still a separate maintainer step. Full prepared
+catalogs come from the owner's VPS; collection/research analysis stays central.
+
+The following cumulative installation reference is retained for NEW setups only.
+Existing operators should use the upgrade instructions above instead.
+
 # Community display pilot - state-preserving dev11 upgrade
 
 Existing operators: follow COMMUNITY_DISPLAY_UPGRADE.md first. Keep your current instance, OAuth, catalogs, titles, ratings and hub enrollment. The kit starts no services. New display timing requires the coordinated hub activation. The following setup reference is cumulative; do not reinstall an existing instance.
@@ -86,7 +113,7 @@ release archive, rather than GitHub's source-code ZIP. Extract into a fresh fold
 
 ```sh
 sudo /usr/bin/python3.12 -I -S install.py --instance first \
-  --bundle runtime.zip --sha256 54b662a08bbfda597ae8db59f21e78a50f1dbf3fe266e7a8f9ca7991c2cef78f --live-pilot
+  --bundle runtime.zip --sha256 53a1e98f0057a965cdbbb4d1afa4d1434296f91a7492e0d704fdf409717fae64 --live-pilot
 ```
 
 Set `pilot_release` to the exact protected release path printed by installation.
