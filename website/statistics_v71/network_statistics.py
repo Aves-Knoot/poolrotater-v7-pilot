@@ -385,7 +385,7 @@ def live_occupancy(owner, community, now):
     def fresh(value, limit):
         return (type(value) is dict and value.get('available') is True
             and all(type(value.get(k)) in (int,float) and math.isfinite(value[k]) for k in ('generated_at','expires_at'))
-            and now-30 <= value['generated_at'] <= now+30
+            and value['generated_at'] <= now+30
             and 0 < value['expires_at']-value['generated_at'] <= limit
             and now < value['expires_at'])
     # Native owner observations can last longer than public directory heartbeats.
