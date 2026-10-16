@@ -142,7 +142,11 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                         seen=failing_workers.setdefault(key,time.monotonic())
                         if time.monotonic()-seen < WORKER_FAILURE_CLEANUP_SECONDS:
                             if not getattr(worker,'_failure_containment_logged',False):
-                                logging.getLogger(__name__).warning('room worker terminating; waiting for alias-scoped closure before escalation: %s',alias)
+                                logging.getLogger(__name__).warning(
+                                    'room worker terminating; waiting for alias-scoped closure before escalation: '
+                                    '%s exit_code=%s rpc_closed=%s failure_reported=%s',
+                                    alias, getattr(worker.process, 'returncode', None),
+                                    worker.peer.closed.is_set(), bool(worker.failure))
                                 worker._failure_containment_logged=True
                             continue
                         raise ConfigError(failure_code)

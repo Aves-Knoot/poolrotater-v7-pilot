@@ -1,3 +1,7 @@
+# Current repair: v7.1.2
+
+Use the [v7.1.2 installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.2) and [operator guide](docs/V7_1_2_OPERATOR_GUIDE.md). This repairs score-fetch timeouts without resetting settings or history. Stopped or failed hosts require a local ownership check and supported upgrade/start; publishing does not remotely restart rooms. The separate empty-room refresh interruption is still under investigation.
+
 # PoolRotater v7.1.1
 
 Run your own lobbies using the retained native engine and complete centrally

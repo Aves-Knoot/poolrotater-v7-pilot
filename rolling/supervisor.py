@@ -182,7 +182,9 @@ class RollingSupervisor:
         if not cfg.get('_host_root') and not context.is_absolute() and (worker.release / context).is_file():
             cfg["ai_context_file"] = str(worker.release / context)
             cfg["_supervisor_overrides"]["ai_context_file"] = cfg["ai_context_file"]
-        # Updated workers retain their actual parent maintenance authority.
+        # Coordinated maintenance belongs to this controller, including when
+        # a child is running an independently updated worker release. Assign
+        # after reloading user settings so they cannot select another bridge.
         cfg['_rolling_controller_release'] = str(self.release)
         broker.cfg = copy.deepcopy(cfg)
         return cfg
@@ -649,6 +651,14 @@ class RollingSupervisor:
                         self.record(alias, phase="parked", pid=None)
                     except Exception as exc:
                         self.record(alias, phase="recovery_required", error=str(exc))
+                        # Report allowlisted diagnostics even if a killed worker
+                        # could not flush its own traceback. Never print RPC
+                        # exception text, room passwords or provider bodies.
+                        from poolrotater_host.service_diagnostics import failure_details
+                        detail = failure_details(exc)
+                        log.error('room worker closure requires recovery: alias=%s exit_code=%s failure_code=%s',
+                                  alias, getattr(worker.process, 'returncode', None),
+                                  detail['failure_code'])
             if (alias in self.targets and self.rollout_alias is None and worker.empty_since is not None
                     and now - worker.empty_since >= self.empty_seconds):
                 self.rollout_alias = alias

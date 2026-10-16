@@ -51,7 +51,8 @@ from .process_control import SharedProcessControl
 from .custom_greetings import JOIN_GREETING_COOLDOWN, configured_greeting
 from .community import DEFAULT_DISCORD_INVITE
 from .api import (ApiAdmissionDeferred, ApiKeepaliveUnavailable,
-                  ApiChatReadUnavailable, ApiChatDeliveryUncertain)
+                  ApiChatReadUnavailable, ApiChatDeliveryUncertain,
+                  ApiScoreReadUnavailable)
 
 log = logging.getLogger("bot")
 _UNIVERSAL_CONFIG_WRITE_LOCK = threading.Lock()
@@ -11430,16 +11431,27 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         # has to ingest submissions. Delay then retry rather than firing
         # immediately and getting an empty list.
         self._match_end_at = time.time()
+        self._score_api_retry_at = 0.0
+        self._score_api_failures = 0
 
     def try_score_report(self) -> bool:
         elapsed = time.time() - self._match_end_at
         if elapsed < self.cfg.get("score_delay_seconds", 4):
             return False
+        if time.monotonic() < getattr(self, '_score_api_retry_at', 0.0):
+            return False
 
         try:
             data = self.api.room_item_scores(self.room_id, self.scoring_item_id)
-        except ApiAdmissionDeferred:
-            return False  # keep the original score delay/25-second rotation timeout
+        except (ApiAdmissionDeferred, ApiScoreReadUnavailable):
+            failures = min(getattr(self, '_score_api_failures', 0) + 1, 4)
+            self._score_api_failures = failures
+            self._score_api_retry_at = time.monotonic() + min(2 ** (failures - 1), 5)
+            if failures == 1:
+                log.warning('match scores temporarily unavailable; retrying within the existing scoring window')
+            return False  # the original 25-second rotation timeout remains authoritative
+        self._score_api_retry_at = 0.0
+        self._score_api_failures = 0
         scores = (data or {}).get("scores") or []
         if not scores and elapsed < 20:
             return False       # keep retrying until the timeout

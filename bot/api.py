@@ -38,6 +38,10 @@ class ApiChatReadUnavailable(RuntimeError):
     """Transient read failure; retain the chat cursor and retry maintenance later."""
 
 
+class ApiScoreReadUnavailable(RuntimeError):
+    """Transient match-score read failure; retry within the scoring window."""
+
+
 class ApiChatDeliveryUncertain(RuntimeError):
     """The one chat message may have arrived. Never automatically resend it."""
 

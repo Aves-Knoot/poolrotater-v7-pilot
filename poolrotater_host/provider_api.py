@@ -25,6 +25,15 @@ class ProviderChatReadUnavailable(AuthError):
     """Known transient read failure; no cursor advancement or inline retry."""
 
 
+class ProviderScoreReadUnavailable(AuthError):
+    """A match-score GET timed out or received a temporary server refusal.
+
+    Authority failures, unsafe child cleanup and mutation uncertainty retain
+    their original errors. The worker schedules any retry; this does not replay
+    an exchange or reset the persistent provider gate.
+    """
+
+
 class ProviderChatDeliveryUncertain(AuthError):
     """One chat send may have arrived. Drop it; retain gate uncertainty/cooldown.
 
@@ -114,6 +123,8 @@ class ProviderApiClient:
         keepalive = method == 'POST' and full == '/api/v2/chat/ack'
         chat_send = method == 'POST' and bool(re.fullmatch(r'/api/v2/chat/channels/' + ID + r'/messages', full))
         chat_read = method == 'GET' and bool(re.fullmatch(r'/api/v2/chat/channels/' + ID + r'/messages', full))
+        score_read = method == 'GET' and bool(re.fullmatch(
+            r'/api/v2/rooms/' + ID + r'/playlist/' + ID + r'/scores', full))
         if before is not None:
             if not callable(before): raise AuthError('provider_api_arguments_refused')
             try: before()
@@ -130,6 +141,8 @@ class ProviderApiClient:
                     code, value = permit.api_request(method, full, bearer=token,
                                                     params=params, json_body=body)
                 except AuthError as error:
+                    if score_read and error.code in ('provider_deadline_exceeded', 'provider_transport_uncertain'):
+                        raise ProviderScoreReadUnavailable('provider_score_read_unavailable', http_status=error.http_status) from None
                     if permit.used and error.code in ('provider_deadline_exceeded', 'provider_transport_uncertain'):
                         if chat_send:
                             raise ProviderChatDeliveryUncertain('provider_chat_delivery_uncertain', http_status=error.http_status) from None
@@ -152,6 +165,8 @@ class ProviderApiClient:
                     raise AuthError('provider_api_mutation_uncertain')
                 if chat_read and 500 <= code < 600:
                     raise ProviderChatReadUnavailable('provider_chat_read_unavailable', http_status=code)
+                if score_read and (code == 429 or 500 <= code < 600):
+                    raise ProviderScoreReadUnavailable('provider_score_read_unavailable', http_status=code)
                 if code in (200, 201, 204):
                     sequence = bool(re.fullmatch(r'/api/v2/users/' + ID + r'/scores/best', full)
                                     or method == 'GET' and bool(re.fullmatch(r'/api/v2/chat/channels/' + ID + r'/messages', full)))
