@@ -193,3 +193,35 @@ network latency and gameplay, and are not a production latency percentile.
 
 This consolidation changed only documentation and evidence. It ran no new
 runtime tests and touched no production service or credentials.
+
+## Owner activation follow-up (October16)
+
+Production activation preflight found deployment-only assumptions absent from the
+standalone donor fixture: the active hub unit used the historical v706 prefix,
+loaded timers omit MainPID, and the analytics input needed an explicit matching
+snapshot environment path. The maintainer helper now validates the actual loaded
+unit/prefix, handles timer/missing-unit state correctly and wires that private
+input explicitly. Nine helper tests and three provisioning fixtures passed.
+The active hub exchange then preserved stopped private state byte-for-byte and
+passed protected readiness, HTTPS and privatepublisher checks. Operator choices
+and running owner rooms were unchanged.
+
+Actual full owner-history export exceeded the old192MiB/90second analytics
+budget. Replaced full-history deep copies with copy-on-write sets and bounded
+ranking selection, preserving complete owner input before top50. Thirty-eight
+website tests and one additional1200-player/large-native-set memory and exact
+ranking case passed. A private read-only production profile completed in8.21s
+(1CPU cap, profiling overhead included). The live publisher subsequently passed
+with6.33sCPU under a40%quota,384MiB RAM/128MiBswap cap and120s deadline; bot
+resource settings were not altered. Existing owner view, combined filtering and
+private snapshot reading were verified on the live statistics page.
+
+Twelve one-time owner-migration admission tests passed for the new root-owned
+maintenance job. It uses native broker/worker/privategate/ownership checks, then
+the unchanged qualified stopped installer; it does not weaken the signedfeed
+storage gate. Several timer ticks have confirmed waiting while users remain.
+Actual eventual owner upgrade is established only by the protected migration
+receipt and installed registration, not by these tests or queue creation.
+
+The operator runtime ZIP and existing GitHub release assets remain immutable.
+Only maintainer tools, website code and documentation changed in this follow-up.

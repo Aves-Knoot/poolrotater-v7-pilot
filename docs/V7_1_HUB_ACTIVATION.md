@@ -16,7 +16,11 @@ unless each operator explicitly enables it. The website exporter is deployed
 separately; this package provides its private, read-only network snapshot input.
 
 Only `poolrotater-v7-hub.service` and the new statistics publisher need a brief
-maintenance window. The owner bot, community bots, rooms, catalog service,
+maintenance window. The active unit on this server retains the historical code path
+`/opt/poolrotater-v7-hub-v706`; its name is not the runtime version. The verified
+inventory is authoritative. The helper now verifies both the unit file and loaded
+ExecStart before exchanging that exact code tree, so an unused older prefix
+cannot be mistaken for the active service. The owner bot, community bots, rooms, catalog service,
 release authority, website and analytics timer are not stopped. Hosts retain their
 pending uploads while the hub is unavailable. Do not run a hub authority-reset
 restore during this ordinary code upgrade: it would revoke existing enrollments.
@@ -68,8 +72,8 @@ The destination code directory must not exist. If it exists, inspect its invento
 and any private transition receipts before proceeding; never delete unknown code.
 
 ```bash
-sudo test ! -e /opt/poolrotater-v7-hub.v710-next
-sudo cp -a "$hub_transition_package/kit/runtime" /opt/poolrotater-v7-hub.v710-next
+sudo test ! -e /opt/poolrotater-v7-hub-v706.v710-next
+sudo cp -a "$hub_transition_package/kit/runtime" /opt/poolrotater-v7-hub-v706.v710-next
 ```
 
 Create only the dedicated analytics-read group, not another hosting account.
@@ -103,8 +107,10 @@ group and a read-only path; its mount namespace hides the entire private hub
 state. It receives no database, credential or TLS-key access. Keep the private
 snapshot outside the public web document root. Its rows include hidden identity
 markers needed for suppression; only the website composer may turn it into
-sanitized public aggregates. The separate website deployment must configure the
-exporter to consume `/var/lib/poolrotater-v7-analytics/activity.json`.
+sanitized public aggregates. The analytics drop-in explicitly sets
+`POOLROTATER_NETWORK_STATISTICS_SNAPSHOT=/var/lib/poolrotater-v7-analytics/activity.json`.
+The separate website deployment must consume this exact private path. Timers
+have no MainPID property; stopped admission checks MainPID only for services.
 
 ## Guarded code exchange
 
@@ -124,8 +130,8 @@ remaining process under the hub UID, a changed inventory, an unsafe path, a busy
 hub-server lease, special files, insufficient disk or a changed package. It
 copies and verifies full private state and code under root-only
 `/var/backups/poolrotater-v7-hub`, then uses Linux `RENAME_EXCHANGE` atomically.
-After exchange the new code is at `/opt/poolrotater-v7-hub`; the exact old code
-remains at `/opt/poolrotater-v7-hub.v710-next`. A receipt records both inventories.
+After exchange the new code is at `/opt/poolrotater-v7-hub-v706`; the exact old code
+remains at `/opt/poolrotater-v7-hub-v706.v710-next`. A receipt records both inventories.
 The helper starts no service and never overwrites state or changes consent.
 
 If interrupted, inspect both inventories and the private receipt before retrying.
@@ -139,7 +145,7 @@ Verify the sealed new code against preserved state, then start only the hub and
 publisher. A failing check means retain state and inspect the private journal:
 
 ```bash
-sudo runuser -u poolrotater-hub -- /usr/bin/python3.12 -I -S -B /opt/poolrotater-v7-hub/bootstrap.py --root /var/lib/poolrotater-v7-hub check
+sudo runuser -u poolrotater-hub -- /usr/bin/python3.12 -I -S -B /opt/poolrotater-v7-hub-v706/bootstrap.py --root /var/lib/poolrotater-v7-hub check
 sudo systemctl start poolrotater-v7-hub.service
 sudo systemctl start poolrotater-v7-activity-publisher.service
 sudo systemctl enable --now poolrotater-v7-activity-publisher.timer
@@ -163,7 +169,7 @@ sudo systemctl stop poolrotater-v7-activity-publisher.service
 sudo systemctl stop poolrotater-v7-hub.service
 sudo /usr/bin/python3.12 -I -S -B "$hub_transition_package/transition.py" rollback \
   --package "$hub_transition_package" --confirm-stopped-hub
-sudo runuser -u poolrotater-hub -- /usr/bin/python3.12 -I -S -B /opt/poolrotater-v7-hub/bootstrap.py --root /var/lib/poolrotater-v7-hub check
+sudo runuser -u poolrotater-hub -- /usr/bin/python3.12 -I -S -B /opt/poolrotater-v7-hub-v706/bootstrap.py --root /var/lib/poolrotater-v7-hub check
 sudo systemctl start poolrotater-v7-hub.service
 ```
 
@@ -196,3 +202,26 @@ The hub code/publisher transition does not backfill operator history. Historical
 public-room review and import is a separate explicit operator action; existing
 owner statistics must not be described as globally shared until that import and
 subsequent upload have been qualified.
+
+## October16 activation checkpoint
+
+The hub code and private publisher have now been activated on the actual unit's
+protected prefix. The stopped code exchange preserved the entire existing private
+state byte-for-byte; hub epoch, enrollment, TLS and operator choices were retained.
+HTTPS capabilities and the0640 private snapshot passed live checks. The earlier
+staging package remains an immutable historical receipt; do not replay it. The
+current deployment package is private under
+`/opt/poolrotater-v7-cutover-tools/v71-activation-20261016/hub-transition`.
+
+The existing statistics page/exporter is also activated. Real owner-history volume
+exposed excessive deep copying, fixed with copy-on-write native sets and bounded
+pre-materialization ranking; all players still participate before top50 selection.
+Thirty-eight existing website tests and an additional large-history memory/ranking
+check passed, followed by actual private read-only profiling and successful live
+publication. The analytics job retains nice15, with a384MiB memory cap,128MiB swap
+cap,40% CPU quota and120-second deadline. Bot resource settings are unchanged.
+No operator statistics/log sharing was enabled.
+
+Owner7.0.7→7.1 is a separate one-time, installation-specific migration queue.
+See V7_1_OWNER_ACTIVATION.md for its actual state and safeguards. It does not add
+this storage migration to the ordinary signed updater or update another host.

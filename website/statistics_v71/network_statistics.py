@@ -6,7 +6,7 @@ kept separately: inventing historical intervals would overstate deduplication.
 from __future__ import annotations
 
 from collections import defaultdict
-from copy import deepcopy
+from heapq import nsmallest
 import json
 import math
 import os
@@ -97,30 +97,35 @@ def publish_group(rows, hidden, *, period, owner_time=False):
               "seconds": round(sum(p["seconds"] for p in rows.values())) if not owner_time or period == "all" else None,
               "legacy_owner_seconds": round(sum(p.get("legacy_owner_seconds", 0) for p in rows.values())) if period == "all" else None,
               "legacy_community_seconds": round(sum(p.get("legacy_community_seconds", 0) for p in rows.values())) if period == "all" else None}
-    visible = []
-    for uid, raw in rows.items():
-        if uid in hidden:
-            continue
-        p = deepcopy(raw)
+    visible = [(uid, raw) for uid, raw in rows.items() if uid not in hidden]
+    # Rank the complete input before materializing bounded public rows. Native
+    # unique-map/day sets can be large; copying them only to count and discard
+    # them made production-sized exports exceed the existing resource budget.
+    keys = [lambda p: round(p['pp'],2), lambda p: p['maps'], lambda p: len(p['unique']),
+            lambda p: len(p['days']), lambda p: (p['best_gain'] or {}).get('gain',0),
+            lambda p: (p['best_score'] or {}).get('score_pp',0),
+            lambda p: round(p['accuracy_sum']/p['accuracy_n'],2) if p['accuracy_n']>=20 else -1]
+    if not owner_time or period=='all':keys.append(lambda p: round(p['seconds']))
+    chosen=set()
+    for key in keys:
+        chosen.update(uid for uid,_ in nsmallest(50,visible,key=lambda row:(-key(row[1]),row[0])))
+    leaders=[]
+    for uid, raw in visible:
+        if uid not in chosen:continue
+        p = {key:value for key,value in raw.items() if key not in ('unique','days')}
         p["username"] = clean(p.get("username")) or f"Player #{uid}"
-        p["unique_maps"] = len(p.pop("unique"))
-        p["active_days"] = len(p.pop("days"))
+        p["unique_maps"] = len(raw['unique'])
+        p["active_days"] = len(raw['days'])
         p["average_accuracy"] = round(p.pop("accuracy_sum") / p["accuracy_n"], 2) if p["accuracy_n"] >= 5 else None
         p["pp"] = round(p["pp"], 2)
         p["seconds"] = round(p["seconds"])
-        visible.append(p)
-    keys = [lambda p: p["pp"], lambda p: p["maps"], lambda p: p["unique_maps"],
-            lambda p: p["active_days"], lambda p: (p["best_gain"] or {}).get("gain", 0),
-            lambda p: (p["best_score"] or {}).get("score_pp", 0),
-            lambda p: p["average_accuracy"] if p["accuracy_n"] >= 20 and p["average_accuracy"] is not None else -1]
-    if not owner_time or period == "all":
-        keys.append(lambda p: p["seconds"])
-    chosen = set()
-    for key in keys:
-        chosen.update(p["user_id"] for p in sorted(visible, key=lambda p: (-key(p), p["user_id"]))[:50])
+        p['time_by_type']=dict(p['time_by_type'])
+        for key in ('best_gain','best_score'):
+            if p[key] is not None:p[key]=dict(p[key])
+        leaders.append(p)
     return {"totals": totals, "public_players": len(visible),
             "time_available": not owner_time or period == "all",
-            "leaders": [p for p in visible if p["user_id"] in chosen]}
+            "leaders": leaders}
 
 
 def publish_groups(raw, hidden, *, owner_time=False):
@@ -136,7 +141,8 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
     same-room owner match records are excluded because the owner ledger already
     contains them. Historical owner cumulative duration remains separate.
     """
-    owner = deepcopy(owner_groups)
+    owner = {mode:{period:{uid:dict(p)for uid,p in rows.items()}
+                   for period,rows in periods.items()}for mode,periods in owner_groups.items()}
     for periods in owner.values():
         for rows in periods.values():
             for uid, p in rows.items():
@@ -144,7 +150,8 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
     hidden = set(hidden)
     if snapshot:
         hidden.update(uid for uid in snapshot.get("hidden_user_ids", []) if type(uid) is int and uid > 0)
-    combined = deepcopy(owner)
+    combined = {mode:{period:{uid:dict(p)for uid,p in rows.items()}
+                      for period,rows in periods.items()}for mode,periods in owner.items()}
     for periods in combined.values():
         for rows in periods.values():
             for p in rows.values():
@@ -172,12 +179,18 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
     historical_import_present = False
     baseline_cutoffs = {}
     owner_hosts = set(snapshot.get("owner_host_ids", [])) if snapshot else set()
+    combined_owned_sets=set()
     if snapshot:
         owner_hosts.update(row.get("host_id") for row in snapshot["presence"] + snapshot["matches"] if isinstance(row, dict) and row.get("room_id") in owner_room_ids)
     def player(target, mode, period, uid, username):
         rows = target[mode][period]
         if uid not in rows:
             rows[uid] = empty_player(uid)
+        elif target is combined and (mode,period,uid) not in combined_owned_sets:
+            # Copy only the sets an actual network observation will mutate.
+            rows[uid]['unique']=set(rows[uid]['unique'])
+            rows[uid]['days']=set(rows[uid]['days'])
+            combined_owned_sets.add((mode,period,uid))
         # Owner names take priority; a community host cannot rename an owner
         # player in the public combined page.
         rows[uid]["username"] = names.get(uid) or clean(username) or rows[uid]["username"]

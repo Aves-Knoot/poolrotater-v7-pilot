@@ -28,8 +28,10 @@ import zipfile
 ROOT=Path(__file__).resolve().parents[1]
 DEFAULT_RUNTIME=ROOT/'validation/v7.1.0-release-final2/runtime.zip'
 DEFAULT_SHA='8c0971747c77a22a992749a6171363d60eb4a3bdc5f87460c55f88d881a21d35'
-PREFIX=Path('/opt/poolrotater-v7-hub')
-NEXT=Path('/opt/poolrotater-v7-hub.v710-next')
+# Retain the actually installed unit's historical path. Its name is not a
+# version authority: the verified inventory determines the deployed code.
+PREFIX=Path('/opt/poolrotater-v7-hub-v706')
+NEXT=Path('/opt/poolrotater-v7-hub-v706.v710-next')
 STATE=Path('/var/lib/poolrotater-v7-hub')
 ARCHIVES=Path('/var/backups/poolrotater-v7-hub')
 OUTPUT=Path('/var/lib/poolrotater-v7-analytics/activity.json')
@@ -40,6 +42,7 @@ HUB_UNIT='poolrotater-v7-hub.service'
 PUBLISHER='poolrotater-v7-activity-publisher.service'
 TIMER='poolrotater-v7-activity-publisher.timer'
 ANALYTICS='poolrotator-wiki-analytics.service'
+UNIT_FILE=Path('/etc/systemd/system')/HUB_UNIT
 
 
 def require(value,message):
@@ -123,6 +126,7 @@ WantedBy=timers.target
 '''
     analytics=f'''[Service]
 SupplementaryGroups={ANALYTICS_GROUP}
+Environment=POOLROTATER_NETWORK_STATISTICS_SNAPSHOT={OUTPUT}
 ReadOnlyPaths={OUTPUT.parent}
 InaccessiblePaths={STATE}
 '''
@@ -193,9 +197,26 @@ def package(directory):
 
 def systemd(unit):
     require(unit in (HUB_UNIT,PUBLISHER,TIMER),'unexpected_service_target')
-    reply=subprocess.run(['/usr/bin/systemctl','show',unit,'--property=MainPID,ActiveState,LoadState,User','--no-pager'],capture_output=True,text=True,timeout=10,env={'PATH':'/usr/bin:/bin','LANG':'C.UTF-8'})
-    require(reply.returncode==0,'service_state_unavailable')
-    return dict(line.split('=',1)for line in reply.stdout.splitlines()if '='in line)
+    reply=subprocess.run(['/usr/bin/systemctl','show',unit,'--property=MainPID,ActiveState,LoadState,User,ExecStart','--no-pager'],capture_output=True,text=True,timeout=10,env={'PATH':'/usr/bin:/bin','LANG':'C.UTF-8'})
+    state=dict(line.split('=',1)for line in reply.stdout.splitlines()if '='in line)
+    require(reply.returncode==0 or (reply.returncode==4 and unit!=HUB_UNIT
+            and state.get('LoadState')=='not-found'),'service_state_unavailable')
+    return state
+
+
+def unit_binding():
+    """Never exchange an unused historical tree while the unit runs another."""
+    path=safe_path(UNIT_FILE);info=path.stat()
+    require(stat.S_ISREG(info.st_mode) and info.st_uid==0 and not info.st_mode&0o022,
+            'protected_hub_unit_required')
+    command=f'/usr/bin/python3.12 -I -S {PREFIX}/bootstrap.py --root {STATE} serve'
+    require(path.read_text().splitlines().count('ExecStart='+command)==1,
+            'hub_unit_uses_a_different_code_prefix')
+    actual=systemd(HUB_UNIT)
+    require(actual.get('LoadState')=='loaded' and actual.get('User')==HUB_USER
+            and 'argv[]='+command+' ;' in actual.get('ExecStart',''),
+            'loaded_hub_unit_uses_a_different_code_prefix')
+    return sha(path)
 
 
 def no_hub_processes(uid):
@@ -213,7 +234,8 @@ def stopped(uid):
         value=systemd(name)
         if name!=HUB_UNIT and value.get('LoadState')=='not-found':continue
         require(value.get('LoadState')=='loaded' and value.get('ActiveState')in('inactive','failed')
-                and value.get('MainPID')=='0','stop_only_hub_and_publisher_before_exchange')
+                and (name.endswith('.timer') or value.get('MainPID')=='0'),
+                'stop_only_hub_and_publisher_before_exchange')
         if name==HUB_UNIT:require(value.get('User')==HUB_USER,'unexpected_hub_identity')
     no_hub_processes(uid)
 
@@ -264,6 +286,7 @@ def atomic_exchange(left,right):
 def exchange(directory,*,rollback=False):
     require(os.geteuid()==0,'hub_transition_requires_root')
     value=package(directory);uid=pwd.getpwnam(HUB_USER).pw_uid;require(uid>0,'hub_service_identity_required')
+    unit_sha256=unit_binding()
     stopped(uid)
     expected=value['new_inventory_sha256']if rollback else value['old_inventory_sha256']
     other=value['old_inventory_sha256']if rollback else value['new_inventory_sha256']
@@ -282,7 +305,8 @@ def exchange(directory,*,rollback=False):
         # never overwritten or authority-reset during an ordinary code upgrade.
         require(inventory(PREFIX)==expected and inventory(NEXT)==other,'hub_transition_inventory_changed')
         receipt={'format':1,'phase':'prepared','rollback':rollback,'before':expected,'after':other,
-                 'state_replaced':False,'sharing_choices_changed':False,'rooms_affected':False}
+                 'state_replaced':False,'sharing_choices_changed':False,'rooms_affected':False,
+                 'hub_unit_sha256':unit_sha256}
         (archive/'receipt.json').write_text(json.dumps(receipt,sort_keys=True)+'\n');(archive/'receipt.json').chmod(0o600)
         atomic_exchange(PREFIX,NEXT)
         receipt['phase']='exchanged';(archive/'receipt.json').write_text(json.dumps(receipt,sort_keys=True)+'\n')
@@ -303,6 +327,7 @@ def main(argv=None):
                 'runtime_sha256':args.runtime_sha256,'hub_prefix':str(PREFIX),'hub_state':str(STATE),
                 'old_inventory_sha256':inventory(PREFIX),'owner_account_id_required_for_stage':True,
                 'bot_services_or_rooms_affected':False,'activation_requires_explicit_stopped_hub_exchange':True}
+        result['active_hub_unit_sha256']=unit_binding()
     elif args.action=='stage':
         require(args.destination is not None,'transition_destination_required')
         result=stage(args.destination,args.runtime,args.runtime_sha256,owner_account_id=args.owner_account_id,
