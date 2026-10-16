@@ -35,10 +35,11 @@ class _ManiaStatsConnection(sqlite3.Connection):
 
 
 class PPStatsStore:
-    def __init__(self, path: str, ruleset_id: int = 0):
+    def __init__(self, path: str, ruleset_id: int = 0, *, reader=None):
         if ruleset_id not in (0, 3):
             raise ValueError("Unsupported PP stats ruleset")
         self.ruleset_id = ruleset_id
+        self.reader = reader
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).expanduser().parent.mkdir(parents=True, exist_ok=True)
@@ -365,7 +366,7 @@ class PPStatsStore:
                 (int(user_id),),
             ).fetchone()
 
-        return {
+        result = {
             "total_gain": float(pp_row[0] or 0.0),
             "achievement_count": int(pp_row[1] or 0),
             "best_gain": float(pp_row[2] or 0.0),
@@ -377,6 +378,42 @@ class PPStatsStore:
             "last_join_at": time_row[3] if time_row else None,
             "last_leave_at": time_row[4] if time_row else None,
         }
+
+        if self.reader is not None:
+            try:
+                shared = self.reader.user_stats(int(user_id), ruleset_id=self.ruleset_id)
+            except Exception:
+                shared = None
+            if shared and not shared.get("hidden"):
+                own = shared.get("requester_host_totals", {})
+                result["local_tracked_gain"] = result["total_gain"]
+                result["local_tracked_lobby_seconds"] = result["total_lobby_seconds"]
+                result["local_unreconciled_gain"] = max(0, result["total_gain"] - own.get("total_gain", 0))
+                result["local_unreconciled_lobby_seconds"] = max(0, result["total_lobby_seconds"] - own.get("total_lobby_seconds", 0))
+                # Pending local intervals/legacy PP may overlap evidence from
+                # other hosts. Preserve them separately; never invent an exact
+                # combined sum from scalar cumulative totals.
+                for key in ("total_gain", "achievement_count", "best_gain", "total_lobby_seconds", "visit_count",
+                            "first_gain_at", "last_gain_at", "first_join_at", "last_join_at", "last_leave_at"):
+                    result[key] = shared.get(key, result.get(key))
+                result["network_statistics"] = True
+                result["network_statistics_fetched_at"] = shared.get("network_statistics_fetched_at")
+                result["network_coverage"] = shared.get("coverage", {})
+            else:
+                result["network_statistics_pending"] = shared is None
+                result["network_statistics_hidden"] = bool(shared and shared.get("hidden"))
+        return result
+
+    def shared_stats_hidden(self, user_id: int):
+        """Tri-state network visibility; None means cache pending, never public proof."""
+        if self.reader is None:
+            return None
+        return self.reader.hidden(int(user_id), ruleset_id=self.ruleset_id)
+
+    def shared_username(self, username: str):
+        if self.reader is None:
+            return None
+        return self.reader.lookup(username, ruleset_id=self.ruleset_id)
 
     def lifetime_lobby_summary(
         self,

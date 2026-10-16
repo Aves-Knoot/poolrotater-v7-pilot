@@ -254,7 +254,8 @@ def run(sock, release):
     try:
         cfg = peer.call("worker.hello", {"protocol": PROTOCOL, "version": manifest["version"],
                                         "files": manifest["files"]})
-        # Authenticated parent hello pins controller maintenance authority.
+        # The authenticated parent hello pins the maintenance authority. A
+        # worker-only update must not change which controller may gate rooms.
         lifecycle.maintenance.release = Path(cfg.get('_rolling_controller_release', release)).resolve()
         cfg.update(version=manifest["version"], _rolling_worker=True, close_room_on_exit=False)
         cfg.setdefault("_supervisor_overrides", {}).update(version=manifest["version"],
@@ -294,6 +295,9 @@ def run(sock, release):
                 logging.getLogger().removeHandler(handler)
                 continue
             handler.setFormatter(formatter)
+        if cfg.get('_host_root'):
+            from poolrotater_host.reporting_logging import install
+            install(cfg['_host_root'],alias=cfg['_instance_name'],version=manifest['version'])
         log.info("starting %s controller from pinned %s", cfg["_instance_name"], manifest["version"])
         discord, chat = Discord(peer, cfg), Chat(peer)
         bot = LobbyBot(Hub(peer), Api(peer), pool, cfg, events,

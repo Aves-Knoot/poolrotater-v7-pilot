@@ -1,2 +1,2 @@
 """Distributed PoolRotater host and explicit opt-in update foundation."""
-__version__ = "7.0.6"
+__version__ = '7.1.0'

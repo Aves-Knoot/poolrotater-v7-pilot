@@ -262,6 +262,10 @@ CREATE INDEX IF NOT EXISTS ix_autohost_match_players_map
 """
 
 
+from poolrotater_host.activity.ledger import SCHEMA as ACTIVITY_SCHEMA
+SCHEMA += ACTIVITY_SCHEMA
+
+
 class RatingStore:
     def __init__(self, path: str = "ratings.db", *, initialize: bool = True, reader=None):
         self.path = str(path)
@@ -996,6 +1000,41 @@ class RatingStore:
             f"start:{int(started_at * 1000)}"
         )
 
+    def record_room_visibility(self, room_id: int, *, public: bool,
+                               observed_at: float | None = None,
+                               mode: str = "standard", preset: str | None = None,
+                               room_alias: str | None = None) -> None:
+        """Record authoritative provider/broker visibility, never inferred from a title."""
+        if type(public) is not bool:
+            raise ValueError("explicit_room_visibility_required")
+        if preset:
+            mode = {"mania-4k": "mania4", "mania-7k": "mania7"}.get(preset, "standard")
+        if mode not in ("standard", "mania4", "mania7"):
+            raise ValueError("invalid_activity_mode")
+        now = float(time.time() if observed_at is None else observed_at)
+        conn = self._conn()
+        try:
+            previous = conn.execute("SELECT public,mode,room_alias,observed_at FROM activity_visibility WHERE room_id=? ORDER BY observed_at DESC,id DESC LIMIT 1", (int(room_id),)).fetchone()
+            if previous and now < previous["observed_at"]:
+                raise ValueError("activity_visibility_clock_rollback")
+            if not previous or (previous["public"], previous["mode"], previous["room_alias"]) != (int(public), mode, room_alias):
+                conn.execute("INSERT INTO activity_visibility(room_id,public,observed_at,mode,room_alias) VALUES(?,?,?,?,?)", (int(room_id),int(public),now,mode,room_alias))
+                conn.commit()
+        finally:
+            conn.close()
+
+    def record_room_player_leave(self, *, room_id: int, user_id: int,
+                                 username: str | None = None,
+                                 left_at: float | None = None) -> None:
+        now = float(time.time() if left_at is None else left_at)
+        conn = self._conn()
+        try:
+            conn.execute("INSERT INTO activity_leaves(room_id,user_id,username,occurred_at) VALUES(?,?,?,?)",
+                         (int(room_id),int(user_id),str(username or user_id),now))
+            conn.commit()
+        finally:
+            conn.close()
+
     def record_room_open(
         self,
         *,
@@ -1088,6 +1127,8 @@ class RatingStore:
             """,
             (int(room_id), int(user_id), str(username or user_id), now, now),
         )
+        conn.execute("INSERT INTO activity_joins(room_id,user_id,username,occurred_at) VALUES(?,?,?,?)",
+                     (int(room_id),int(user_id),str(username or user_id),now))
         conn.execute(
             "UPDATE autohost_rooms SET last_activity_at=MAX(last_activity_at, ?) "
             "WHERE room_id=?",
@@ -1126,6 +1167,8 @@ class RatingStore:
                 now, now, now, seconds,
             ),
         )
+        conn.execute("INSERT INTO activity_presence(room_id,user_id,username,started_at,ended_at) VALUES(?,?,?,?,?)",
+                     (int(room_id),int(user_id),str(username or user_id),max(0.0,now-seconds),now))
         conn.execute(
             "UPDATE autohost_rooms SET last_activity_at=MAX(last_activity_at, ?) "
             "WHERE room_id=?",

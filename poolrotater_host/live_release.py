@@ -14,7 +14,7 @@ import re
 from .oauth import AuthError
 
 POLICY_NAME = 'poolrotater_host/pilot_release.json'
-VERSION = 'v7.0.2'
+VERSION = 'v7.1.0'
 INSTALLATION = 'pilot-live'
 PROVIDER = 'provider-live-pilot'
 
@@ -74,3 +74,4 @@ def require(execution):
         if path.read_bytes() != policy_bytes(): raise ValueError
     except Exception:
         raise AuthError('live_provider_disabled') from None
+

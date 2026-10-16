@@ -15,6 +15,7 @@ from .contracts import NetworkError, require, canonical, decode, number
 
 RATING_ROUTES={'/v1/events/batches','/v1/ratings/state-query','/v1/ratings/snapshots/current','/v1/ratings/snapshot-page'}
 UPDATE_ROUTES={'/v1/hosts/self/updates'}
+REPORTING_ROUTES={'/v1/activity/consent','/v1/activity/events','/v1/activity/query','/v1/logs/consent','/v1/logs/chunks'}
 ROUTES={'/v2/capabilities','/v2/rooms','/v2/hosts/self/heartbeat','/v1/capabilities','/v1/enrollments','/v1/rooms','/v1/hosts/self','/v1/hosts/self/heartbeat','/v1/hosts/self/token-rotation','/v1/hosts/self/leave','/v1/ratings/stream-state'}|RATING_ROUTES
 # Diagnostics never repeat arbitrary strings supplied by a remote endpoint.
 REMOTE_ERRORS=frozenset(('credential_required','credential_refused','credential_expired',
@@ -29,7 +30,9 @@ REMOTE_ERRORS=frozenset(('credential_required','credential_refused','credential_
     'ratings_revision_exhausted','ratings_migration_recovery_required','request_too_large',
     'ratings_lineage_refused','ratings_lineage_requires_review','ratings_policy_recovery_required',
     'ratings_policy_requires_review','rating_snapshot_not_found','rating_snapshot_capacity_required',
-    'invalid_rating_snapshot','incompatible_rating_snapshot'))
+    'invalid_rating_snapshot','incompatible_rating_snapshot','activity_consent_required','activity_consent_changed',
+    'activity_batch_limit','activity_capacity_required','invalid_activity_query','log_consent_required',
+    'log_chat_consent_required','log_identity_mismatch','log_chunk_conflict','log_capacity_required'))
 
 
 def origin(value):
@@ -50,7 +53,7 @@ class Transport:
     def request(self,method,path,*,body=None,token=None):
         from ..process_target import OwnedChild, require_child_platform
         require_child_platform()
-        require(method in ('GET','POST') and path.split('?',1)[0] in ROUTES|UPDATE_ROUTES and len(path)<=256,'invalid_network_route')
+        require(method in ('GET','POST') and path.split('?',1)[0] in ROUTES|UPDATE_ROUTES|REPORTING_ROUTES and len(path)<=256,'invalid_network_route')
         if token is not None:
             from .contracts import verifier
             verifier(token)

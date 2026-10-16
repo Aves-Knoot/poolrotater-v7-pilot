@@ -108,7 +108,7 @@ def main():
     mode.add_argument('--service', action='store_true')
     mode.add_argument('--provider-service', action='store_true',
                       help='prepared fixed provider service; upstream execution is disabled')
-    mode.add_argument('--network-action', choices=('configure','enroll','resume','rotate','leave','reset','status','support','update-report'),
+    mode.add_argument('--network-action', choices=('configure','enroll','resume','rotate','leave','reset','status','support','update-report','reporting-configure','reporting-support','reporting-sync'),
                       help='independent installed network operation; never provider authorization')
     mode.add_argument('--network-agent',action='store_true',help='independent optional heartbeat agent')
     mode.add_argument('--ratings-action',choices=('configure','sync','fetch','status','support'))
@@ -152,7 +152,7 @@ def main():
                     or args.network_action or args.network_agent or args.ratings_action)
     if args.ratings_input != (args.ratings_action=='configure'):
         raise ValueError('ratings private input requires explicit configure action')
-    if args.network_input != (args.network_action in ('configure','enroll','reset','update-report')):
+    if args.network_input != (args.network_action in ('configure','enroll','reset','update-report','reporting-configure')):
         raise ValueError('network private input requires explicit network action')
     if not args.ownership_recovery and any((args.journal_sha256, args.room_alias,
             args.created_room_id, args.confirm_lost_creation, args.transaction_id, args.decision)):

@@ -116,6 +116,15 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=='/v1/hosts/self/updates':
                     from ..updates.telemetry import Reports
                     result=Reports(store).accept(self.token(),self.body())
+                elif path in ('/v1/activity/consent','/v1/activity/events','/v1/activity/query'):
+                    from ..activity.repository import Repository as Activity
+                    repository=Activity(store);token=self.token();body=self.body()
+                    result=(repository.consent(token,body) if path.endswith('/consent') else
+                            repository.query(token,body) if path.endswith('/query') else repository.ingest(token,body))
+                elif path in ('/v1/logs/consent','/v1/logs/chunks'):
+                    from ..diagnostic_logs import HubLogs
+                    repository=HubLogs(store);token=self.token();body=self.body()
+                    result=repository.consent(token,body) if path.endswith('/consent') else repository.ingest(token,body)
                 elif path in ('/v1/events/batches','/v1/ratings/state-query','/v1/ratings/stream-state'):
                     from ..ratings.repository import Repository
                     repository=Repository(store)

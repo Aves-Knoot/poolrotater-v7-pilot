@@ -22,6 +22,7 @@ import re
 import sqlite3
 import threading
 import time
+import textwrap
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +49,7 @@ from .discord_reports import DiscordReports
 from .lazer_coordinator import LazerCoordinator
 from .process_control import SharedProcessControl
 from .custom_greetings import JOIN_GREETING_COOLDOWN, configured_greeting
+from .community import DEFAULT_DISCORD_INVITE
 from .api import (ApiAdmissionDeferred, ApiKeepaliveUnavailable,
                   ApiChatReadUnavailable, ApiChatDeliveryUncertain)
 
@@ -159,7 +161,7 @@ _MOD_COMMAND_HELP = {
     "ppannounce": ("ppannounce on|off", "Enable or disable PP announcements."),
     "range": ("range <min> <max>", "Set the room's star rating range."),
     "auto": ("auto", "Switch Standard automatic difficulty on or off."),
-    "length": ("length <seconds>", "Set the minimum map length."),
+    "length": ("length <seconds>", "Set the maximum map length; alias of maxlength."),
     "maxlength": ("maxlength <seconds>", "Set the maximum map length."),
     "maxage": ("maxage <years|off>", "Limit the age of selected maps."),
     "countdown": ("countdown <seconds>", "Set the start countdown."),
@@ -602,7 +604,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             "discord_modlog_webhook_env", "POOLROTATER_DISCORD_MODLOG_WEBHOOK"
         )
         self.cfg.setdefault("discord_modlog_timeout_seconds", 5.0)
-        self.cfg.setdefault("discord_invite_url", "https://discord.gg/maaPYSYpsj")
+        self.cfg.setdefault("discord_invite_url", DEFAULT_DISCORD_INVITE)
         self.cfg.setdefault("discord_invite_reminder_seconds", 14400)
         # Current NoMod PP can always be requested with `.pp` while the PP
         # display service is enabled. Automatic PP lines are a separate knob so
@@ -611,7 +613,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         self.cfg.setdefault("map_pp_display_enabled", True)
         self.cfg.setdefault("map_pp_auto_announce_enabled", True)
         # Start the timer at process launch so a restart cannot immediately
-        # add a website line to an already busy lobby.
+        # add a community-link line to an already busy lobby. Website and
+        # Discord share this single timer; they never get separate reminders.
         self._last_website_announcement = time.time()
         self._website_notified_players: set[int] = set()
         self._discord_notified_players: set[int] = set()
@@ -661,7 +664,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         # ratings/performance evidence, but in a separate table. This starts
         # tracking from the first run of this version and is deduplicated by
         # room + playlist item + user so a score report can never count twice.
-        self.pp_stats = PPStatsStore(cfg.get("ratings_db", "ratings.db"), ruleset_id=mode)
+        from poolrotater_host.activity.reader import for_settings as activity_reader
+        self.activity_reader = activity_reader(cfg)
+        self.pp_stats = PPStatsStore(cfg.get("ratings_db", "ratings.db"), ruleset_id=mode,
+                                     reader=self.activity_reader)
         self.last_played_map = None           # what map feedback refers to
         self._rating_context = {}
         self._rating_window_until = 0.0
@@ -1142,10 +1148,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # Webhook configuration/transport must never break lobby chat.
             log.exception("could not queue Discord lobby-chat notification")
 
-    def _discord_invite_text(self) -> str:
+    def _discord_invite_text(self, *, fallback: bool = False) -> str:
         url = str(self.cfg.get(
-            "discord_invite_url", "https://discord.gg/maaPYSYpsj"
+            "discord_invite_url", DEFAULT_DISCORD_INVITE
         ) or "").strip()
+        if not url and fallback:
+            url = DEFAULT_DISCORD_INVITE
         return f"Discord: {url}" if url else ""
 
     def _maybe_announce_website(self) -> None:
@@ -3512,7 +3520,15 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if len(message) >= 2 and message[0] == message[-1] and message[0] in "\"'":
             message = message[1:-1].strip()
         if not message:
-            self._send_ai_status(f"Usage: {self.prefix}ai <message>")
+            self.say(f"Usage: {self.prefix}ai <message>")
+            return
+        if not self.cfg.get('ai_enabled', True) or getattr(self, 'ai', None) is None:
+            now = time.time()
+            if now - getattr(self, '_last_ai_unavailable_notice', 0.0) >= 15.0:
+                # Disabled AI drains its model outbox without publishing it.
+                # This is a normal requested command reply, not model output.
+                self.say('AI is unavailable right now.')
+                self._last_ai_unavailable_notice = now
             return
         max_prompt = max(100, min(2000, int(
             self.cfg.get("ai_max_prompt_chars", 700) or 700
@@ -3577,6 +3593,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         with `.silence on`. Functional command replies and vote-skip status stay
         available so silencing the bot never makes moderation controls unusable.
         """
+        if isinstance(msg, str) and not msg.strip():
+            return
         if automatic and self.cfg.get("bot_chat_silenced", False):
             log.debug("bot chat silenced; suppressed automatic message: %s", msg[:120])
             return
@@ -3586,6 +3604,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # Language UX must never break a control or remove English.
             log.warning("language reply unavailable; using English")
         text = msg[:400]
+        if not text.strip():
+            return
         discord_reply_channel = getattr(
             self, "_discord_command_reply_channel_id", None
         )
@@ -3622,7 +3642,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # shared provider ledger; the message is never queued or replayed.
             log.warning('room chat delivery uncertain; message will not be resent')
 
-
     def _queue_room_chat(self, entry):
         pending = getattr(self, '_pending_room_chat', None)
         if pending is None:
@@ -3642,7 +3661,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 pending.popleft()
                 log.warning('oldest room chat expired while delivery queue is full')
         pending.append(entry)
-
 
     def _flush_room_chat(self):
         """Bounded, ordered delivery without blocking gameplay on pacing waits.
@@ -3678,7 +3696,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         pending.popleft()
         self._room_chat_deferred_count = 0
         self._room_chat_retry_at = 0.0
-
 
     def _deliver_room_chat(self, text, *, automatic, lobby_only, discord_reply_channel):
         """One delivery; dispatched uncertain sends keep their existing fence."""
@@ -3743,6 +3760,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
         mid = (sent or {}).get("message_id") or (sent or {}).get("id")
         if mid:
+            log.info("CHAT BOT %s", text.replace("\r", " ").replace("\n", " "))
             self._own_messages.add(int(mid))
             if len(self._own_messages) > 200:
                 self._own_messages = set(sorted(self._own_messages)[-100:])
@@ -4312,6 +4330,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         command_beatmap_id: int | None = None,
     ) -> None:
         parts = text.split()
+        if not parts:
+            return
         cmd = parts[0].lower()
         if cmd.startswith(self.prefix):
             cmd = cmd[len(self.prefix):]
@@ -4405,7 +4425,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             if mania:
                 self.say(f"{self._mania_key_label()} Ranked/Approved; variety may include vetted converts. Fixed difficulty; {p}harder/{p}easier vote in {self._difficulty_vote_step():.2f}* steps. Styles are heuristic, not guaranteed PP efficiency.")
             auto_help = "" if mania else f"{p}auto "
-            self.say(
+            public_commands = (
                 f"Commands: {p}queue {p}pool {source_commands}{p}stats [username] {p}lobby "
                 f"{p}start {p}pp [mods] [acc%...] "
                 f"{p}wait {p}time "
@@ -4414,6 +4434,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 f"{p}harder {p}easier "
                 f"{p}hidden {p}show {p}lang en|zh|ko|es|ru|ja|pl|id|fr|de {p}discord"
             )
+            for line in textwrap.wrap(public_commands, width=380):
+                self.say(line)
             if is_moderator:
                 self.say(
                     f"Mod: {p}settings {p}start {p}abort {p}forceskip "
@@ -4460,7 +4482,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 )
 
         elif cmd == "discord":
-            self.say(self._discord_invite_text())
+            self.say(self._discord_invite_text(fallback=True))
 
         elif cmd == "ai":
             self._handle_ai_command(user_id, text)
@@ -4563,7 +4585,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                         )
                         return
                     if (
-                        farm_pct < 0 or stream_pct < 0
+                        not math.isfinite(farm_pct) or not math.isfinite(stream_pct)
+                        or farm_pct < 0 or stream_pct < 0
                         or farm_pct > 100 or stream_pct > 100
                         or abs((farm_pct + stream_pct) - 100.0) > 0.01
                     ):
@@ -4883,11 +4906,15 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         elif cmd in ("hidden", "show"):
             requester_name = str(
                 (self.players.get(user_id) or {}).get("name")
-                or self.pp_stats.username_for_user_id(user_id)
                 or user_id
             )
             hidden = cmd == "hidden"
             try:
+                requester_name = str(
+                    (self.players.get(user_id) or {}).get("name")
+                    or self.pp_stats.username_for_user_id(user_id)
+                    or user_id
+                )
                 self.pp_stats.set_stats_hidden(
                     user_id=int(user_id),
                     username=requester_name,
@@ -4954,6 +4981,15 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                             requested_name,
                         )
 
+                if resolved is None and getattr(self.pp_stats, "reader", None) is not None:
+                    try:
+                        resolved = self.pp_stats.shared_username(requested_name)
+                    except Exception:
+                        log.warning("shared statistics username cache unavailable")
+                    if resolved is None:
+                        self.say(f"{requester_name} — shared stats for {requested_name} are syncing; try again shortly.")
+                        return
+
                 if resolved is None:
                     self.say(
                         f"{requester_name} — no AutoHost stats found for "
@@ -4976,6 +5012,16 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                         "stats visibility right now."
                     )
                     return
+
+                if not target_hidden and getattr(self.pp_stats, "reader", None) is not None:
+                    try:
+                        network_hidden = self.pp_stats.shared_stats_hidden(target_user_id)
+                    except Exception:
+                        network_hidden = None
+                    if network_hidden is None:
+                        self.say(f"{requester_name} — checking {target_name}'s shared stats visibility; try again shortly.")
+                        return
+                    target_hidden = network_hidden
 
                 if target_hidden:
                     self.say(
@@ -5013,22 +5059,39 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             if live_info is not None:
                 checkpoint = live_info.get("lobby_time_checkpoint_at")
                 if checkpoint is not None:
-                    total_lobby_seconds += max(
-                        0.0, time.time() - float(checkpoint)
-                    )
+                    live_slice = max(0.0, time.time() - float(checkpoint))
+                    if personal.get("network_statistics"):
+                        personal["local_tracked_lobby_seconds"] = personal.get("local_tracked_lobby_seconds", 0) + live_slice
+                        personal["local_unreconciled_lobby_seconds"] = personal.get("local_unreconciled_lobby_seconds", 0) + live_slice
+                    else:
+                        total_lobby_seconds += live_slice
 
             playtime = self._format_lobby_time(total_lobby_seconds)
+            coverage_note = ""
+            if personal.get("network_statistics"):
+                coverage_note = " Shared confirmed activity (opt-in coverage)."
+                if (personal.get("local_unreconciled_gain", 0) > 0.001
+                        or personal.get("local_unreconciled_lobby_seconds", 0) > 1):
+                    local_time = self._format_lobby_time(personal.get("local_tracked_lobby_seconds", 0))
+                    local_gain = float(personal.get("local_tracked_gain", 0))
+                    coverage_note += f" Local tracked separately: +{local_gain:.1f}pp / {local_time}; not fully synced, may overlap."
+                if personal.get("network_coverage", {}).get("historical_time_overlaps_unknown"):
+                    coverage_note += " Older cross-host time may overlap."
+            elif personal.get("network_statistics_pending"):
+                coverage_note = " Local totals; shared stats are syncing or unavailable."
+            elif personal.get("network_statistics_hidden"):
+                coverage_note = " Local totals; shared stats are hidden."
             if achievement_count:
                 self.say(
                     f"{target_name} — {'Mania' if mania else 'AutoHost'} gains: +{total_gain:.1f}pp "
                     f"across {achievement_count} gain"
                     f"{'s' if achievement_count != 1 else ''} "
-                    f"(best +{best_gain:.1f}pp) | Playtime: {playtime}."
+                    f"(best +{best_gain:.1f}pp) | Playtime: {playtime}.{coverage_note}"
                 )
             else:
                 self.say(
                     f"{target_name} — {'Mania' if mania else 'AutoHost'} gains: +0.0pp tracked so far "
-                    f"| Playtime: {playtime}."
+                    f"| Playtime: {playtime}.{coverage_note}"
                 )
 
         elif cmd == "lobby":
@@ -5421,6 +5484,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 else:
                     try:
                         lo, hi = float(parts[1]), float(parts[2])
+                        if not math.isfinite(lo) or not math.isfinite(hi) or not 0 <= lo < hi:
+                            raise ValueError('star range must be finite, nonnegative and increasing')
                         self._set_manual_range_operator(lo, hi, user_id=user_id)
                     except ValueError:
                         self.say(f"Usage: {p}range 4.5 5.5")
@@ -6221,6 +6286,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 else:
                     try:
                         lo, hi = float(parts[1]), float(parts[2])
+                        if not math.isfinite(lo) or not math.isfinite(hi) or not 0 <= lo < hi:
+                            raise ValueError('star range must be finite, nonnegative and increasing')
                         self._set_manual_range_operator(lo, hi, user_id=user_id)
                     except ValueError:
                         self.say(f"Usage: {p}range 4.5 5.5")
@@ -7391,7 +7458,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return expected
         return None
 
-
     def _remember_playlist_item(self, item: dict, *, authoritative=False):
         """Normalize one server item and bind its real id to our PoolMap."""
         if not isinstance(item, dict):
@@ -8032,7 +8098,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 self.say('This map uses DT; omit other speed mods from .pp.')
                 return
             mods = tuple(dict.fromkeys((*mods, 'DT')))
-        projection = self.pp_projection.get(
+        projector = getattr(self, 'pp_projection', None)
+        if projector is None:
+            self.say('PP calculation is unavailable for this lobby.')
+            return
+        projection = projector.get(
             m.beatmap_id,
             wait_seconds=self._map_pp_command_wait_seconds(),
             mods=mods,
@@ -10755,7 +10825,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         log.info("joined: %s (%.0fpp, #100 = %.0f)", name, pp, threshold)
         self.mark_auto_retune_pending()
 
-
     def _profile_fields(self, user_id, profile):
         """Unknown statistics stay unknown; only a qualified reply enriches PP."""
         if type(profile) is not dict or not profile:
@@ -10770,7 +10839,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if pp is not None and (type(pp) not in (int, float) or not math.isfinite(pp) or pp < 0):
             return None
         return {"name": name, "country_code": profile.get("country_code"), "pp": pp}
-
 
     def _defer_player_profile(self, user_id, *, profile=None):
         """Record the join once, then queue enrichment independently of READY."""
@@ -10792,7 +10860,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                             "expires_at": now + 300, "retry_at": now + 1,
                             "attempts": 1, "profile": profile if fields is not None else None,
                             "player": self.players[user_id]}
-
 
     def _flush_player_profiles(self):
         """At most one pending roster enrichment per tick; never sleep or rejoin."""
@@ -12048,6 +12115,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     "LEAVE", f"{player_name} {action}"
                 )
                 self._flush_player_lobby_time(uid, info)
+                if self.room_id is not None:
+                    try:
+                        self.ratings.record_room_player_leave(room_id=int(self.room_id),user_id=uid,username=player_name)
+                    except Exception:
+                        log.exception('could not record activity leave')
                 self.ready.discard(uid)
                 getattr(self, "_unready_start_grace_users", set()).discard(uid)
                 self._refresh_skip_vote_quorum()
@@ -12560,6 +12632,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 )
                 self.running = False
                 continue
+            if time.monotonic()-getattr(self,'_activity_checkpoint_at',0)>=60:
+                self._flush_all_lobby_time()
+                self._activity_checkpoint_at=time.monotonic()
             self._drain_ai_results()
             self._drain_discord_control_commands()
             self._flush_room_chat()

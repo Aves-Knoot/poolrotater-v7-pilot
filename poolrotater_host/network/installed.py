@@ -16,7 +16,7 @@ from .agent import Agent
 from .contracts import NetworkError, require, decode, fields, number
 from .projection import read_status, project
 
-ACTIONS=('configure','enroll','resume','rotate','leave','reset','status','support','update-report')
+ACTIONS=('configure','enroll','resume','rotate','leave','reset','status','support','update-report','reporting-configure','reporting-support','reporting-sync')
 
 
 def guard(root,release):
@@ -28,7 +28,12 @@ def guard(root,release):
 
 def execute(client,action,stream=None):
     require(action in ACTIONS,'invalid_network_action')
-    require((stream is not None)==(action in ('configure','enroll','reset','update-report')),'network_private_input_required')
+    require((stream is not None)==(action in ('configure','enroll','reset','update-report','reporting-configure')),'network_private_input_required')
+    if action.startswith('reporting-'):
+        from .. import reporting
+        if action=='reporting-configure':return reporting.configure(client.root,decode(stream.read(65537)))
+        if action=='reporting-support':return reporting.support(client.root)
+        return reporting.Reporter(client).step()
     if action=='update-report':
         from ..updates.telemetry import report
         from ..layout import file_lease
@@ -78,8 +83,11 @@ def serve(root,release):
     from ..ratings.agent import Scheduler,FetchScheduler,run_combined
     from ..ratings.sync import Synchronizer
     sync=Synchronizer(root,network=client)
+    from ..reporting import start
+    reporting_thread=start(client,stop)
     try:run_combined(Agent(client,lambda:observation(root,__version__)),Scheduler(sync),stop,snapshots=FetchScheduler(sync))
     finally:
+        stop.set();reporting_thread.join(timeout=6)
         for sig,handler in previous.items():signal.signal(sig,handler)
 
 

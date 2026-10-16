@@ -41,6 +41,7 @@ def main(argv=None):
                    'private-test-configure', 'private-test-clear', 'private-test-status',
                    'ownership-review', 'ownership-clear', 'ownership-resume',
                    'network-configure','network-enroll','network-resume','network-rotate','network-leave','network-reset',
+                   'network-reporting-configure','network-reporting-support','network-reporting-sync',
                    'network-status','network-support','network-unit','network-start','network-stop','network-remove',
                    'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
                    'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch',
@@ -163,7 +164,7 @@ def main(argv=None):
                 operation=action.removeprefix('network-')
                 if operation in ('unit','start','stop','remove'):result=operations.unit(args.instance,operation)
                 else:result=operations.command(args.instance,operation,
-                    stream=sys.stdin.buffer if operation in ('configure','enroll','reset') else None)
+                    stream=sys.stdin.buffer if operation in ('configure','enroll','reset','reporting-configure') else None)
             elif action.startswith('ownership-'):
                 result = pilot.ownership(args.instance, action.removeprefix('ownership-'),
                     journal_sha256=getattr(args, 'journal_sha256', None),

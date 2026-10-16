@@ -24,6 +24,8 @@ GATE = 'state/rolling/supervisor-maintenance.json'
 EMPTY_SECONDS = 30
 DRAIN_SECONDS = 15
 GATE_SECONDS = 300
+# Two minute-spaced background observations must fit inside the native gate lease.
+ADMISSION_SECONDS = 240
 
 
 def _config_hashes(root):
@@ -40,6 +42,38 @@ def _process(pid):
             'boot':Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
 
 
+def _retired_worker_target(target, parent, alias, row):
+    """A cancelled predecessor's diagnostic target is not current rollout intent."""
+    import re
+    prefix=target['prefix']
+    if os.path.lexists(prefix/'worker-deployment.json'):
+        return False
+    wanted=row.get('target');version=row.get('target_version')
+    if (not isinstance(wanted,str) or not isinstance(version,str)
+            or not re.fullmatch(r'v7\.[0-9]+\.[0-9]+',version)):
+        return False
+    path=Path(wanted)
+    if path.parent!=prefix/'releases':return False
+    folder=prefix/'retired-worker-deployments'
+    if not folder.exists():return False
+    protected(folder)
+    records=list(folder.glob('*.json'))
+    if len(records)>64:return False
+    for receipt in records:
+        job=_control(protected(receipt))
+        digest=job.get('candidate_sha256')
+        if (job.get('format')==1 and job.get('phase')=='cancelled'
+                and job.get('installation_id')==parent['installation_id']
+                and job.get('generation')==parent['generation']
+                and job.get('parent_sha256')!=parent['bundle_sha256']
+                and alias in job.get('rooms',[])
+                and isinstance(digest,str) and re.fullmatch('[a-f0-9]{64}',digest)
+                and path.name==version+'-'+digest[:16]):
+            return True
+    return False
+
+
+
 def _rows(target, parent, *, now, after=None):
     # Native status uses 0640 inside the checked private 0700 state tree.
     # It is an observation, not a secret/ownership-authority record.
@@ -49,12 +83,13 @@ def _rows(target, parent, *, now, after=None):
             or after is not None and generated <= after): return None
     rooms = value.get('rooms')
     if type(rooms) is not dict or not rooms: return None
-    for row in rooms.values():
+    for alias,row in rooms.items():
         status = row.get('status', {})
         age = row.get('heartbeat_age')
         if (row.get('phase') != 'running' or row.get('healthy') is not True
                 or row.get('error') or row.get('operation') != 'owned'
-                or row.get('ownership_unknown') is not False or row.get('target')
+                or row.get('ownership_unknown') is not False
+                or (row.get('target') and not _retired_worker_target(target,parent,alias,row))
                 or row.get('admission_locked') or row.get('roster_known') is not True
                 or type(row.get('observed_players')) is not int or row['observed_players'] != 0 or type(age) not in (int,float)
                 or not math.isfinite(age) or age < 0 or age + now-generated > 8
@@ -245,7 +280,7 @@ def step(instance):
             maintenance=[r.get('status',{}).get('maintenance',{})for r in (rows or {}).values()]
             if any(m.get('uncertain') for m in maintenance):
                 save(phase='held',reason='maintenance_outcome_requires_review')
-            elif rows is None or not _same_rooms(rows,job) or now-job['lock_started']>90:
+            elif rows is None or not _same_rooms(rows,job) or now-job['lock_started']>ADMISSION_SECONDS:
                 _gate(target,parent,job,None)
                 save(phase='waiting_empty',empty_since=None,locked_since=None,reason='admission_cancelled_roster_changed_or_timed_out')
             elif not _gated(rows,job):

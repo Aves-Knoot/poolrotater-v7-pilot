@@ -1,0 +1,10 @@
+{
+  "analytics_exporter.py": {
+    "source": "/usr/local/sbin/poolrotator-wiki-analytics",
+    "before_sha256": "50c27bb7d286318b887911e9acb97ff251183557f0e54e8ce3f896ce80c9facf"
+  },
+  "analytics.php": {
+    "source": "/srv/poolrotator-wiki/dokuwiki/lib/tpl/poolrotator/analytics.php",
+    "before_sha256": "602b9dd40c50d4c5a7cecf244748337d0b5778d1b7bee79f279a105dfaceb996"
+  }
+}

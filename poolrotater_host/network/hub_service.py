@@ -281,6 +281,12 @@ def backup_package(root, destination):
                 private_digest(updates)
                 snapshot_ledger(updates,stage/'updates.sqlite3',deadline_seconds=10)
                 files['updates.sqlite3']=private_digest(stage/'updates.sqlite3')
+            for name in ('activity.sqlite3','diagnostic-logs.sqlite3'):
+                incoming=hub_root/name
+                if os.path.lexists(incoming):
+                    private_digest(incoming,512*1024**2)
+                    snapshot_ledger(incoming,stage/name,deadline_seconds=10)
+                    files[name]=private_digest(stage/name,512*1024**2)
             if policy is not None:
                 atomic_json(stage/'ratings-policy.json',policy)
                 files['ratings-policy.json']=private_digest(stage/'ratings-policy.json',512*1024)
@@ -296,7 +302,9 @@ def backup_package(root, destination):
             try:os.fsync(fd)
             finally:os.close(fd)
             return {'ok':True,'backup_created':True,'contains_private_identity_data':True,
-                    'ratings_policy_included':ratings,'update_reports_included':'updates.sqlite3'in files,'service_started':False}
+                    'ratings_policy_included':ratings,'update_reports_included':'updates.sqlite3'in files,
+                    'activity_history_included':'activity.sqlite3'in files,
+                    'diagnostic_logs_included':'diagnostic-logs.sqlite3'in files,'service_started':False}
         finally:
             if stage.exists():shutil.rmtree(stage)
 
@@ -308,6 +316,7 @@ def restore_package(source, destination, *, latest_ratings_policy=None):
     M4 restore always requires an explicitly retained latest policy input.
     """
     from .admin import restore
+    import sqlite3
     source=checked_root(Path(source))
     require(source.is_dir() and not stat.S_IMODE(source.stat().st_mode)&0o077,'private_hub_backup_required')
     manifest=read_json(source/'manifest.json')
@@ -315,25 +324,69 @@ def restore_package(source, destination, *, latest_ratings_policy=None):
     from .contracts import identifier
     identifier(manifest['hub_id'])
     require(type(manifest['format']) is int and manifest['format']==1 and type(manifest['files']) is dict
-            and 'network.sqlite3'in manifest['files'] and set(manifest['files'])<= {'network.sqlite3','ratings-policy.json','updates.sqlite3'},
+            and 'network.sqlite3'in manifest['files'] and set(manifest['files'])<= {'network.sqlite3','ratings-policy.json','updates.sqlite3','activity.sqlite3','diagnostic-logs.sqlite3'},
             'hub_backup_manifest_refused')
     require({p.name for p in source.iterdir()}=={'manifest.json',*manifest['files']},'hub_backup_manifest_refused')
     for name,digest in manifest['files'].items():
         require(type(digest) is str and re.fullmatch('[a-f0-9]{64}',digest) is not None
-                and private_digest(source/name,512*1024 if name.endswith('.json') else 256*1024**2)==digest,
+                and private_digest(source/name,512*1024 if name.endswith('.json') else 512*1024**2 if name in ('activity.sqlite3','diagnostic-logs.sqlite3') else 256*1024**2)==digest,
                 'hub_backup_identity_mismatch')
     ratings='ratings-policy.json' in manifest['files']
     require(not ratings or latest_ratings_policy is not None,'latest_ratings_policy_required',409)
     require(ratings or latest_ratings_policy is None,'unexpected_ratings_policy')
-    result=restore(source/'network.sqlite3',destination,ratings_policy=latest_ratings_policy)
-    if 'updates.sqlite3'in manifest['files']:
-        # Restore rotates authority and revokes hosts. Retain diagnostic history
-        # without presenting old reports as fresh observations of the new epoch.
-        target=Path(destination)/'retained-update-reports.sqlite3'
-        shutil.copyfile(source/'updates.sqlite3',target);target.chmod(0o600)
-        with target.open('rb')as stream:os.fsync(stream.fileno())
-    return {**result,'historical_update_reports_retained':'updates.sqlite3'in manifest['files'],
-            'current_update_reports_restored':False}
+    destination=checked_root(Path(destination))
+    require(not os.path.lexists(destination),'fresh_restore_destination_required')
+    parent=checked_root(destination.parent)
+    require(parent.is_dir() and not stat.S_IMODE(parent.stat().st_mode)&0o077,'private_restore_parent_required')
+    staging=Path(tempfile.mkdtemp(prefix='.hub-package-restore-',dir=parent))
+    try:
+        restored=staging/'state'
+        result=restore(source/'network.sqlite3',restored,ratings_policy=latest_ratings_policy)
+        if 'updates.sqlite3'in manifest['files']:
+            # Reports are retained as evidence, never as fresh observations of
+            # the new epoch whose old credentials have all been revoked.
+            target=restored/'retained-update-reports.sqlite3'
+            shutil.copyfile(source/'updates.sqlite3',target);target.chmod(0o600)
+            with target.open('rb')as stream:os.fsync(stream.fileno())
+        import sqlite3
+        from contextlib import closing
+        for name in ('activity.sqlite3','diagnostic-logs.sqlite3'):
+            if name not in manifest['files']:continue
+            target=restored/name
+            # Use SQLite backup to reject malformed SQLite files, not merely
+            # files matching a caller-manufactured manifest digest.
+            target.touch(mode=0o600)
+            with closing(sqlite3.connect((source/name).as_uri()+'?mode=ro&immutable=1',uri=True)) as incoming,closing(sqlite3.connect(target)) as outgoing:
+                require(incoming.execute('PRAGMA quick_check').fetchall()==[('ok',)],'backup_verification_failed')
+                incoming.backup(outgoing)
+                if name=='activity.sqlite3':
+                    outgoing.execute('UPDATE consents SET enabled=0')
+                    # Privacy is retained even for revoked old host identities;
+                    # restoring data must never undo a player hide request.
+                    outgoing.execute('SELECT host_id,user_id,hidden,updated_at FROM privacy LIMIT 0')
+                    outgoing.execute('SELECT event_id,host_id,payload FROM events LIMIT 0')
+                    outgoing.execute('SELECT host_id,source_key,payload FROM records LIMIT 0')
+                else:
+                    outgoing.execute('UPDATE consent SET operational=0,public_chat=0')
+                    outgoing.execute('SELECT host,event_id,text FROM logs LIMIT 0')
+                outgoing.commit()
+                require(outgoing.execute('PRAGMA quick_check').fetchall()==[('ok',)],'backup_verification_failed')
+            with target.open('rb')as stream:os.fsync(stream.fileno())
+        require(not os.path.lexists(destination),'fresh_restore_destination_required')
+        os.rename(restored,destination)
+        directory_fd=os.open(parent,os.O_RDONLY|os.O_DIRECTORY)
+        try:os.fsync(directory_fd)
+        finally:os.close(directory_fd)
+        return {**result,'historical_update_reports_retained':'updates.sqlite3'in manifest['files'],
+                'current_update_reports_restored':False,
+                'activity_history_retained':'activity.sqlite3'in manifest['files'],
+                'diagnostic_history_retained':'diagnostic-logs.sqlite3'in manifest['files'],
+                'restored_reporting_consents_enabled':False,'reporting_reauthorization_required':True}
+    except sqlite3.DatabaseError:
+        from .contracts import NetworkError
+        raise NetworkError('backup_verification_failed') from None
+    finally:
+        shutil.rmtree(staging,ignore_errors=True)
 
 
 def check_tls(root):
@@ -354,7 +407,7 @@ def main(argv=None):
     parser.add_argument('action',choices=('serve','check','backup','restore','admin'))
     parser.add_argument('admin_action',nargs='?',choices=('invite','revoke','inspect','ratings-grant',
                         'ratings-inspect','ratings-link-replacement','ratings-grant-seed',
-                        'ratings-policy','ratings-policy-recover','updates-inspect'))
+                        'ratings-policy','ratings-policy-recover','updates-inspect','activity-export','logs-search'))
     parser.add_argument('--destination',type=Path)
     parser.add_argument('--source',type=Path)
     parser.add_argument('--latest-ratings-policy',type=Path)

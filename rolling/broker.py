@@ -47,6 +47,30 @@ class Broker:
         self.hub = owner.shared.room_view(alias, EventSink(self))
         self.discord = owner.discord.view_for(alias)
         self.modlog = owner.modlogs[alias]
+        self.reporting_visibility(public=False)
+
+    def reporting_visibility(self, public=False, room_id=None):
+        # Optional reporting never changes room authority. Persist fail-closed
+        # source context before recording a confirmed visibility transition.
+        root=getattr(self.owner,'runtime',None)
+        if root is None or not self.cfg.get('_host_root'):return
+        try:
+            from poolrotater_host.reporting_logging import witness,record_visibility
+            from pathlib import Path
+            from poolrotater_host.layout import atomic_json
+            witness(root,self.alias,self.generation,room_id=room_id,public=public)
+            if room_id is not None:
+                mode='standard' if int(self.cfg.get('ruleset_id',0))==0 else 'mania7' if int(self.cfg.get('mania_keys',4))==7 else 'mania4'
+                record_visibility(Path(root)/self.cfg['ratings_db'],room_id=room_id,public=public,mode=mode,alias=self.alias)
+            (Path(root)/'state'/('reporting-visibility-invalid-'+self.alias+'.json')).unlink(missing_ok=True)
+        except Exception:
+            try:
+                from pathlib import Path
+                from poolrotater_host.layout import atomic_json
+                atomic_json(Path(root)/'state'/('reporting-visibility-invalid-'+self.alias+'.json'),{'format':1,'invalid':True})
+            except Exception:pass
+            import logging
+            logging.getLogger(__name__).warning('reporting visibility unavailable',exc_info=True)
 
     def enqueue(self, name, value):
         if self.private_pilot is not None:
@@ -77,6 +101,8 @@ class Broker:
         self.password = result.get("password")
         self.snapshot_generation = self.hub._generation()
         self.epoch += 1
+        rid=result.get("room_id")
+        self.reporting_visibility(public=self.password=="" and not self.private and type(rid) is int,room_id=rid if type(rid) is int else None)
 
     def observe(self, name, payload):
         self.epoch += 1
@@ -168,6 +194,7 @@ class Broker:
             self.journal(operation="closed", room_id=None, channel_id=None, ownership_unknown=False)
             self.uncertain = False
             self.known = False
+            self.reporting_visibility(public=False,room_id=rid)
             self.owner.room_closed(self.alias, rid)
             return result
 
@@ -193,6 +220,7 @@ class Broker:
                 self.password = ""
                 self.private = False
                 self.pending_public = False
+                self.reporting_visibility(public=True,room_id=rid)
 
     def handle(self, method, *args, **kwargs):
         if method == "worker.hello":
@@ -263,6 +291,7 @@ class Broker:
                     self.hub.roster_fenced = False
                 if operation == "ChangeRoomSettings" and "password" in values[1]:
                     self.password = values[1]["password"]
+                    self.reporting_visibility(public=self.password=="" and not self.private,room_id=int(values[0]))
                 if self.private_pilot is not None:
                     from poolrotater_host.private_pilot import scrub
                     return scrub(result)

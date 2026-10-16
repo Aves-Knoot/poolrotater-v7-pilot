@@ -112,7 +112,7 @@ def main(argv=None):
     parser.add_argument('--root',required=True,type=Path)
     parser.add_argument('action',choices=('initialize','invite','revoke','inspect','backup','restore','serve',
                                        'ratings-prepare','ratings-grant','ratings-inspect','ratings-link-replacement','ratings-grant-seed',
-                                       'ratings-policy','ratings-policy-recover','updates-inspect'))
+                                       'ratings-policy','ratings-policy-recover','updates-inspect','activity-export','logs-search'))
     parser.add_argument('--cert',type=Path);parser.add_argument('--key',type=Path)
     parser.add_argument('--bind',default='127.0.0.1');parser.add_argument('--port',type=int,default=9444)
     args=parser.parse_args(argv)
@@ -152,6 +152,15 @@ def main(argv=None):
                     result=repository.link_replacement(**value)
                 else:
                     value=input_body();fields(value,('host_id','mode'));result=repository.grant(value['host_id'],mode=value['mode'])
+            elif args.action=='activity-export':
+                from ..activity.publisher import publish_snapshot
+                value=input_body();fields(value,('output','owner_account_id'))
+                result=publish_snapshot(store,Path(value['output']),owner_account_id=value['owner_account_id'])
+            elif args.action=='logs-search':
+                from ..diagnostic_logs import HubLogs
+                value=input_body()
+                require(type(value) is dict and set(value)<={'host_id','room','version','since','until','contains','limit','cursor'},'unexpected_fields')
+                result=HubLogs(store).search(**value)
             elif args.action=='updates-inspect':
                 from ..updates.telemetry import Reports
                 value=input_body();fields(value,('host_id',));result=Reports(store).local(value['host_id'])

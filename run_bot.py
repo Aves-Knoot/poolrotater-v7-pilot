@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from bot.api import OsuApi
 from bot.auth import TokenManager
 from bot.bot import LobbyBot
+from bot.community import DEFAULT_DISCORD_INVITE
 from bot.pool import MapPool
 from bot.mode import merge_room_config
 
@@ -227,7 +228,7 @@ DEFAULT_CONFIG = {
     "discord_modlog_timeout_seconds": 5.0,
     "discord_modlog_include_instance_name": False,
     # A low-frequency, player-facing lobby reminder. Zero disables it.
-    "discord_invite_url": "https://discord.gg/maaPYSYpsj",
+    "discord_invite_url": DEFAULT_DISCORD_INVITE,
     "discord_invite_reminder_seconds": 14400,
     # Player-facing osu!standard PP projections. PoolRotater downloads the
     # exact .osu file once and calculates locally through osu-tools-py, which

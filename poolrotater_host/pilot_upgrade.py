@@ -54,9 +54,11 @@ def require_repair_compatible(before, after):
     identical; neither path executes migrations. Full inventories are verified
     independently before this check.
     """
-    if (before.get('version'), after.get('version')) not in (
+    v71 = after.get('version')=='v7.1.0' and before.get('version') in ('v7.0.6','v7.0.7','v7.0.8')
+    if not v71 and (before.get('version'), after.get('version')) not in (
             ('v7.0.1','v7.0.1'), ('v7.0.1','v7.0.2'), ('v7.0.2','v7.0.2'),
-            ('v7.0.2','v7.0.5'), ('v7.0.5','v7.0.5'), ('v7.0.1','v7.0.6'), ('v7.0.5','v7.0.6'), ('v7.0.6','v7.0.6')):
+            ('v7.0.2','v7.0.5'), ('v7.0.5','v7.0.5'), ('v7.0.1','v7.0.6'),
+            ('v7.0.5','v7.0.6'), ('v7.0.6','v7.0.6')):
         raise ConfigError('pilot repair requires its reviewed runtime family')
     for key in ('protocol', 'storage_epoch', 'requirements', 'python_hash', 'environment_hash'):
         if key not in before or before[key] != after.get(key):
@@ -72,6 +74,8 @@ def require_repair_compatible(before, after):
         # _locked requires stopped services, no children and clean ownership.
         # M4 ledger preparation remains a separate explicit stopped operation.
         return
+    if v71:
+        raise ConfigError('v7.1 requires an exact reviewed stopped migration transition')
     if before.get('version') != after.get('version'):
         raise ConfigError('new controller family requires an exact reviewed transition')
     if before['shared'].keys() != after['shared'].keys():
@@ -292,6 +296,9 @@ def _finish(target, marker, path, value, decision):
         from .runtime_defaults import prepare as prepare_defaults
         prepare_defaults(target['root'],marker,uid=value['before']['service_uid'],
                          previous_release=value['before']['release'])
+        if manifests['after'].get('version')=='v7.1.0':
+            from .activity_migration import prepare as prepare_activity
+            prepare_activity(target['root'],marker,uid=value['before']['service_uid'],owner_lease_held=True)
         from .worker_deployment import retire_after_controller_upgrade
         retire_after_controller_upgrade(target, value['before'])
     desired_raw = bytes.fromhex(value['bootstrap_' + side])

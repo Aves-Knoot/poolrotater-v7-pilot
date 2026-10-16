@@ -129,8 +129,9 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                         if supervisor.workers.get(alias) is not worker or (
                                 alias == supervisor.rollout_alias):
                             continue
-                        # Failure is emitted before the worker's finally block
-                        # closes its own room. Let that bounded cleanup settle;
+                        # Both normal shutdown and failure can disconnect RPC
+                        # before process exit becomes visible to native tick.
+                        # Let that bounded cleanup settle;
                         # the native tick parks a positively closed/reaped alias.
                         # A process/RPC can exit between tick() and this check.
                         # Give the next tick its chance to reconcile that exact
@@ -139,10 +140,9 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                         # Never use a stale status snapshot to claim closure.
                         key=(alias,id(worker))
                         seen=failing_workers.setdefault(key,time.monotonic())
-                        if (worker.failure
-                                and time.monotonic()-seen < WORKER_FAILURE_CLEANUP_SECONDS):
+                        if time.monotonic()-seen < WORKER_FAILURE_CLEANUP_SECONDS:
                             if not getattr(worker,'_failure_containment_logged',False):
-                                logging.getLogger(__name__).warning('room worker failed; waiting for alias-scoped closure before escalation: %s',alias)
+                                logging.getLogger(__name__).warning('room worker terminating; waiting for alias-scoped closure before escalation: %s',alias)
                                 worker._failure_containment_logged=True
                             continue
                         raise ConfigError(failure_code)
@@ -178,6 +178,12 @@ def run_fixed_provider_service(root, release):
     # Third-party Discord DEBUG logs contain raw payloads/private URLs. Native
     # discord_control events use a separate logger and remain observable.
     logging.getLogger('discord').setLevel(logging.WARNING)
+    from .reporting_logging import install
+    from . import __version__
+    install(root,version=__version__)
+    if __version__=='7.1.0':
+        from .activity_migration import capture_enabled
+        if not capture_enabled(root):raise ConfigError('v7.1 activity preparation required before startup')
     from .installed_authorization import installed_provider_authentication
     from .provider_transport import TrustSnapshot
     auth = installed_provider_authentication(root, release, TrustSnapshot.system(prepared=True))

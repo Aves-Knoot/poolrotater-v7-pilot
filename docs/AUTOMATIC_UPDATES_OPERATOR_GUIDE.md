@@ -1,7 +1,7 @@
 # Opt-in hub updates
 
 The qualified v7.0.6 bootstrap and public release trust are being published for
-the operator pilot. For the operator's existing dev14 `two`, use PILOT_UPGRADE_706.md
+the operator pilot. For Xikeon's existing dev14 `two`, use PILOT_UPGRADE_706.md
 (the GitHub release asset is PILOT_UPGRADE.md) for exact paths, hashes and choices.
 Dev14 has no updater. This general guide does not grant operator consent.
 
@@ -126,6 +126,27 @@ cannot be silently replaced with a different root, CA or origin.
 Pause prevents new submissions. An already accepted operation is reconciled
 durably, rather than abandoned halfway through a room handoff or controller
 transition. No uncertain provider mutation is replayed to make an update finish.
+
+## After the one-time setup
+
+Already installed v7.0.6 requires one local scheduling catch-up for its first
+controller successor. See `pilot/AUTOMATIC_UPDATE_CATCHUP.md`; the helper retains
+your settings and consent and uses the installed root updater. The maintainer
+must qualify the repair and coordinate this one bootstrap action. Subsequent
+compatible releases use normal polling alone.
+
+With polling active and your chosen automatic-install/controller permissions
+enabled, you do not need to fetch another GitHub ZIP or wait for the owner to
+send instructions for a routine compatible release. Your host checks the signed
+channel, downloads verified code, waits for the appropriate empty-room window,
+and reports progress to the hub if you enabled reporting. Controller maintenance
+may wait indefinitely while any configured room remains occupied. A paused,
+stopped, download-only or worker-only installation keeps those choices.
+
+Continue using the stable `up` command above after a controller switch. An update
+held for uncertainty requires review; it is not an instruction to reinstall or
+retry room creation. New trust roots and unsupported migrations remain separate
+local decisions.
 
 ## Held operations
 

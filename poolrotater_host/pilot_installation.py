@@ -272,6 +272,9 @@ def _install(instance, bundle, expected_sha256, *, presets, execution):
                 raise ConfigError('pilot cannot adopt a rehearsal/fixture configuration')
             result = _provision(root, prefix, Path(bundle), expected_sha256,
                                 uid=uid, execution=execution, reserve=RESERVE)
+            if spec['version']=='v7.1.0':
+                from .activity_migration import prepare as prepare_activity
+                prepare_activity(root,marker,uid=uid,owner_lease_held=True)
         return {**result, 'execution': execution, 'service_user': target['user'],
                 'service_uid': uid, 'service_installed': False, 'service_started': False,
                 'account_authorized': False, 'provider_dispatch_enabled': False}

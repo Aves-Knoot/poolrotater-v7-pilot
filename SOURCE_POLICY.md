@@ -1,10 +1,8 @@
-# Public pilot source
+# Public review source
 
-The maintainer has authorized this repository and its release downloads to be
-public for review and pilot installation. No PoolRotater source license has been
-selected or granted by this file. Public visibility does not change the terms of
-third-party components or authorize access to another operator's infrastructure.
-
-Third-party components retain their own terms. Exact pinned wheel notice/license
-texts are under notices/ and indexed in THIRD_PARTY_NOTICES.md. External system
-Python, .NET and operating-system components remain separate.
+The maintainer has authorized public distribution of this PoolRotater snapshot.
+No PoolRotater source license is selected or granted by this file.
+Third-party components retain their own terms; exact notices are bundled under
+notices/ and indexed in THIRD_PARTY_NOTICES.md. External Python, .NET and OS
+components remain separate. No OAuth, Discord, hub or signing credentials belong
+in a source tree or release kit.
