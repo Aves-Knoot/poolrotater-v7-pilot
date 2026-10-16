@@ -46,7 +46,7 @@ def execute(client,action,stream=None):
     if action=='status':return client.status()
     if action=='support':return diagnostics(client)
     if action=='configure':
-        value=decode(stream.read(65537));fields(value,('origin','ca_pem','ca_sha256','operator_id','account_id','directory'))
+        value=decode(stream.read(65537));value.setdefault('directory',True);fields(value,('origin','ca_pem','ca_sha256','operator_id','account_id','directory'))
         require(type(value['ca_pem']) is str,'invalid_network_trust')
         pem=value['ca_pem'].encode('ascii')
         require(hashlib.sha256(pem).hexdigest()==value['ca_sha256'],'network_trust_digest_mismatch')

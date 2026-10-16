@@ -1,0 +1,32 @@
+====== Community hosting and the central hub ======
+
+^ Reference | v7.1.1 documentation · reviewed October 16, 2026 |
+^ Installation | [[guides:hosting|Hosting and operating v7]] |
+
+Owner and independently hosted rooms retain the same native gameplay engine, commands and prepared selection catalogs. Each operator keeps their own account credentials, tuning, titles and moderation settings. The central hub distributes prepared databases and coordinates directory observations, shared map feedback, personal statistics and private diagnostics.
+
+===== Live rooms and activity =====
+Community rooms appear on the homepage, Live Lobbies page and sidebar with the shared map-card formatting: host label, mode, star range, observed players, available room settings, map art and estimated song progress. Timing requires an actual match-start observation bound to that room, map and match; map selection alone is not a playback clock. Progress clears when the match ends, the map changes or observations expire.
+
+The total public-room occupancy and Lobby activity total now include listed community rooms as well as owner rooms. Duplicate room IDs are removed. Occupancy includes spectators and counts room presences, not unique people across rooms. The four owner room history series remain separate. Network history begins with actual network observations; older community occupancy is not invented. Missing, stale, unavailable or truncated coverage produces a gap instead of a misleading zero.
+
+Private rooms, passwords, credentials, individual room rosters and administrative controls are not published in these cards. Reporting does not give the hub control over an operator’s osu! credentials or staff permissions.
+
+===== Prepared selection databases =====
+The owner performs collection, score research and Farm/Stream/Jump/Mania analysis centrally. Hosts download complete signed prepared catalogs and their analysis companions. These are much smaller than the central research databases because the per-player evidence has already been reduced to selection features. Current full prepared exports contain approximately 105,000 Standard maps, 19,000 Mania 4K maps and 4,000 Mania 7K maps; exact counts and signed content IDs can change with catalog publication.
+
+Once verified locally, catalogs continue serving selection during a hub outage. No remote catalog or code is trusted solely because a URL downloaded successfully.
+
+===== Sharing defaults =====
+In v7.1.1, missing reporting profiles enable public statistics sharing, shared-statistics consumption, sanitized operational diagnostics and sanitized public-chat diagnostics. Missing enrolled ratings profiles enable contribution and verified network selection; a missing new directory choice defaults to public listing. Existing explicit choices and opt-outs are preserved. New updater configuration also defaults to automatic signed pilot delivery.
+
+The hub still requires enrollment, account binding and central rating contribution permission. Those cannot be granted by changing client defaults. History imports remain separately reviewed; a new default does not upload old private or unknown-room history. [[guides:hosting|The hosting guide]] gives exact opt-out actions and explains withdrawal during outages.
+
+Personal ''.stats'' uses local confirmed caches, with coverage and privacy rules. Map ''.good''/''.bad'' feedback is a separate canonical stream used through verified snapshots. A received vote does not by itself prove snapshot consumption. Hidden statistics stay out of named public projections; another host cannot undo a hide from the originating host. See [[wiki:stats_privacy|privacy and cache limits]].
+
+===== Updates and reliability =====
+The first v7.1.0 upgrade is a stopped storage migration with retained backups. Once on that baseline, v7.1.1 can arrive through the existing signed updater. Shared controller updates wait for every configured room to be safely empty; compatible worker-only updates can roll separately. Opt-outs, saved settings and healthy occupied matches are retained. Uncertain ownership and interrupted transactions stop for review rather than blind restart loops.
+
+Hub uploads and cache refresh happen in the independent network agent, outside command-handler/provider request paths. Diagnostic queues are bounded and sanitized; private room content remains excluded. Project moderation bans stay operator-local.
+
+[[updates:start|Release history]] · [[guides:hosting|Installation and operation]] · [[technical:operator_commands|Operator actions]]

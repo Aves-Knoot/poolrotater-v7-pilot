@@ -1,0 +1,50 @@
+====== Hosting and operating v7 ======
+
+Use your own osu! account and local OAuth credentials to run PoolRotater rooms. The central hub supplies complete prepared map-selection databases; community hosts do not run the research collectors or analysis pipeline.
+
+^ Latest release | [[updates:v7_1_1|v7.1.1]] · default-on sharing with opt-outs and signed automatic updates |
+^ Existing v7.0 hosts | First perform the supported one-time [[updates:v7_1_0|v7.1.0 storage migration]]; then receive compatible successors through the updater |
+^ Qualified platform | Ubuntu 24.04 x86_64, Python 3.12 and systemd; the independent operator also uses a systemd-based LXC container |
+
+===== Download and initial setup =====
+Download the attached installer ZIP from the [[https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.1|public GitHub release]]. Verify its published SHA-256, extract into a new folder and run the included internal checksum check. Follow README.md and V7_1_1_OPERATOR_GUIDE.md. The automatically generated source ZIP is for source browsing, not installation.
+
+A fresh install defaults to one Standard Auto room. The supported two-room presets are Standard Auto and Mania 4K. Choose titles and tuning through the supported operator commands; do not run two controllers on one hosting account or edit ownership journals to add rooms.
+
+Import the full signed prepared catalogs with the kit’s public origin, keys and TLS pins. Configure and authorize your own OAuth client locally, following the loopback callback and SSH-tunnel instructions. No provider or Discord credentials are sent to the hub.
+
+For hub enrollment, obtain an invitation bound to your hosting account, installation and public operator label. Keep that invitation private. The hub’s rating contribution grant is a separate administrative permission. An existing healthy enrollment does not need to be repeated after an upgrade.
+
+===== Sharing defaults and opt-outs =====
+From v7.1.1, a missing reporting profile enables public-room statistics sharing, cached shared-statistics consumption, sanitized operational diagnostics and sanitized public-room chat diagnostics. Existing explicit settings, including false values, are preserved. New network configuration defaults to public directory listing when omitted; existing listing settings and invitation bindings remain unchanged.
+
+Only positively public rooms contribute activity or chat. Private and unknown-visibility rooms are excluded. Operational/chat diagnostics remain private administrator records with credential scrubbing and bounded retention; they are not a public chat archive. Historical player data is not imported automatically.
+
+Use the current protected admin entry’s ''network-reporting-configure'' action with this JSON on standard input to opt out of all four reporting choices:
+
+<code json>
+{"share_statistics":false,"consume_statistics":false,"operational_logs":false,"public_chat":false}
+</code>
+
+Each field can be chosen independently, except public_chat requires operational_logs. Keep the network agent running until central withdrawal is acknowledged; an unavailable hub leaves withdrawal pending. ''network-reporting-support'' shows local and synchronization status. Statistics consumption is bound at worker construction, so change it before startup or allow a safe empty-worker replacement.
+
+Missing ratings profiles default to sharing and verified network selection once enrollment is available. Explicit ''share_ratings: false'' and independent selection remain unchanged. To opt out, use ''ratings-configure'' with ''{"share_ratings":false}'' and ''ratings-reader-configure'' with ''{"mode":"independent"}''. A central contribution grant is still required; client defaults do not grant authority.
+
+===== Automatic updates =====
+New updater configuration defaults to the signed pilot channel with download, installation, controller maintenance and private update reports enabled. A local ''network-start'' on a newly enrolled v7.1.1 installation initializes a missing updater from packaged public trust pins and starts its polling timer. Existing trust, policies, pauses and an explicitly stopped updater are retained. ''update-stop'' disables polling; ''update-pause'' pauses policy. Neither kills an already committing transaction.
+
+On v7.1.0 with updates already enabled, leave healthy rooms running: v7.1.1 is discovered on the normal polling schedule. Its controller change waits until every configured room is healthy, empty and idle for thirty continuous seconds, then completes the private admission gate, at least fifteen seconds of drain and fresh ownership/player checks. A late join cancels admission. No player is removed just to install an update.
+
+Compatible worker-only releases can update individual empty rooms. Storage, dependency and authority changes require their separate migration review. A stopped bot is not started solely for automatic installation. Use ''update-status'' to distinguish discovery, waiting, installation and a recovery hold.
+
+===== Existing v7.0 hosts =====
+Follow the exact v7.1.0 README’s one-time stopped migration using your actual supported predecessor hash. Keep the same installation, OAuth, titles, tuning, catalogs, ratings, history and enrollment. Wait for all its rooms to be empty, stop normally, verify clean ownership and retain the documented private backups. Compare before/after support and settings before restarting. Reinstallation, reauthorization, catalog replacement and repeated enrollment are not normal upgrade steps.
+
+If an updater is already committing, held or recovering, resolve its supported workflow before starting another migration. Retain uncertain state and report it rather than deleting journals or repeatedly trying start.
+
+===== Running and useful feedback =====
+Leave healthy rooms and the network agent running continuously. Check titles, ranges, mode/keys, joins, READY/unready/AFK, countdowns and completed maps. Try ''.help'', ''.queue'', ''.discord'', ''.stats'', ''.good'', ''.bad'', skip and easier/harder where supported. Mark untested behavior as untested.
+
+For a report, include room links, times/timezone, version/runtime hash, completed maps and redacted support, network/reporting/ratings/update diagnostics. Record a vote’s map ID, direction and time when checking central receipt. Local capture, accepted upload, verified snapshot and selection use are distinct stages. Never send credentials, token files, invitations, backups or raw unredacted state by chat. Clean-stop checks can wait for scheduled maintenance.
+
+[[technical:operator_commands|Operator commands]] · [[wiki:distributed_hosting|Community integration]] · [[wiki:stats_privacy|Statistics and privacy]] · [[wiki:room_updates|Update behavior]] · [[wiki:selection_catalogs|Full catalogs]]

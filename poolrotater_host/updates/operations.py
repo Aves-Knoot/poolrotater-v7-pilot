@@ -82,6 +82,8 @@ def validate_configuration(data,bound):
     """Validate consent/trust/TLS/origin before publishing persistent authority."""
     import tempfile
     from .agent import policy
+    data={**{'channel':'pilot','automatic_download':True,'automatic_install':True,
+             'controller_updates':True,'paused':False,'check_seconds':1800,'report_to_hub':True},**data}
     fields(data,('origin','ca_pem','ca_sha256','bootstrap','bootstrap_sha256','channel',
                  'automatic_download','automatic_install','controller_updates','paused','check_seconds','report_to_hub'))
     root(data['bootstrap']);digest(data['bootstrap_sha256']);digest(data['ca_sha256'])

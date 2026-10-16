@@ -37,9 +37,10 @@ class Synchronizer:
         self.cursor_path=contained(root,'state/ratings-query.json')
         self.lock_path=contained(root,'state/ratings-sync.lock')
 
-    def configure(self, *, share_ratings):
+    def configure(self, *, share_ratings, only_if_missing=False):
         require(type(share_ratings) is bool,'explicit_rating_sharing_required')
         with file_lease(self.lock_path),file_lease(self.network.lock_path):
+            if only_if_missing and os.path.lexists(self.profile_path):return self.profile()
             require(local_status(self.root)['capture_enabled'],'ratings_migration_required')
             profile=self.network.profile();credential=self.network.credential()
             require(credential is not None and self.network.pending(profile) is None,'network_enrollment_required')
@@ -207,8 +208,19 @@ class Synchronizer:
                     'generation':self.marker['generation'],'sequence':rows[-1][3]})
         return len(rows)
 
+    def ensure_defaults(self):
+        """Bind a missing profile only; explicit sharing-disabled files are retained."""
+        if os.path.lexists(self.profile_path):return True
+        if not (self.root/'config/network.json').exists():return False
+        with file_lease(self.network.lock_path):
+            network=self.network.profile();credential=self.network.credential()
+            if credential is None or self.network.pending(network) is not None:return False
+            self.network.check_account(network['account_id'])
+        self.configure(share_ratings=True,only_if_missing=True)
+        return True
+
     def step(self):
-        if not os.path.lexists(self.profile_path):return {'ok':True,'phase':'not-configured','uploaded':0}
+        if not self.ensure_defaults():return {'ok':True,'phase':'not-configured','uploaded':0}
         with file_lease(self.lock_path),file_lease(self.network.lock_path):
             settings=self.profile()
             if not settings['share_ratings']:return {'ok':True,'phase':'sharing-disabled','uploaded':0}

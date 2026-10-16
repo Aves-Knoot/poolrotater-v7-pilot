@@ -1,0 +1,46 @@
+====== How room updates work ======
+
+PoolRotater separates room workers from the shared controller that owns the hosting account, referee connection and integrations. Compatible room code can move forward one empty room at a time; shared infrastructure changes need coordinated maintenance.
+
+^ Current release reference | [[updates:v7_1_1|v7.1.1]]; signed controller successor from v7.1.0 |
+^ First storage upgrade | v7.0.6/7/8 installations require the separate one-time stopped v7.1.0 migration |
+
+===== Current automatic delivery =====
+New updater configuration defaults to signed pilot downloads/installations, controller maintenance and private update reporting. Explicit saved opt-outs, pauses and stopped polling remain. A locally started enrolled v7.1.1 network agent initializes a missing updater from packaged trust. Existing v7.1.0 hosts with updates enabled discover the signed successor automatically.
+
+Controller updates require **all configured rooms**, rather than all four original slots, to be healthy, empty and idle for thirty continuous seconds. A private admission gate, at least fifteen seconds of drain and fresh roster/ownership checks follow. A late join cancels admission. Worker-only compatible updates retain their separate per-room window. Automatic updates do not bypass storage migrations, force occupied rooms closed or start a stopped bot merely to install code.
+
+===== Historical first v7.0.2 controller switch =====
+This earlier four-room bootstrap used a coordinated upgrade. It waits for **all four rooms** to be healthy, empty and idle for **30 continuous seconds**. Fresh worker and shared roster observations must agree; spectators count as occupants. It temporarily password-locks the empty rooms, drains admissions for **at least 15 seconds** and rechecks ownership and room/process identities. A late join cancels the admission attempt and releases the locks.
+
+The timer checks about every 20 seconds. In practice the switch may begin roughly one to two minutes after all rooms naturally become empty, with further time for clean closure, validation and startup. No room is emptied by kicking players. Stale status, unknown rosters, a configuration change or interrupted controller identity can hold the operation for review. Waiting is expected while people are playing.
+
+Only verified clean shutdown permits the stopped controller upgrade. Saved tuning, titles, authorization, catalogs, feedback and integrations are retained; the prior network-agent and enablement state is restored. A partially committed upgrade is held rather than blindly retried. The operation disarms its timer after completion. This initial owner bootstrap is not a generic unattended upgrade for every installation.
+
+===== Later compatible room updates =====
+After that controller activation, the maintainer can stage an exact protected artifact and queue selected rooms. The default native window is **five continuous empty-and-idle seconds**, followed by an **admission drain of at least two seconds** and further readiness checks. Both roster mirrors and fresh health/schema observations must pass. The next room waits its turn; occupied siblings continue playing.
+
+The candidate is prepared before the old room closes. Admissions are locked and rechecked, then only a confirmed empty room is closed and replaced. Its new room ID is published when healthy. Late arrivals before closure retain the old room. A room title can therefore show a different approved version from another room during rollout. A queued target is not evidence that it is running.
+
+===== What is compatible? =====
+^ Change ^ Policy ^
+| Reviewed worker-local bot commands, replies or selection code with unchanged shared contracts | May use the protected per-room queue |
+| Shared controller, account/referee transport or Discord integration | Separate coordinated controller upgrade |
+| Interpreter, dependencies, persistent stores, schemas or migrations | Separate compatibility/storage review and coordinated upgrade |
+| Catalog or trust changes | Their own verified catalog workflow; not automatically authorized by a code queue |
+| Modified immutable code, mismatched authority or unknown room ownership | Refuse or hold; retain evidence |
+
+The root-approved worker release is bound to its parent controller, installation and generation. Only worker-local bot files may differ; shared code and storage fingerprints stay pinned. Neither staging nor queuing downloads and executes arbitrary GitHub code.
+
+===== Failure, cancellation and restart =====
+A safe failed candidate can return to the previous worker. A failed deployment requires a new explicit queue attempt; it is not retried continuously. Uncertain room ownership remains fenced for recovery. A cancellation removes pending work after an active handoff settles; it does not reverse already completed rooms or interrupt a handoff midway. Approved promoted workers remain selected after a clean controller restart.
+
+Rolling update safety is separate from deliberate staff shutdown, idle room relisting, empty-room difficulty reset and READY countdowns. It is also not a guarantee that every fatal provider/service error can be isolated to one room. Do not restart healthy occupied rooms simply because an update has been published.
+
+===== Finding the current room =====
+Use the [[status:start|Live Lobbies page]] or sidebar after replacement; old bookmarks can point at closed rooms. Report an unexpected closure with the room ID, approximate time and timezone. Closing a room alone does not prove that an update occurred.
+
+===== Earlier architecture =====
+Independent compatible workers were introduced in [[updates:v6_7_0|v6.7]]. The [[updates:v6_7_22|v6.7.22 supervisor]] and [[updates:v6_7_33|v6.7.33 shared moderation maintenance]] are historical releases. Their deployment records do not establish the active version or available upgrade commands on a v7 installation.
+
+[[updates:v7_0_2|v7.0.2 release notes]] · [[technical:operator_commands|Protected operator command reference]] · [[technical:overview|Technical overview]]

@@ -1,0 +1,1937 @@
+{
+  "schema": 1,
+  "version": "v7.1.1",
+  "reviewed_on": "2026-10-16",
+  "scope": "Reviewed ordinary player commands in the retained native engine. Hosting, sharing defaults and machine-side update controls are documented separately; review does not imply deployment or actual-provider acceptance.",
+  "source_hashes": {
+    "bot/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bot/ai.py": "c40f7ff3c2fd1e5645f3cc6fbee8cd2d6bdacc1a8744b196ecdd93012c5a9611",
+    "bot/api.py": "98671c3b72601d9821936831ce35dbc5999e7a14ceae04b325169e4131b6d64f",
+    "bot/auth.py": "3ada49ce0294b9e9443cd5a090b0559fe562e13f33336e3af57b2bcd0d9f6767",
+    "bot/bot.py": "5e384477b731f6b0f1e74ffdfe436f99154058108d5743a46f30b6d92eb1c1ac",
+    "bot/chat_websocket.py": "abae9d7830a5965fe1ad386b6ab4f453b3af1650b2c0e760ab0002672d287ce2",
+    "bot/community.py": "cd976790f3edfe6377a491ebe46e4bf1d13d351c2a062a6235f1be34fdd7d6a0",
+    "bot/composition.py": "bdf89b93e55d54b48c5ca54b04d33b15ec6afc64bfb6057d2f83545442f82f9f",
+    "bot/config_lock.py": "759fc2de02e9066b9eecc451c998e7b2b9a782e30bb439e14bf51cab4bf9b834",
+    "bot/custom_greetings.py": "db8e4f7d218dcd79e2d5817200176626bc598e1f60d104a9710a5484f9a42f15",
+    "bot/discord_control.py": "341ed17fc18a0e98f05fbe3470af41720caaf8ccf55f2ae5ce7eea23de66fa6f",
+    "bot/discord_modlog.py": "dc2dc65ae5aed0e501324bdaa9480fcab8bbbd27e77af4bfae407a6c0d0f1dd3",
+    "bot/discord_reports.py": "244f9353fd101aed26e0afa81fc04950915bfe8c8d5a6808172e70b00f3a8ec2",
+    "bot/exclusions.py": "b8b4e4c2636a073894a4277ce445ec6d5d4b893c6fde9d072e813ba6b6a66d06",
+    "bot/hub.py": "764a370eaf35a58382539ecb0b57f0880a440dc771a6453fbfc97245e6abc7a1",
+    "bot/jump_catalog.py": "a7867bdb7d8cfe28d40866cb817675f3a4e13a49e1cdeeab3353a0538d051f67",
+    "bot/jump_features.py": "40fbf7d42d3012afe994c40332ca3d9b510e210309427736918d52b9e9e4b8c8",
+    "bot/language_packs.py": "ea1cfeb3cd60cb458519a845b44f8fc6e578ff7be0dcf9efd497edc9e299eb30",
+    "bot/languages.py": "0d2af74e5d4c8329383b18d9f7a48f92e14c7e1153d07345d50f2265b42378d9",
+    "bot/lazer_coordinator.py": "879d661d5f98c1abba37e69441c4610268bbbe04daff7f0394259bcc2b453261",
+    "bot/logsetup.py": "d5c16508d15b99732fabcf3dc7b734ba46a253356e264d5ea654c7060e2c44b3",
+    "bot/mania_pool.py": "169a68c620583afc215b011c7c900ca79dfaec0a41ae1af0e2cacac6832a589f",
+    "bot/mode.py": "f326e50bb3cb991333356825f9d020bbda02006d0940f345c8afa56a7a52d447",
+    "bot/moderation.py": "bae22ede2d019c7fa4be92c4e2879d283e0711e305bb5eb9a6f5322223c603a9",
+    "bot/multiroom.py": "2a04d0dac92cef9908575fce750456f48d1b56007f5074aa022c62609ed72f97",
+    "bot/player_preferences.py": "dcf16c4691a5efcaebb1f068d1c50439e47928b795224b3efef4ea31ad427895",
+    "bot/pool.py": "0d411cbce3d5b4dcfbc21f2978e58414714ed3df3fce019d314e52cc333eb64f",
+    "bot/pp_projection.py": "cbb9e6617be881d47a1c4e9c925ed64fb723359bb018c5fce62211ea09eb8d5f",
+    "bot/ppmath.py": "1fe590cd1d07850be351286af52886e5313e2c11399937e3dbdf606d9b5d0736",
+    "bot/ppstats.py": "6bdde41390e0b4a676e146de4ae43678d45883bb08cc5b843b10725716ce0803",
+    "bot/process_control.py": "68feed8536f8e11d799ab1bdac204ce41583d0c02afc73b7f932c518bdf9143d",
+    "bot/rating_outbox.py": "45ad20d8b1763450c9bc8d5c275436c595065e138b03e71f0b69ebeb1f28357b",
+    "bot/ratings.py": "cb3830ba8135197ed62afe636327b9765de83ecf916f122630931a56f708fa83",
+    "bot/standard_pool.py": "356de4f9fb9871e8fa3c4ee16dfd04785e3d0904e130ce49d3a639bc55774f45"
+  },
+  "commands": [
+    {
+      "id": "dt",
+      "title": "Double Time selection",
+      "canonical": ".dt",
+      "aliases": [],
+      "usage": [
+        ".dt",
+        ".dt 100"
+      ],
+      "usage_rulesets": {
+        ".dt": [
+          "standard"
+        ],
+        ".dt 100": [
+          "standard"
+        ]
+      },
+      "rulesets": [
+        "standard"
+      ],
+      "availability": "Ranked Standard from v6.7.11; unavailable in Mania, Loved or incompatible fixed-mod rooms.",
+      "permissions": "Active gameplay player or moderator; public command policy applies.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply.",
+        "Verified DT catalog and current native Ranked chart checksum are required."
+      ],
+      "timing": "Plain .dt adds mixed DT eligibility for future picks at any star range and preserves the queue. From v6.7.14, .dt 100 (also .dt 100%) prefers every pick DT with fresh eligible NoMod fallback and safely refreshes unplayed upcoming NM after a server audit. A running match/countdown finishes first. Plain .dt restores mixed selection; .nm opts out. Automatic eligibility starts above a 5.5-star active-window midpoint. Overrides reset with the empty-room session.",
+      "purpose": "selection",
+      "summary": "Allow mixed DT with .dt or prefer every pick DT with .dt 100 and NoMod fallback. Uses verified actual DT difficulty, played duration and repeat safeguards. Plain reply: dt enabled, buckle up gamers | Disable with .nm",
+      "search_terms": [
+        "DT",
+        "Double Time",
+        "speed",
+        "mods"
+      ],
+      "article": "commands:dt"
+    },
+    {
+      "id": "nm",
+      "title": "NoMod picks only",
+      "canonical": ".nm",
+      "aliases": [],
+      "usage": [
+        ".nm"
+      ],
+      "usage_rulesets": {
+        ".nm": [
+          "standard"
+        ]
+      },
+      "rulesets": [
+        "standard"
+      ],
+      "availability": "Ranked Standard mixed-DT rooms from v6.7.11.",
+      "permissions": "Active gameplay player or moderator; public command policy applies.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Keeps DT off at any star range until the empty-room session reset. Unplayed DT items are removed/replaced at a safe boundary; NM queue and played history remain. Running DT finishes normally. A DT countdown is cancelled only after a confirmed server acknowledgement. If no eligible NM replacement exists, start is held.",
+      "purpose": "selection",
+      "summary": "Opt out of DT and request NoMod picks only without aborting a running match.",
+      "search_terms": [
+        "NM",
+        "NoMod",
+        "disable DT",
+        "speed",
+        "mods"
+      ],
+      "article": "commands:nm"
+    },
+    {
+      "id": "help",
+      "title": "Help",
+      "canonical": ".help",
+      "aliases": [
+        {
+          "command": ".commands",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".help",
+        ".help <command>",
+        ".help2",
+        ".commands"
+      ],
+      "usage_rulesets": {
+        ".help": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".help2": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".commands": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".help <command>": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Try .help on joining, then .help skip (or another command) for a focused explanation.",
+      "purpose": "help",
+      "summary": "Show common commands and the command-reference link; request details for one command.",
+      "search_terms": [],
+      "article": "commands:help"
+    },
+    {
+      "id": "queue",
+      "title": "Queue",
+      "canonical": ".queue",
+      "aliases": [],
+      "usage": [
+        ".queue"
+      ],
+      "usage_rulesets": {
+        ".queue": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Source and style changes do not replace the visible queue.",
+      "purpose": "session",
+      "summary": "See the current map and upcoming picks.",
+      "search_terms": [],
+      "article": "commands:queue"
+    },
+    {
+      "id": "lang",
+      "title": "Language help",
+      "canonical": ".lang",
+      "aliases": [
+        {
+          "command": ".language",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".lang en|zh|ko|es|ru|ja|pl|id|fr|de",
+        ".lang en",
+        ".lang off",
+        ".language"
+      ],
+      "usage_rulesets": {
+        ".lang en": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".lang off": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".language": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".lang en|zh|ko|es|ru|ja|pl|id|fr|de": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies from v6.7.9; Japanese, Polish, Indonesian, French and German from v6.7.19",
+      "permissions": "Own preference only; English-only reset remains available when ordinary room commands are disabled. Public rate limits apply.",
+      "gates": [
+        "English is always first; shared announcements stay English.",
+        "Only supported, compact personal replies have prepared translations; missing or overlong translations fall back to English."
+      ],
+      "timing": "Choice follows the player across rooms. Country can suggest a language in requested general help only. Fresh consistent chat can trigger one quiet opt-in offer, globally spaced five minutes apart; neither switches automatically.",
+      "purpose": "help",
+      "summary": "Choose Mandarin, Korean, Spanish, Russian, Japanese, Polish, Indonesian, French or German personal guidance alongside English. en/off returns to English-only and dismisses offers.",
+      "search_terms": [
+        "language",
+        "Mandarin",
+        "Chinese",
+        "Korean",
+        "Spanish",
+        "Russian",
+        "English",
+        "translation",
+        "locale",
+        "Japanese",
+        "Polish",
+        "Indonesian",
+        "French",
+        "German"
+      ],
+      "article": "commands:lang"
+    },
+    {
+      "id": "time",
+      "title": "Time remaining",
+      "canonical": ".time",
+      "aliases": [],
+      "usage": [
+        ".time"
+      ],
+      "usage_rulesets": {
+        ".time": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies from v6.7.5",
+      "permissions": "Ordinary player; public command policy applies.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Approximate remaining time uses the running map's hit length and elapsed match time, shared with the mid-match join greeting. No running map or unavailable timing is reported explicitly.",
+      "purpose": "session",
+      "summary": "Show approximately how much time is left in the running map; mid-match join messages include a short .time hint.",
+      "search_terms": [
+        "remaining",
+        "timer",
+        "duration",
+        "next round"
+      ],
+      "article": "commands:time"
+    },
+    {
+      "id": "pool",
+      "title": "Pool",
+      "canonical": ".pool",
+      "aliases": [],
+      "usage": [
+        ".pool"
+      ],
+      "usage_rulesets": {
+        ".pool": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "A large catalog can still produce a small eligible pool after filters.",
+      "purpose": "selection",
+      "summary": "Inspect the active map range and filters.",
+      "search_terms": [],
+      "article": "commands:pool"
+    },
+    {
+      "id": "start_match",
+      "title": "Start",
+      "canonical": ".start",
+      "aliases": [],
+      "usage": [
+        ".start"
+      ],
+      "usage_rulesets": {
+        ".start": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies; active players",
+      "permissions": "Active gameplay player or moderator; command-specific checks still apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "In rooms with at least two gameplay players, at least one must be ready. Unready players receive one shared extra five seconds on their first countdown per stay, then do not delay later maps. A successful request overrides optional waits for that map. Solo behavior and referee safety checks remain.",
+      "purpose": "session",
+      "summary": "Start the normal countdown for ready players without waiting for AFK players.",
+      "search_terms": [
+        "ready",
+        "countdown",
+        "play",
+        "begin"
+      ],
+      "article": "commands:start_match"
+    },
+    {
+      "id": "wait",
+      "title": "Wait",
+      "canonical": ".wait",
+      "aliases": [],
+      "usage": [
+        ".wait"
+      ],
+      "usage_rulesets": {
+        ".wait": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies; eligible players",
+      "permissions": "Eligible player, subject to per-map allowance and start-pressure checks.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "A successful .start or recognized player start-pressure disables further optional waits for that map. Wait cannot delay a match that has already begun.",
+      "purpose": "session",
+      "summary": "Ask for ten more seconds before the map starts.",
+      "search_terms": [
+        "download",
+        "downloading",
+        "delay",
+        "countdown"
+      ],
+      "article": "commands:wait"
+    },
+    {
+      "id": "skip",
+      "title": "Skip",
+      "canonical": ".skip",
+      "aliases": [
+        {
+          "command": ".s",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".skip",
+        ".s"
+      ],
+      "usage_rulesets": {
+        ".skip": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".s": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies; active players",
+      "permissions": "Active gameplay player or moderator; command-specific checks still apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Votes have an eight-second window and can be disabled by staff. Expiry announces the final distinct-voter tally versus the current threshold, for example: Skip vote expired\u20143/4 votes; map kept. Spectators and departed players cannot sustain the quorum.",
+      "purpose": "session",
+      "summary": "Vote to skip the current map.",
+      "search_terms": [
+        "skip",
+        "next"
+      ],
+      "article": "commands:skip"
+    },
+    {
+      "id": "replay",
+      "title": "Replay",
+      "canonical": ".replay",
+      "aliases": [
+        {
+          "command": ".redo",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".repeat",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".again",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".replay",
+        ".redo",
+        ".repeat",
+        ".again"
+      ],
+      "usage_rulesets": {
+        ".replay": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".redo": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".repeat": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".again": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies; active players",
+      "permissions": "Active gameplay player or moderator; command-specific checks still apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Replay does not edit a match already being played. Voting shares the live-player quorum and short window used by skip.",
+      "purpose": "session",
+      "summary": "Vote to replay the last completed map.",
+      "search_terms": [
+        "again",
+        "repeat",
+        "redo"
+      ],
+      "article": "commands:replay"
+    },
+    {
+      "id": "harder",
+      "title": "Harder",
+      "canonical": ".harder",
+      "aliases": [],
+      "usage": [
+        ".harder"
+      ],
+      "usage_rulesets": {
+        ".harder": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies; active players",
+      "permissions": "Active gameplay player or moderator; command-specific checks still apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "The current map and visible queue are not replaced by a difficulty vote.",
+      "purpose": "selection",
+      "summary": "Vote for harder future picks.",
+      "search_terms": [
+        "difficulty",
+        "stars",
+        "difficult"
+      ],
+      "article": "commands:harder"
+    },
+    {
+      "id": "easier",
+      "title": "Easier",
+      "canonical": ".easier",
+      "aliases": [],
+      "usage": [
+        ".easier"
+      ],
+      "usage_rulesets": {
+        ".easier": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies; active players",
+      "permissions": "Active gameplay player or moderator; command-specific checks still apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Pair a successful vote with .pool to check the new range.",
+      "purpose": "selection",
+      "summary": "Vote for easier future picks.",
+      "search_terms": [
+        "difficulty",
+        "stars",
+        "easy"
+      ],
+      "article": "commands:easier"
+    },
+    {
+      "id": "good",
+      "title": "Good feedback",
+      "canonical": ".good",
+      "aliases": [
+        {
+          "command": ".g",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".good",
+        ".g"
+      ],
+      "usage_rulesets": {
+        ".good": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".g": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Feedback contributes to future map selection. It does not skip the current map.",
+      "purpose": "feedback",
+      "summary": "Rate the last completed map positively.",
+      "search_terms": [
+        "rating",
+        "feedback",
+        "like"
+      ],
+      "article": "commands:good"
+    },
+    {
+      "id": "bad",
+      "title": "Bad feedback",
+      "canonical": ".bad",
+      "aliases": [
+        {
+          "command": ".b",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".bad",
+        ".b"
+      ],
+      "usage_rulesets": {
+        ".bad": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".b": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Use .easier for difficulty adjustment or .skip for the current map; they serve different purposes.",
+      "purpose": "feedback",
+      "summary": "Rate the last completed map negatively.",
+      "search_terms": [
+        "rating",
+        "feedback",
+        "dislike"
+      ],
+      "article": "commands:bad"
+    },
+    {
+      "id": "ok",
+      "title": "Neutral feedback",
+      "canonical": ".ok",
+      "aliases": [
+        {
+          "command": ".okay",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".meh",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".mid",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".neutral",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".fine",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".average",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".alright",
+          "rulesets": [
+            "standard",
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".ok",
+        ".meh",
+        ".mid",
+        ".neutral",
+        ".okay",
+        ".fine",
+        ".average",
+        ".alright"
+      ],
+      "usage_rulesets": {
+        ".ok": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".meh": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".mid": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".neutral": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".okay": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".fine": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".average": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".alright": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Neutral feedback does not suppress the good/bad reminder cadence in v6.6.16.",
+      "purpose": "feedback",
+      "summary": "Leave neutral map feedback.",
+      "search_terms": [
+        "rating",
+        "feedback",
+        "neutral"
+      ],
+      "article": "commands:ok"
+    },
+    {
+      "id": "pp",
+      "title": "PP estimate",
+      "canonical": ".pp",
+      "aliases": [],
+      "usage": [
+        ".pp",
+        ".pp 98.5",
+        ".pp HDHR",
+        ".pp HD HR 100 99 97"
+      ],
+      "usage_rulesets": {
+        ".pp": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".pp 98.5": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".pp HDHR": [
+          "standard"
+        ],
+        ".pp HD HR 100 99 97": [
+          "standard"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "During gameplay the command uses the map frozen at match start. Estimates are informational: requesting mods does not change the lobby or your score. Calculator failures do not stop rotation.",
+      "purpose": "stats",
+      "summary": "Estimate PP with supported mods and accuracies.",
+      "search_terms": [
+        "performance",
+        "points",
+        "accuracy",
+        "mods"
+      ],
+      "article": "commands:pp"
+    },
+    {
+      "id": "stats",
+      "title": "Player statistics",
+      "canonical": ".stats",
+      "aliases": [],
+      "usage": [
+        ".stats",
+        ".stats username"
+      ],
+      "usage_rulesets": {
+        ".stats": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".stats username": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Uses local confirmed caches without handler HTTP. Unknown third-party privacy is withheld; stale or unavailable shared coverage is identified. Local tracking is retained.",
+      "purpose": "stats",
+      "summary": "View recorded local and confirmed cached shared playtime and tracked PP, subject to coverage and privacy.",
+      "search_terms": [],
+      "article": "commands:stats"
+    },
+    {
+      "id": "lobby",
+      "title": "Lobby summary",
+      "canonical": ".lobby",
+      "aliases": [],
+      "usage": [
+        ".lobby"
+      ],
+      "usage_rulesets": {
+        ".lobby": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "A bot summary and official osu! match history measure different things.",
+      "purpose": "stats",
+      "summary": "View activity recorded for this lobby.",
+      "search_terms": [],
+      "article": "commands:lobby"
+    },
+    {
+      "id": "hidden",
+      "title": "Hide statistics",
+      "canonical": ".hidden",
+      "aliases": [],
+      "usage": [
+        ".hidden"
+      ],
+      "usage_rulesets": {
+        ".hidden": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Privacy controls remain available when public commands are disabled; public rate limits still apply."
+      ],
+      "timing": "This is a visibility setting, not deletion of historical operational records. It remains available when ordinary public commands are disabled.",
+      "purpose": "stats",
+      "summary": "Hide your statistics from public lookups.",
+      "search_terms": [
+        "privacy",
+        "private",
+        "hide"
+      ],
+      "article": "commands:hidden"
+    },
+    {
+      "id": "show",
+      "title": "Show statistics",
+      "canonical": ".show",
+      "aliases": [],
+      "usage": [
+        ".show"
+      ],
+      "usage_rulesets": {
+        ".show": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Privacy controls remain available when public commands are disabled; public rate limits still apply."
+      ],
+      "timing": "Changes apply to your own visibility. Wiki accounts are separate from osu! identities.",
+      "purpose": "stats",
+      "summary": "Restore public visibility of your statistics.",
+      "search_terms": [
+        "privacy",
+        "public"
+      ],
+      "article": "commands:show"
+    },
+    {
+      "id": "discord",
+      "title": "Discord invite",
+      "canonical": ".discord",
+      "aliases": [],
+      "usage": [
+        ".discord"
+      ],
+      "usage_rulesets": {
+        ".discord": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "All lobbies",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Use the invite supplied by the live bot rather than an unverified historical invite.",
+      "purpose": "help",
+      "summary": "Show the configured invite, or the shared PoolRotater Discord when no invite is configured.",
+      "search_terms": [
+        "community",
+        "support",
+        "invite"
+      ],
+      "article": "commands:discord"
+    },
+    {
+      "id": "ai",
+      "title": "Ask the bot AI",
+      "canonical": ".ai",
+      "aliases": [],
+      "usage": [
+        ".ai your question"
+      ],
+      "usage_rulesets": {
+        ".ai your question": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Where AI chat is enabled",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply.",
+        "AI chat must be enabled; optional provider must be configured."
+      ],
+      "timing": "AI answers can be mistaken; current .help, .pool, and this verified command reference are better sources for exact controls.",
+      "purpose": "help",
+      "summary": "Ask the optional bot chat feature when enabled.",
+      "search_terms": [],
+      "article": "commands:ai"
+    },
+    {
+      "id": "farm",
+      "title": "Farm selection",
+      "canonical": ".farm",
+      "aliases": [
+        {
+          "command": ".farming",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".farm",
+        ".style farm"
+      ],
+      "usage_rulesets": {
+        ".farm": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".style farm": [
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Standard Ranked and staff-enabled Mania rooms",
+      "permissions": "Standard uses ordinary player controls; changing a Mania style requires an active gameplay player or moderator.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply.",
+        "Standard Loved selection excludes Farm.",
+        "Mania requires mania_farm_enabled and eligible farm evidence."
+      ],
+      "timing": "Mania Farm must be enabled and still respects difficulty, length, key mode, and freshness constraints. The index is not a promised PP return.",
+      "purpose": "selection",
+      "summary": "Choose Farm for future selections.",
+      "search_terms": [
+        "efficiency"
+      ],
+      "article": "commands:farm"
+    },
+    {
+      "id": "stream",
+      "title": "Stream selection",
+      "canonical": ".stream",
+      "aliases": [
+        {
+          "command": ".streams",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".streaming",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".stream",
+        ".style stream"
+      ],
+      "usage_rulesets": {
+        ".stream": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".style stream": [
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Standard Ranked and Mania",
+      "permissions": "Standard uses ordinary player controls; changing a Mania style requires an active gameplay player or moderator.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply.",
+        "Standard Loved selection excludes source switching."
+      ],
+      "timing": "The meaning depends on the mode. Mania can broaden when strict choices are exhausted.",
+      "purpose": "selection",
+      "summary": "Choose Stream for future selections.",
+      "search_terms": [],
+      "article": "commands:stream"
+    },
+    {
+      "id": "variety",
+      "title": "Variety",
+      "canonical": ".variety",
+      "aliases": [
+        {
+          "command": ".all",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".any",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".mixed",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".variety",
+        ".variety 70 30",
+        ".style variety"
+      ],
+      "usage_rulesets": {
+        ".variety": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".style variety": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".variety 70 30": [
+          "standard"
+        ]
+      },
+      "rulesets": [
+        "standard",
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Standard Ranked and Mania",
+      "permissions": "Standard uses ordinary player controls; changing a Mania style requires an active gameplay player or moderator.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply.",
+        "Standard Loved selection excludes source switching."
+      ],
+      "timing": "Mania does not accept Standard mix percentages. Vetted converts are currently limited to Mania Variety.",
+      "purpose": "selection",
+      "summary": "Return to a broad selection or Standard mix.",
+      "search_terms": [],
+      "article": "commands:variety"
+    },
+    {
+      "id": "style",
+      "title": "Mania style",
+      "canonical": ".style",
+      "aliases": [],
+      "usage": [
+        ".style",
+        ".style jack",
+        ".style chordjack",
+        ".style ln",
+        ".style tech",
+        ".style long notes",
+        ".style chord jacks",
+        ".style jack chordjack ln",
+        ".style variety|stream",
+        ".style ln,technical",
+        ".style rice",
+        ".style noodle",
+        ".style rice jack"
+      ],
+      "usage_rulesets": {
+        ".style": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style jack": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style chordjack": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style ln": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style tech": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style long notes": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style chord jacks": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style jack chordjack ln": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style variety|stream": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style ln,technical": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style rice": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style noodle": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style rice jack": [
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Mania only",
+      "permissions": "Inspection is public; preference changes require an active gameplay player or moderator.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Separate styles with spaces, commas, pipes, slashes, +, or &; existing aliases work. Variety alongside a specific style is ignored. Future picks favor charts matching every requested style, then the most matches with the fewest unrelated patterns. The visible queue stays unchanged. From v6.7.6, Rice/Noodle can combine with patterns; Rice keeps its composition boundary; from v6.7.15 Noodle falls back to native LN after strict and relaxed fresh Noodle choices run out, replacing the v6.7.7 Stream fallback. Rice and Noodle cannot be combined.",
+      "purpose": "selection",
+      "summary": "Inspect or request one or more Mania styles for future picks.",
+      "search_terms": [
+        "mania",
+        "pattern",
+        "chart"
+      ],
+      "article": "commands:style"
+    },
+    {
+      "id": "map",
+      "title": "Map details",
+      "canonical": ".map",
+      "aliases": [],
+      "usage": [
+        ".map"
+      ],
+      "usage_rulesets": {
+        ".map": [
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Mania only",
+      "permissions": "Ordinary player; command-specific state and eligibility checks apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Historical quick references incorrectly listed .map under all lobbies. The checked v6.6.16 handler is Mania only; use .queue in Standard.",
+      "purpose": "selection",
+      "summary": "Show Mania map details and its link.",
+      "search_terms": [],
+      "article": "commands:map"
+    },
+    {
+      "id": "jack",
+      "title": "Jack selection",
+      "canonical": ".jack",
+      "aliases": [
+        {
+          "command": ".jacks",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".jacking",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".jack",
+        ".style jack"
+      ],
+      "usage_rulesets": {
+        ".jack": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style jack": [
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Mania; active players",
+      "permissions": "Active gameplay player or moderator; command-specific checks still apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Classification comes from chart structure and can overlap other style labels.",
+      "purpose": "selection",
+      "summary": "Prefer repeated-note native Mania charts.",
+      "search_terms": [],
+      "article": "commands:jack"
+    },
+    {
+      "id": "chordjack",
+      "title": "Chordjack selection",
+      "canonical": ".chordjack",
+      "aliases": [
+        {
+          "command": ".chordjacks",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".chordjack",
+        ".style chordjack"
+      ],
+      "usage_rulesets": {
+        ".chordjack": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style chordjack": [
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Mania; active players",
+      "permissions": "Active gameplay player or moderator; command-specific checks still apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "A style preference affects future selections; already queued maps stay in order.",
+      "purpose": "selection",
+      "summary": "Prefer repeated-chord native Mania charts.",
+      "search_terms": [],
+      "article": "commands:chordjack"
+    },
+    {
+      "id": "ln",
+      "title": "Long-note selection",
+      "canonical": ".ln",
+      "aliases": [
+        {
+          "command": ".lns",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".longnote",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".longnotes",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".ln",
+        ".style ln"
+      ],
+      "usage_rulesets": {
+        ".ln": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style ln": [
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Mania; active players",
+      "permissions": "Active gameplay player or moderator; command-specific checks still apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Long-note evidence is structural; it does not promise a particular level of difficulty or PP efficiency.",
+      "purpose": "selection",
+      "summary": "Prefer long-note native Mania charts.",
+      "search_terms": [
+        "long",
+        "notes",
+        "holds"
+      ],
+      "article": "commands:ln"
+    },
+    {
+      "id": "technical",
+      "title": "Technical selection",
+      "canonical": ".technical",
+      "aliases": [
+        {
+          "command": ".tech",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        },
+        {
+          "command": ".technicals",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".technical",
+        ".style technical"
+      ],
+      "usage_rulesets": {
+        ".technical": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style technical": [
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Mania; active players",
+      "permissions": "Active gameplay player or moderator; command-specific checks still apply.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "The classifier is heuristic. Unsupported styles such as stamina are not implied by this command.",
+      "purpose": "selection",
+      "summary": "Prefer technical native Mania charts.",
+      "search_terms": [
+        "tech"
+      ],
+      "article": "commands:technical"
+    },
+    {
+      "id": "jump",
+      "title": "Jump",
+      "canonical": ".jump",
+      "aliases": [],
+      "usage": [
+        ".jump"
+      ],
+      "usage_rulesets": {
+        ".jump": [
+          "standard"
+        ]
+      },
+      "rulesets": [
+        "standard"
+      ],
+      "availability": "Standard Ranked lobbies from v6.7.6",
+      "permissions": "Active gameplay player or moderator; public command policy applies.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Changes future picks only. Strict fresh matches come first; bounded weaker matches avoid the last ten played or skipped rounds when possible. Difficulty, duration, pass-count, age and key-mode limits remain in force. If no qualifying maps fit, the previous pool is kept.",
+      "purpose": "selection",
+      "summary": "Select snap-aim Standard charts, including slider jumps, independently of Farm score. From v6.7.20, weighted variety favors short maps and perceived AR 9\u201310 without making either a hard filter.",
+      "search_terms": [
+        "patterns",
+        "structure"
+      ],
+      "article": "commands:jump"
+    },
+    {
+      "id": "rice",
+      "title": "Rice",
+      "canonical": ".rice",
+      "aliases": [],
+      "usage": [
+        ".rice"
+      ],
+      "usage_rulesets": {
+        ".rice": [
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Native Mania 4K and 7K from v6.7.6",
+      "permissions": "Active gameplay player or moderator; public command policy applies.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "Changes future picks only. Strict fresh matches come first; bounded weaker matches avoid the last ten played or skipped rounds when possible. Difficulty, duration, pass-count, age and key-mode limits remain in force. If no qualifying maps fit, the previous pool is kept.",
+      "purpose": "selection",
+      "summary": "Select tap-dominant native Mania charts with few holds and streams; tap chords are allowed.",
+      "search_terms": [
+        "patterns",
+        "structure"
+      ],
+      "article": "commands:rice"
+    },
+    {
+      "id": "noodle",
+      "title": "Noodle",
+      "canonical": ".noodle",
+      "aliases": [
+        {
+          "command": ".noodles",
+          "rulesets": [
+            "mania4k",
+            "mania7k"
+          ]
+        }
+      ],
+      "usage": [
+        ".noodle"
+      ],
+      "usage_rulesets": {
+        ".noodle": [
+          "mania4k",
+          "mania7k"
+        ]
+      },
+      "rulesets": [
+        "mania4k",
+        "mania7k"
+      ],
+      "availability": "Native Mania 4K and 7K from v6.7.6",
+      "permissions": "Active gameplay player or moderator; public command policy applies.",
+      "gates": [
+        "Public commands may be disabled; public rate limits apply."
+      ],
+      "timing": "From v6.7.15, strict fresh Noodle then bounded relaxed Noodle precede classified native LN fallback, replacing the v6.7.7 Stream fallback. Last ten played/skipped rounds and current/queued maps are avoided when possible. Oldest eligible Noodle/LN repeats only after both fresh pools run out. All hard room filters stay unchanged; preference remains Noodle and visible queue is preserved. If neither pool exists, previous selection is kept.",
+      "purpose": "selection",
+      "summary": "Select hold-dominant native Mania charts with meaningful held time; narrower than the existing LN style. From v6.7.15, native LN is the fallback after fresh Noodle choices run out; Stream-only maps are not a Noodle fallback.",
+      "search_terms": [
+        "patterns",
+        "structure"
+      ],
+      "article": "commands:noodle"
+    }
+  ],
+  "features": [
+    {
+      "id": "passcount_preference",
+      "title": "Successful-clear preference",
+      "article": "wiki:passcount_preference",
+      "summary": "From v6.7.17, eligible Standard, Loved and Mania maps receive a 1.0\u20131.5 times pick-weight factor using osu!'s global pass count cached from official API metadata, not local lobby results, total attempts or DT-only clears. The reference is the current fresh eligible pool maximum, not the whole database. Feedback, styles, duration bias, DT mixing and repeats remain intact.",
+      "availability": "Standard, Loved and Mania rooms running v6.7.17 or later; applies to new selections only",
+      "commands": [
+        "commands:pool",
+        "commands:good",
+        "commands:bad"
+      ]
+    },
+    {
+      "id": "mania_ln_weight",
+      "title": "Fewer long-note Variety picks",
+      "article": "wiki:mania_ln_weight",
+      "summary": "Native 4K and 7K Mania Variety gives LN- or Noodle-classified charts one-tenth their former relative selection weight. This is not a fixed percentage of rounds and does not remove maps or change hard filters. Existing feedback, farm bonuses, duration bias and repeat spacing remain. Explicit style sources including LN, Noodle and Farm keep their existing selection behavior. Already queued maps are not replaced.",
+      "availability": "Mania Variety from v6.7.12",
+      "commands": [
+        "commands:variety",
+        "commands:ln",
+        "commands:noodle",
+        "commands:pool"
+      ]
+    },
+    {
+      "id": "mixed_dt",
+      "title": "Mixed Standard DT",
+      "article": "wiki:mixed_dt",
+      "summary": "DT is automatically eligible above an active star-window midpoint of 5.5 stars; .dt opts in anywhere and .nm opts out. DT uses actual calculated difficulty, speed-adjusted duration and verified chart revisions. Outside Jump, from v6.7.13 its preferred minimum is divided by 1.5 while the preferred upper bound stays unchanged: default DT preference is 60\u2013150 played seconds, versus NoMod 90\u2013150. Shorter maps can still appear occasionally. The hard cap uses played time, so a 270-second source chart plays for 180 seconds with DT and can appear occasionally under a 240-second cap. Existing JSON duration settings apply. From v6.7.20, Jump instead prefers under 90 played seconds with no minimum and perceived AR 9\u201310, both softly. Per-item required mods restore normal speed on NoMod items; NoMod remains the majority in ordinary mixed mode when both pools are fresh. From v6.7.14, .dt 100 prefers every pick DT with fresh eligible NoMod fallback, safely refreshes unplayed upcoming NM, and permits consecutive DT; .dt restores mixing. Repeat and hard filters remain; Mania is unchanged.",
+      "availability": "Ranked Standard from v6.7.11",
+      "commands": [
+        "commands:dt",
+        "commands:nm",
+        "commands:pool",
+        "commands:pp",
+        "commands:time"
+      ]
+    },
+    {
+      "id": "match_lifecycle",
+      "title": "How a match starts and finishes",
+      "article": "wiki:match_lifecycle",
+      "summary": "Rounds move through waiting, countdown, gameplay and scoring. From v6.7.18, rooms with at least two gameplay players need only one ready player; nobody ready means waiting. Newly unready players share one extra five seconds once per stay.",
+      "availability": "All lobbies",
+      "commands": [
+        "commands:start_match",
+        "commands:wait"
+      ]
+    },
+    {
+      "id": "queues",
+      "title": "The visible queue and future selections",
+      "article": "wiki:queues",
+      "summary": "The visible queue contains already selected maps; preference changes affect later selections.",
+      "availability": "All lobbies",
+      "commands": [
+        "commands:map",
+        "commands:queue",
+        "commands:replay",
+        "commands:skip",
+        "commands:style",
+        "commands:variety"
+      ]
+    },
+    {
+      "id": "map_selection",
+      "title": "Map filters, freshness, and feedback",
+      "article": "wiki:map_selection",
+      "summary": "Pool eligibility, freshness, player feedback and mode-specific preferences work together. Standard pools below 50 eligible maps progressively relax passes down to 1,000 if needed, preserving stars, hard duration, age and source. From v6.7.20, Jump uses weighted snap-aim variety rather than highest-score-only selection, with separate soft short-length and perceived-AR preferences. Mania is unchanged.",
+      "availability": "All lobbies; filters vary by room",
+      "commands": [
+        "commands:pool"
+      ]
+    },
+    {
+      "id": "difficulty",
+      "title": "Automatic and fixed difficulty",
+      "article": "wiki:difficulty",
+      "summary": "Automatic rooms adapt their baseline; fixed rooms use a baseline that players can influence through votes.",
+      "availability": "All lobbies; automatic adaptation in Standard Room 1",
+      "commands": [
+        "commands:easier",
+        "commands:harder",
+        "commands:pool"
+      ]
+    },
+    {
+      "id": "voting",
+      "title": "Skip, replay, and difficulty voting",
+      "article": "wiki:voting",
+      "summary": "Skip, replay, and difficulty voting resolve shared room decisions using current eligible players.",
+      "availability": "Active gameplay participants; staff policy applies",
+      "commands": [
+        "commands:replay",
+        "commands:skip"
+      ]
+    },
+    {
+      "id": "ratings",
+      "title": "Good, bad, and neutral feedback",
+      "article": "wiki:ratings",
+      "summary": "Positive, negative and neutral feedback record how players judged the last completed map. Distributed installations retain local feedback and may explicitly synchronize eligible human contributions through their configured owner hub. Sharing permissions and local/shadow policy remain operator-controlled; network failures retain local selection and queued feedback.",
+      "availability": "All lobbies; last completed map and feedback window. Distributed sharing requires explicit enrollment and sharing policy.",
+      "commands": [
+        "commands:bad",
+        "commands:good",
+        "commands:ok"
+      ]
+    },
+    {
+      "id": "mania_styles",
+      "title": "Mania styles",
+      "article": "wiki:mania_styles",
+      "summary": "Structural style preferences for native Mania now require sustained pattern evidence; labels can still overlap. Rice and Noodle use existing note-composition evidence from v6.7.6.",
+      "availability": "Mania 4K and 7K; active players select preferences",
+      "commands": [
+        "commands:chordjack",
+        "commands:farm",
+        "commands:jack",
+        "commands:ln",
+        "commands:stream",
+        "commands:style",
+        "commands:technical",
+        "commands:variety",
+        "commands:rice",
+        "commands:noodle"
+      ]
+    },
+    {
+      "id": "style_fallback",
+      "title": "Style exhaustion and fallback",
+      "article": "wiki:style_fallback",
+      "summary": "Strict fresh styles precede weaker evidence. Rice retains its bounded composition. From v6.7.15, strict fresh Noodle then relaxed Noodle precede classified native LN fallback before a recent repeat; this replaces the v6.7.7 Stream tier. Hard room filters and native keys remain. The v6.7.17 pass-count factor changes weights within eligible tiers, not fallback order.",
+      "availability": "Mania 4K and 7K when enabled",
+      "commands": [
+        "commands:pool",
+        "commands:queue",
+        "commands:style"
+      ]
+    },
+    {
+      "id": "mania_farm",
+      "title": "Experimental Mania Farm",
+      "article": "wiki:mania_farm",
+      "summary": "Experimental farm evidence ranks eligible fresh charts without promising a particular PP return.",
+      "availability": "Mania 4K and 7K; staff enablement and validated evidence",
+      "commands": [
+        "commands:farm"
+      ]
+    },
+    {
+      "id": "converts",
+      "title": "Vetted Mania converts",
+      "article": "wiki:converts",
+      "summary": "Standard converts require independently verified actual Mania columns and a recalculated converted rating. Both converted and source-display ratings must fit the room range. Missing or mismatched evidence uses native maps only; admitted conversions require the matching key mod and disable difficulty/ruleset switching.",
+      "availability": "Mania Variety only; matching verified key mode, catalog revision and difficulty evidence. The eleven legacy incorrectly labelled 4K converts are quarantined.",
+      "commands": [
+        "commands:map",
+        "commands:pool"
+      ]
+    },
+    {
+      "id": "pp",
+      "title": "PP estimates",
+      "article": "wiki:pp",
+      "summary": "PP commands give informational map estimates at requested accuracies and supported mods.",
+      "availability": "All lobbies; supported mods and calculator availability",
+      "commands": [
+        "commands:pp",
+        "commands:stats"
+      ]
+    },
+    {
+      "id": "stats_privacy",
+      "title": "Statistics and privacy",
+      "article": "wiki:stats_privacy",
+      "summary": "Local and shared confirmed statistics preserve account privacy, overlap deduplication and bounded cache freshness.",
+      "availability": "All lobbies; statistics visibility belongs to the player",
+      "commands": [
+        "commands:hidden",
+        "commands:lobby",
+        "commands:show",
+        "commands:stats"
+      ]
+    },
+    {
+      "id": "room_updates",
+      "title": "Independent room updates",
+      "article": "wiki:room_updates",
+      "summary": "Signed compatible worker updates wait individually; shared controllers wait for all configured rooms; initial storage migrations remain stopped and reviewed.",
+      "availability": "After v6.7 adoption; compatible releases and an empty/idle safety window",
+      "commands": []
+    },
+    {
+      "id": "player_languages",
+      "title": "English-first language help",
+      "article": "wiki:player_languages",
+      "summary": "English-first prepared help, welcome, timing and style replies support nine additional languages: Chinese, Korean, Spanish, Russian, Japanese, Polish, Indonesian, French and German. DT/NM confirmations are translated. Explicit choices and opt-in hints persist; a configured room language supplies the initial default, safe English fallback remains, and shared announcements stay English.",
+      "availability": "All lobbies with the prepared language module; personal choices override the configured room default.",
+      "commands": [
+        "commands:lang",
+        "commands:help",
+        "commands:time",
+        "commands:variety",
+        "commands:style"
+      ]
+    },
+    {
+      "id": "unready_start",
+      "title": "Starting without waiting for AFK players",
+      "article": "wiki:unready_start",
+      "summary": "With at least two gameplay players, one ready player is enough for an automatic start or .start. Newly unready players share one extra five seconds on their first countdown per stay, then do not delay later maps. With nobody ready, the room waits. Solo behavior is unchanged; spectators and referees are excluded.",
+      "availability": "All lobbies from v6.7.18; at least two gameplay players",
+      "commands": [
+        "commands:start_match",
+        "commands:wait"
+      ]
+    }
+  ],
+  "style_arguments": {
+    "jack": "jack",
+    "jacks": "jack",
+    "jacking": "jack",
+    "chordjack": "chordjack",
+    "chordjacks": "chordjack",
+    "stream": "stream",
+    "streams": "stream",
+    "streaming": "stream",
+    "ln": "ln",
+    "lns": "ln",
+    "longnote": "ln",
+    "longnotes": "ln",
+    "technical": "technical",
+    "tech": "technical",
+    "technicals": "technical",
+    "variety": "variety",
+    "all": "variety",
+    "any": "variety",
+    "mixed": "variety",
+    "farm": "farm",
+    "farming": "farm",
+    "rice": "rice",
+    "noodle": "noodle",
+    "noodles": "noodle"
+  }
+}

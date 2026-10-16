@@ -1,3 +1,5 @@
+> Current release: v7.1.1. Missing profiles now default to sharing and automatic updates; saved explicit choices remain. Read V7_1_1_OPERATOR_GUIDE.md first. The detailed explicit setup/opt-out and trust procedures below remain references; do not repeat enrollment or replace state merely to upgrade.
+
 # Opt-in hub updates
 
 The qualified v7.0.6 bootstrap and public release trust are being published for

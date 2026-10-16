@@ -14,7 +14,16 @@ NETWORK_CONSUMPTION_QUALIFIED=True
 
 def profile(root):
     marker,_=load(root);path=contained(root,'config/ratings-reader.json')
-    if not os.path.lexists(path):return {'mode':'independent','server_epoch':None}
+    if not os.path.lexists(path):
+        from .sync import Synchronizer
+        if not (Path(root)/'config/network.json').exists():return {'mode':'independent','server_epoch':None}
+        sync=Synchronizer(root)
+        if sync.network.credential() is None:return {'mode':'independent','server_epoch':None}
+        if not sync.ensure_defaults():return {'mode':'independent','server_epoch':None}
+        settings=sync.profile();credential=sync.network.credential()
+        require(credential is not None and all(settings[k]==credential[k] for k in ('host_id','server_epoch')),
+                'ratings_restored_binding_requires_review')
+        return {'mode':'network','server_epoch':settings['server_epoch']}
     value=read_json(path);fields(value,('format','installation_id','generation','mode','server_epoch'))
     require(type(value['format']) is int and value['format']==1
             and all(value[k]==marker[k] for k in ('installation_id','generation'))

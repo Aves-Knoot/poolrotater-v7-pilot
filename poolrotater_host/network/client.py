@@ -80,7 +80,7 @@ class Client:
 
     def transport(self,profile):return self.factory(profile['origin'],TrustSnapshot(profile['ca_pem'].encode('ascii')))
 
-    def configure(self,*,url,trust,operator_id,account_id,directory=False):
+    def configure(self,*,url,trust,operator_id,account_id,directory=True):
         require(type(trust) is TrustSnapshot,'explicit_hub_trust_required');trust.context()
         value={'format':1,**self.marker,'operator_id':operator_id,'account_id':account_id,'directory':directory,
                'origin':origin(url),'ca_pem':trust.pem.decode('ascii'),'ca_sha256':hashlib.sha256(trust.pem).hexdigest()}

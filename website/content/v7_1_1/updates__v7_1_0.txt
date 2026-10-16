@@ -1,0 +1,49 @@
+====== v7.1.0 — shared statistics and private diagnostics ======
+
+^ Status | Installer/source published; hub and statistics website active; owner storage migration queued for safely empty rooms |
+^ First upgrade | Explicit stopped migration from the reviewed v7.0.6 operator, v7.0.7 owner or prepared v7.0.8 runtime |
+^ Existing rooms | Retained native engine and saved settings; no forced occupied-room update |
+
+===== Statistics across participating hosts =====
+Operators independently choose public-room statistics sharing and shared-statistics consumption. Enrollment or public directory listing does not opt a host in. New reporting choices start disabled. Public-room joins, leaves and completed-match participation are queued locally and uploaded asynchronously; private or unknown room visibility is excluded.
+
+The existing statistics page gains combined and per-host views with stable player identities, overlapping-session deduplication, coverage and freshness. Existing owner history stays intact. Reviewed cumulative historical totals are identified separately because their original session times cannot be reconstructed.
+
+[[commands:stats|.stats]] uses a local cache of confirmed shared playtime and existing tracked PP gains. Pending local history remains available and is shown separately when it cannot be reconciled safely. There is no new PP calculator or attribution of unrelated profile gains. Outages do not put network HTTP in the command path.
+
+Existing [[commands:good|.good]] and [[commands:bad|.bad]] map feedback remains a separate synchronization system. Contribution and shared-rating consumption are independent choices; enabling statistics does not change them.
+
+===== Commands and host parity =====
+[[commands:discord|.discord]] falls back to [[https://discord.gg/KmNhHbDEbv|the public PoolRotater Discord]] when no invite is configured. Explicit custom invites remain; deliberately disabled automatic reminders stay disabled. Empty messages are stopped before provider dispatch.
+
+The command review also handles missing optional AI/PP integrations, malformed nonfinite difficulty settings, whitespace input, long help replies and unavailable privacy caches. Ordinary commands, aliases, permissions, mode restrictions and hidden novelty commands are covered by isolated native-handler tests. Strict ownership and uncertain-mutation checks remain in place.
+
+===== Private diagnostics =====
+Operational log sharing includes ordinary information, lifecycle events, warnings and tracebacks. Public-lobby chat and commands require another explicit choice. Secrets are scrubbed at the logging source and checked again during upload and ingestion; the independent network agent keeps its existing isolation from OAuth files.
+
+Compressed bounded queues tolerate outages, rotation, restarts and duplicate uploads. Coverage gaps and retention losses are visible. Logs remain private administrator diagnostics, searchable by host, room, version and time. They are not a public chat archive. Local retention is seven days / 32 MiB; hub retention is fourteen days / 64 MiB per host / 512 MiB total.
+
+===== Configuration and upgrade behavior =====
+One common runtime retains the bot's commands, selection logic, full prepared catalogs, ranges, titles, permissions, OAuth, Discord, ratings, history and enrollment. Community hosts download prepared selection databases and their analysis companions; they do not rebuild central research databases.
+
+The first v7.1 upgrade adds storage and requires all rooms of that installation safely empty, a normal clean stop, a verified backup and the documented recoverable migration. It is not put on the ordinary signed automatic-update feed. After migration, compatible worker changes can still roll individually when empty; shared-controller changes require coordinated empty-room maintenance. Operators keep their own settings and consent choices.
+
+===== Qualification and activation =====
+The exact common runtime passed isolated root installation and stopped upgrades from the actual operator v7.0.6 and owner v7.0.7 baselines. Full prepared catalogs contained 105,502 Standard, 19,334 Mania 4K and 4,347 Mania 7K rows. Native workers completed matches, shared statistics/PP and ratings, scrubbed diagnostic canaries, and shut every invented room cleanly. A separate root/service-UID history helper passed explicit reviewed import and repeat deduplication.
+
+A 2,995-test source sweep exposed fifty failure/error diagnostics; each has a relevant passing resolution. The complete sweep was not repeated after localized fixes, and two exact root-only source tests remained skipped. These results do not establish actual osu!/Discord wire acceptance or an overnight production soak.
+
+Three-worker stress checks kept gameplay progressing with reporting enabled, a full 50,000-event queue and an unavailable hub. Cached ''.stats'' handler p95 was about 1.3 ms in the isolated local measurement, with no handler HTTP; this excludes transport. Whole-batch donor command measurements took 58–76 seconds under deliberate provider pacing and startup traffic, including the reporting-off baseline, so they are not a production speed guarantee. Observed peak UID memory rose about 24 MiB in the unequal off/on workloads.
+
+[[https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.0|Download the qualified v7.1.0 installer and exact upgrade instructions]]. Use the attached installer ZIP, not GitHub’s generated source archive. Its SHA-256 is ''38a47f20ff7c2f79067a55d5db38324a7705d8ec7b955f1703b2886949a28d2a''; runtime SHA-256 is ''8c0971747c77a22a992749a6171363d60eb4a3bdc5f87460c55f88d881a21d35''. Public payload checks found no unresolved credential/contact findings. The original 215-file runtime and its 27 dependency wheels were audited; a separate scan of thirty-one added public documentation/helper files found no flags. The final kit passed sixty checksums, archive inventory/CRC and thirty-five shell syntax examples.
+
+The owner's current rooms remain on [[updates:v7_0_7|v7.0.7]] while the guarded v7.1 migration waits. The hub, private statistics publisher and existing statistics website are upgraded. Existing owner history is retained; community statistics appear only after a participating host upgrades and explicitly opts in. No operator’s reporting choices were enabled by this deployment.
+
+The one-time owner job waits for all three configured rooms to be healthy, idle and continuously empty for thirty seconds, then confirms temporary private admission gates and drains for at least fifteen seconds. A fresh player check precedes stopping; a late join cancels admission. It makes a verified private backup before the stopped storage migration, preserves settings and credentials, and restores the prior service intent. Uncertain outcomes stop for review instead of triggering repeated restarts. No occupied room is forced closed. Automatic Standard remains intentionally disabled.
+
+The queued migration is separate from the ordinary signed automatic-update feed; publishing this release does not remotely migrate other installations. The website deployment also bounds memory used by leaderboard generation while retaining the full historical inputs. The qualified operator runtime and installer checksums above remain unchanged.
+
+[[updates:start|Release history]] · [[wiki:stats_privacy|Statistics and privacy]] · [[commands:start|Commands]]
+
+===== Successor =====
+[[updates:v7_1_1|v7.1.1]] changes missing-profile defaults to enabled with opt-outs and adds signed automatic delivery from the exact v7.1.0 baseline. The original v7.1.0 installer and its disabled-by-default reporting behavior are unchanged. Existing explicit profiles remain authoritative. Follow [[guides:hosting|the current hosting guide]] for the one-time migration and successor rollout.

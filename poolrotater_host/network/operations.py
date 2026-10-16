@@ -137,5 +137,8 @@ def unit(instance,action):
         directory_fd=os.open(pilot.UNIT_BASE,os.O_RDONLY|os.O_DIRECTORY)
         try:os.fsync(directory_fd)
         finally:os.close(directory_fd)
+    if action=='start':
+        from ..updates.defaults import initialize as initialize_updates
+        initialize_updates(instance)
     return {'ok':True,'network_service_installed':action!='remove','network_service_state':state['ActiveState'],
             'network_service_enabled':False,'live_rooms_affected':False,'production_deployed':False}

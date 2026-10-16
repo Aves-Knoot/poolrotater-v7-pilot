@@ -1,0 +1,33 @@
+====== Statistics and privacy ======
+
+AutoHost records statistics separately from official profile totals and supports public-visibility controls.
+
+^ Availability | All lobbies; statistics visibility belongs to the player |
+^ Documentation status | Current behavior |
+^ Behavior reference | v7.1.1 · reviewed 2026-10-16 |
+
+
+[[commands:stats|.stats [username]]] shows AutoHost playtime and recorded PP-gain statistics, while [[commands:lobby|.lobby]] summarizes room activity. They describe data recorded by the bot and can differ from official osu! profile totals.
+
+Use [[commands:hidden|.hidden]] to withhold your statistics from public lookups; use [[commands:show|.show]] to make them public again. These controls remain available when staff temporarily suppress ordinary public commands. Hiding is a visibility choice, not deletion of historical logs or an osu! account privacy setting.
+
+The website publishes [[statistics:start|public player rankings and achievements]] and anonymous [[status:start|lobby activity]]. It applies the same account-wide visibility choice: hidden players are excluded from named rankings, spotlights and details at the next refresh, normally within five minutes. Anonymous community totals still include their activity. See [[statistics:how_it_works|the metric and visibility rules]]. It does not publish raw chat or private staff reports. Wiki editor accounts are separate from osu! identities. See [[community:contributing|editor rules]].
+
+===== Worked example =====
+Use ''.hidden'' to hide your statistics from public lookups; ''.show'' restores visibility. ''.stats'' requests your recorded AutoHost statistics.
+
+===== Limitations =====
+Visibility is not deletion of operational history. Wiki accounts and osu! identities are separate.
+
+===== Related articles =====
+See [[commands:hidden|a related guide]] and [[wiki:start|all features]].
+
+===== Participating community hosts in v7.1 =====
+Statistics sharing and shared-statistics consumption require separate operator choices. Private rooms and unknown visibility are excluded from new sharing. Historical imports require reviewed public-room provenance and explicit authorization. Shared intervals and achievements are deduplicated; cumulative historical time is identified separately when exact overlap cannot be known.
+
+A hidden preference received from any participating sharing host suppresses named shared lookups, including username searches. Another host cannot undo it: use ''.show'' on the originating host or hosts. A host with statistics sharing disabled does not export its privacy commands; local privacy still applies there. Offline caches have bounded freshness, so propagation is not instantaneous. Anonymous totals can still include hidden activity.
+
+Operational diagnostics and public chat/command reporting have separate operator choices. They remain private administrator records with credential scrubbing and bounded retention, not publicly visible statistics. Visibility controls are not deletion of operational history. [[updates:v7_1_0|v7.1 release notes]] distinguish prepared features from live activation.
+
+===== v7.1.1 default policy =====
+Missing reporting profiles enable public statistics sharing and shared-statistics consumption, plus separate sanitized operational/public-chat diagnostics. Existing explicit opt-outs remain. Only positively public rooms contribute; history imports still require review. Diagnostics remain private administrator records with the existing retention limits and scrubbing. [[guides:hosting|The hosting guide]] shows the four booleans and exact opt-out actions. Disabling sharing does not instantly deliver central withdrawal during an outage; keep the network agent running until acknowledged.

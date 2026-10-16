@@ -1,3 +1,5 @@
+> Historical v7.1.0 reference. For v7.1.1 defaults and opt-outs, use V7_1_1_OPERATOR_GUIDE.md.
+
 # v7.1 sharing and command parity
 
 Status: technical qualification complete for the exact v7.1.0 artifact and tested

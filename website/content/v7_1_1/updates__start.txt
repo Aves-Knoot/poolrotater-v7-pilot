@@ -1,0 +1,121 @@
+====== Release history ======
+
+Player-facing patch summaries, newest first. Compatible updates are cumulative, but owner and independent-host packages can follow different supported baselines. Publishing a download, queuing an update and observing it installed are separate events.
+
+===== Current rollout =====
+**Reviewed October 15/16, 2026 Pacific time:** The owner's three configured rooms—fixed Standard, Mania 4K and Mania 7K—are running **[[updates:v7_0_7|v7.0.7]]**. Automatic Standard remains intentionally disabled; three owner rooms is the expected topology.
+
+**[[updates:v7_1_1|v7.1.1]] is the latest published successor**, with default-on sharing, explicit opt-outs, signed automatic delivery and network-wide occupancy totals. It supports the exact v7.1.0 baseline. Existing v7.0.6/7/8 hosts first use the supported one-time [[updates:v7_1_0|v7.1.0 stopped storage migration]]; the automatic feed does not cross that storage boundary. New defaults preserve explicit operator choices.
+
+The hub, private statistics publisher and existing statistics website are upgraded. The owner’s first v7.1.0 migration is queued for a natural all-three-empty window; publication of v7.1.1 does not mean those rooms have already migrated. Other hosts’ installed versions must be confirmed from their own diagnostics.
+
+[[updates:v7_0|v7]] retains the familiar gameplay while adding independently operated lobbies, complete centrally prepared signed catalogs and optional directory/feedback sharing. Compatible worker-only updates can wait room by room; a shared-controller change needs coordinated empty-room maintenance. [[wiki:room_updates|Update behavior]] explains the admission and recovery checks. [[status:start|Live Lobbies]] supplies fresh observations; the version statements here are dated review facts.
+
+===== Public source and downloads =====
+[[https://github.com/Aves-Knoot/poolrotater-v7-pilot|The GitHub repository and existing release downloads are now public]]. Full published history and all 47 release assets were audited for sensitive information before the change. No live credentials, private signing keys, private contact details or player-history tables were found. Public handles and dependency attribution remain. Secret scanning and push protection are enabled. This visibility/documentation change preserves runtime bytes, existing checksums, settings and running rooms; it does not assign a new bot version or enable automatic installation.
+
+===== Recent patches =====
+^ Version ^ Subject ^ Status ^
+| [[updates:v7_1_1|v7.1.1]] | Default-on sharing with opt-outs, automatic delivery, combined community occupancy and hosting documentation | Published signed successor for v7.1.0; controller waits for safely empty rooms |
+| [[updates:v7_1_0|v7.1.0]] | Shared personal statistics, community statistics views, private diagnostic logs and cross-host command repairs | Hub and statistics website active; owner migration queued until all three rooms are safely empty; independent consent required |
+| [[updates:v7_0_8|v7.0.8]] | Distributed room-retirement repair and ordinary-timer admission fix | Historical prepared operator repair; not feed-published; v7.1 supplies the common stopped-migration path |
+| [[updates:v7_0_7|v7.0.7]] | Bounded normal-room retirement and canceled predecessor target checks | Running in the owner’s three configured rooms |
+| [[updates:v7_0_6|v7.0.6]] | Opt-in signed release feed, independent polling and update reporting | Published operator bootstrap; independent host reports this version |
+| [[updates:v7_0_5|v7.0.5]] | Chat timeout resilience and scoped, positively closed worker failure containment | Included in cumulative owner v7.0.7 |
+| [[updates:v7_0_4|v7.0.4]] | Playlist validation, pending queue IDs and bounded liveness retries | Included in cumulative owner v7.0.5 and later operator builds |
+| [[updates:v7_0_3|v7.0.3]] | Short help, full feedback command names and translated guidance | Included in cumulative owner v7.0.5 and later operator builds |
+| [[updates:v7_0_2|v7.0.2]] | Guarded controller/worker updates and alternating community reminders | Foundation retained in cumulative owner and operator builds |
+| [[updates:v7_0_1|v7.0.1 — pilot repair history]] | Independent hosting, owner-tuned defaults, startup/chat/recovery and display repairs | Historical dev-series notes; current versions listed above |
+| [[updates:v7_0|v7.0 foundation]] | Independent hosts, prepared signed catalogs and optional directory/feedback | Retained distributed-hosting foundation |
+| [[updates:v6_7_34|v6.7.34]] | Temporary project bans with persistent expiry | Historical; retained in v7 pilot |
+| [[updates:v6_7_33|v6.7.33]] | Owner/moderator kick, persistent project ban, unban and ban list | Historical; retained in cumulative v7 pilot |
+| [[updates:v6_7_32|v6.7.32]] | Hot-loaded exact-chart exclusions and safe playlist cleanup | Historical; retained in cumulative v7 pilot |
+| [[updates:v6_7_31|v6.7.31]] | Additional reported missing-audio Standard chart excluded | Included in cumulative v6.7.32 |
+| [[updates:v6_7_30|v6.7.30]] | DT catalogue age becomes a refresh signal, not a global cutoff | Included in all observed workers |
+| [[updates:v6_7_29|v6.7.29]] | Nine more reported muted charts excluded across Standard/4K/7K | Included in v6.7.30 and later |
+| [[updates:v6_7_28|v6.7.28]] | Reported missing-audio 4K chart excluded | Included in v6.7.29 and later |
+| [[updates:v6_7_27|v6.7.27]] | Adaptive approximately hourly song-family repeat spacing | Included in v6.7.28 and later |
+| [[updates:v6_7_26|v6.7.26]] | Safe skips after difficulty/mod changes; fresh queued DT revision checks | Included in v6.7.27 and later |
+| [[updates:v6_7_25|v6.7.25]] | Pinned Mania validation reads; restored read-only collector access | Reached all four rooms; included in v6.7.26 |
+| [[updates:v6_7_24|v6.7.24]] | Refreshed paired Standard, DT and Jump catalogs | Included in v6.7.25 and later |
+| [[updates:v6_7_23|v6.7.23]] | Post-game results hold; fresh intermission timer on return to lobby | Included in v6.7.25 and later |
+| [[updates:v6_7_22|v6.7.22]] | Five-second hot-loadable deployment wait; guarded all-empty supervisor upgrade | Supervisor deployed; five-second wait active |
+| [[updates:v6_7_21|v6.7.21]] | Internal private maintenance gate bridge | Superseded by deployed cumulative v6.7.22/23 |
+| [[updates:v6_7_20|v6.7.20]] | Snap-aim Jump, slider transitions, short preference and weighted variety | Deployed; cumulative bridge includes it |
+| [[updates:v6_7_19|v6.7.19]] | Five additional personal bot languages and complete prepared reply coverage | Included in v6.7.20 and later |
+| [[updates:v6_7_18|v6.7.18]] | AFK/readiness fix; one ready player and one shared five-second grace | Included in v6.7.20 and later |
+| [[updates:v6_7_17|v6.7.17]] | Global successful-clear pick preference, up to 1.5× weight | Included in v6.7.20 and later |
+| [[updates:v6_7_16|v6.7.16]] | Standard playlist synchronization after rapid skips | Included in v6.7.20 and later |
+| [[updates:v6_7_15|v6.7.15]] | Noodle falls back to native LN, not Stream | Included in v6.7.20 and later |
+| [[updates:v6_7_14|v6.7.14]] | Full-DT preference; safe queue refresh; NoMod fallback | Included in v6.7.20 and later |
+| [[updates:v6_7_13|v6.7.13]] | Shorter DT preference; played-time length limits | Included in v6.7.20 and later |
+| [[updates:v6_7_12|v6.7.12]] | Fewer LN/Noodle picks in Mania Variety | Included in v6.7.20 and later |
+| [[updates:v6_7_11|v6.7.11]] | Verified mixed Standard DT; .dt/.nm controls | Included in v6.7.20 and later |
+| [[updates:v6_7_10|v6.7.10]] | Pass-count fallback for sparse Standard pools | Included in v6.7.20 and later |
+| [[updates:v6_7_9|v6.7.9]] | English-first personal guidance; .lang | Included in v6.7.20 and later |
+| [[updates:v6_7_8|v6.7.8]] | Preferred duration and a separate hard cap | Earlier cumulative update |
+| [[updates:v6_7_7|v6.7.7]] | Initial Noodle → Stream fallback | Superseded by LN fallback in v6.7.15 |
+| [[updates:v6_7_6|v6.7.6]] | Standard Jump; Mania Rice and Noodle | Earlier cumulative update |
+| [[updates:v6_7_5|v6.7.5]] | Remaining-map time and a short join hint | Earlier cumulative update |
+| [[updates:v6_7_4|v6.7.4]] | Final tally for expired skip votes | Earlier cumulative update |
+| [[updates:v6_7_3|v6.7.3]] | Actual converted keys and Mania-rating safeguards | Earlier cumulative update |
+
+===== Earlier releases =====
+The archive now includes owner-supplied Discord announcements back to AutoHost v5.3. The v5.3 timestamp was not included in the extract; the dated additions span September 6–15, 2026. This remains an incomplete lifetime history: gaps do not prove that no change happened. Announcement timestamps and staged labels do not establish deployment dates. Historical timers, client requirements and Room 3 Loved behavior differ from today's setup; use current feature guides for current behavior.
+
+^ Version ^ Subject ^ Status ^
+| [[updates:v6_7_2|v6.7.2]] | Website live maps, OAuth recovery, Discord relay and update safeguards | Deployed October 1, 2026 |
+| [[updates:v6_7_1|v6.7.1]] | Restored headless chat replies, announcements and polling | Deployed October 1, 2026 |
+| [[updates:v6_7_0|v6.7.0]] | Independent room updates, quieter chat and database reliability | Initial adoption October 1, 2026 |
+| [[updates:v6_6_23|v6.6.23]] | Quieter lobby chat | Superseded; included in v6.7.0 |
+| [[updates:v6_6_22|v6.6.22]] | Combined Mania styles and quiet fallback | Deployed October 1, 2026 |
+| [[updates:v6_6_19|v6.6.19]] | Expanded Mania catalogs and refreshed Farm | Included in v6.6.22 |
+| [[updates:v6_6_18|v6.6.18]] | Clearer difficulty vote prompts | Historical |
+| [[updates:v6_6_17|v6.6.17]] | Common Mania style aliases | Deployed September 28, 2026 |
+| [[updates:v6_6_16|v6.6.16]] | Quieter feedback reminders | Historical |
+| [[updates:v6_6_15|v6.6.15]] | Strongest fresh Mania Farm picks first | Historical |
+| [[updates:v6_6_14|v6.6.14]] | Mania style exhaustion fallback | Historical |
+| [[updates:v6_6_13|v6.6.13]] | Mania Farm availability calibration | Historical |
+| [[updates:v6_6_12|v6.6.12]] | Log retention | Historical |
+| [[updates:v6_6_11|v6.6.11]] | Personal join guidance | Historical |
+| [[updates:v6_6_10|v6.6.10]] | Mania Farm weighting and sparse pools | Historical |
+| [[updates:v6_6_9|v6.6.9]] | Vetted Mania converts | Historical |
+| [[updates:v6_6_8|v6.6.8]] | Farm-aware Mania Variety | Historical |
+| [[updates:v6_6_7|v6.6.7]] | Replay voting | Historical |
+| [[updates:v6_6_6|v6.6.6]] | Wait during countdown | Historical |
+| [[updates:v6_6_5|v6.6.5]] | Lobby onboarding and pacing | Historical |
+| [[updates:v6_6_4|v6.6.4]] | Download-safe retries and live votes | Historical |
+| [[updates:v6_6_3|v6.6.3]] | One-click lazer joining | Historical |
+| [[updates:v6_6_2|v6.6.2]] | Countdown insight and availability | Historical |
+| [[updates:v6_6_1|v6.6.1]] | VPS reliability and safe releases | Historical |
+| [[updates:v6_4_8|v6.4.8]] | Versioning and difficulty titles | Historical |
+| [[updates:v6_4_7|v6.4.7]] | Embedded PP and mod arguments | Historical |
+| [[updates:v6_4_6|v6.4.6]] | Public PP command | Historical |
+| [[updates:v6_4_5|v6.4.5]] | Runtime configuration and PP | Historical |
+| [[updates:v6_4_4|v6.4.4]] | Status startup reliability | Historical |
+| [[updates:v6_4_3|v6.4.3]] | Parked-room reopening | Historical |
+| [[updates:v6_4_2|v6.4.2]] | Player start control | Historical |
+| [[updates:v6_4_1|v6.4.1]] | Command reliability and permissions | Historical |
+
+| [[updates:v6_4|v6.4]] | Outage recovery and multiroom stability | Archived Discord announcement; September 10, 2026 |
+| [[updates:v6_3|v6.3]] | Real-time shared chat and headless hosting | Archived Discord announcement; September 10, 2026 |
+| [[updates:v6_2|v6.2]] | Public per-lobby status cards | Archived Discord announcement; September 10, 2026 |
+| [[updates:v6_1|v6.1]] | Fixed-range difficulty votes and separate Loved support | Archived Discord announcement; September 10, 2026 |
+| [[updates:v6_0|v6.0]] | Headless multiroom, shared transports and empty AutoDiff reset | Archived Discord announcement; September 8, 2026 |
+| [[updates:v5_7_2|v5.7.2]] | Shared API usage monitoring | Archived Discord announcement; September 7, 2026 |
+| [[updates:v5_7_1|v5.7.1]] | Automatic lazer joining on creation and recovery | Archived Discord announcement; September 7, 2026 |
+| [[updates:v5_7|v5.7]] | Discovery refresh, lazer rejoin and vote counts | Archived Discord announcement; September 7, 2026 |
+| [[updates:v5_6|v5.6]] | Scheduled six-hour discovery refresh | Archived Discord announcement; September 7, 2026 |
+| [[updates:v5_5_3|v5.5.3]] | Configurable difficulty votes and live JSON tuning | Archived Discord announcement; September 6, 2026 |
+| [[updates:v5_5_2|v5.5.2]] | Close automatically once empty | Archived Discord announcement; September 6, 2026 |
+| [[updates:v5_5_1|v5.5.1]] | Staff retention report | Archived Discord announcement; September 6, 2026 |
+| [[updates:v5_5|v5.5]] | Discord-only staff activity reports | Archived Discord announcement; September 6, 2026 |
+| [[updates:v5_4_2|v5.4.2]] | Discord map tracking and event reactions | Archived Discord announcement; September 6, 2026 |
+| [[updates:v5_4_1|v5.4.1]] | Four-hour Discord invite reminders | Archived Discord announcement; September 6, 2026 |
+| [[updates:v5_4|v5.4]] | Cleaner transcript and role-based controls | Archived Discord announcement; September 6, 2026 |
+| [[updates:v5_3|v5.3]] | Original Discord companion | Archived Discord announcement; timestamp not supplied |
+
+===== Related historical announcements =====
+[[updates:september_2026_announcements|September 2026 development and maintenance announcements]] preserves the unversioned September 7, September 8 and September 10 posts separately. These were not additional release numbers.
+
+[[commands:start|Player commands]] · [[wiki:start|How the bot works]]

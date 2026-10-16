@@ -1,0 +1,19 @@
+====== How documentation is verified ======
+
+Documentation review and live deployment are separate facts. The site identifies the latest released version reviewed against its source and article fingerprints, while retaining a separate observed command inventory and running bot version. A queued update never becomes evidence that rooms run it.
+
+===== Latest release review =====
+The maintainer checks the exact release source, commands, behavior changes, hosting/operation guidance, default policy, opt-outs and upgrade boundary. The reviewed documentation manifest records all bot source fingerprints, command syntax/aliases, mode and permission restrictions, feature links and review date. A root-controlled review receipt binds the published manifest and reviewed article bytes. If those fingerprints change, the banner stops claiming that review is current until it is refreshed. This is a documentation review, not an actual-player or provider-wire acceptance claim.
+
+===== Deployed inventory =====
+The native inventory publisher independently checks the protected registered runtime, source hashes, current healthy workers and reviewed manifest. It follows the installation’s configured room set; the owner’s intentionally disabled fourth room does not make a healthy three-room installation fail verification. Missing configured rooms, stale workers, changed code or mismatched manifests keep publication pending. Preparation has no provider credentials or lobby-control authority.
+
+The publisher uses native wiki revisions, page locks and ownership hashes. It preserves contributor prose outside managed tables and refuses conflicting edits. It runs every five minutes. Unchanged inventories do not create new revisions. Machine-side operator actions stay separate from player dot commands.
+
+===== Editorial review =====
+Detailed explanations and historical announcements keep their Behavior reference. A current command inventory is not a promise that every historical paragraph describes the latest release. New release notes, the hosting guide and affected privacy/operation articles are reviewed together; historical release pages keep their dated behavior, with successor links where needed.
+
+===== Status and statistics =====
+Owner status refreshes through its existing fast exporter; community observations use independent fresh heartbeats. Statistics and occupancy history normally refresh every five minutes. The all-public-room activity total includes listed community hosts, with gaps when complete fresh evidence is unavailable. Coverage does not imply that every host enabled personal statistics sharing.
+
+[[wiki:documentation_health|Documentation health]] · [[commands:start|Commands]] · [[wiki:feature_inventory|Feature inventory]] · [[updates:start|Release history]] · [[guides:hosting|Hosting]]

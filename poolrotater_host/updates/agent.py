@@ -30,8 +30,8 @@ def policy(value, binding):
     return value
 
 
-def configure(client, *, channel='stable', automatic_download=False, automatic_install=False,
-              controller_updates=False, paused=False, check_seconds=1800, report_to_hub=False):
+def configure(client, *, channel='pilot', automatic_download=True, automatic_install=True,
+              controller_updates=True, paused=False, check_seconds=1800, report_to_hub=True):
     value = policy({'format':1,'binding':client.binding,'channel':channel,
         'automatic_download':automatic_download,'automatic_install':automatic_install,
         'controller_updates':controller_updates,'paused':paused,'check_seconds':check_seconds,

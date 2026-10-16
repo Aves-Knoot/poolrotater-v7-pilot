@@ -1,4 +1,4 @@
-"""Explicit reporting consent and isolated background synchronization.
+"""Default-on reporting with durable operator opt-outs and isolated synchronization.
 
 No provider adapters, room locks or provider credentials are used here. The
 network service retains its OAuth namespace isolation.
@@ -17,7 +17,7 @@ CHOICES=('share_statistics','consume_statistics','operational_logs','public_chat
 
 def profile(root):
     root=Path(root);marker,_=load(root);path=contained(root,'config/reporting.json')
-    if not os.path.lexists(path):return {'format':1,**{k:marker[k] for k in ('installation_id','generation')},**dict.fromkeys(CHOICES,False)}
+    if not os.path.lexists(path):return {'format':1,**{k:marker[k] for k in ('installation_id','generation')},**dict.fromkeys(CHOICES,True)}
     value=read_json(path);fields(value,('format','installation_id','generation',*CHOICES))
     require(type(value['format']) is int and value['format']==1,'invalid_reporting_profile')
     require(all(value[k]==marker[k] for k in ('installation_id','generation')),'foreign_reporting_profile')

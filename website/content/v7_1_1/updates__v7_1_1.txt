@@ -1,0 +1,27 @@
+====== v7.1.1 — shared defaults and automatic delivery ======
+
+^ Distribution | Published installer and signed pilot successor for the exact v7.1.0 runtime |
+^ Upgrade class | Controller update; unchanged storage, dependencies and gameplay engine |
+^ Admission | All configured rooms safely empty; occupied rooms continue until players leave naturally |
+
+===== Defaults with opt-outs =====
+Missing reporting profiles now enable public-room statistics sharing, cached shared-statistics consumption, sanitized operational logs and sanitized public chat diagnostics. Existing explicit choices, including false values, remain unchanged. Private and unknown-visibility rooms are excluded. Operational/chat diagnostics are private to the hub administrator, not published as a chat archive. Historical imports remain separately reviewed.
+
+Missing enrolled rating profiles default to contribution and verified network ratings. Existing contribution opt-outs and independent selection remain unchanged; server grants and account/epoch bindings remain required. New network configuration defaults to public directory listing when omitted.
+
+New updater configuration defaults to automatic signed pilot downloads, installation, coordinated controller maintenance and private update reporting. An enrolled v7.1.1 host’s local network-start initializes a missing updater from the kit’s public trust pins. Existing trust, pauses, policies and stopped updater intent are preserved.
+
+===== Delivery =====
+The first [[updates:v7_1_0|v7.1.0 storage migration]] remains a one-time supported stopped upgrade. It is not bypassed by the signed feed. Once an installation is on the exact published v7.1.0 runtime with its updater enabled, it can receive this successor automatically on its normal polling schedule.
+
+This controller update waits for thirty continuous healthy empty-and-idle seconds across every configured room, confirms private admission gates, drains for at least fifteen seconds and rechecks players/ownership. A late join cancels admission. The normal stopped switch preserves settings, OAuth, Discord, catalogs, history, votes and enrollment. Compatible later worker updates can still roll one room at a time.
+
+===== Website and documentation =====
+The homepage/live counts and Lobby activity total include owner and listed community public rooms, deduplicated by room ID. Counts include spectators and are occupancy, not unique people. Owner history remains intact; combined history starts with observed network readings. Unknown or stale coverage leaves a gap.
+
+Hosting, operation, defaults, opt-out and upgrade guides are refreshed. The documentation verifier now follows the configured owner room set, including the intentionally disabled fourth room. A hash-bound documentation review identifies the latest reviewed release separately from the live bot version.
+
+===== Validation =====
+The affected 221-test suite passed. An isolated protected root/service-UID v7.1.0-to-v7.1.1 upgrade passed with complete prepared catalogs (105,502 Standard, 19,334 Mania 4K, 4,347 Mania 7K), retained votes/history, unchanged configuration/credential/catalog bytes, and explicit opt-outs preserved. Storage, dependencies and gameplay code are unchanged. Real operator installation and player soak remain follow-up observations.
+
+[[https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.1|Installer and checksums]] · [[guides:hosting|Hosting guide]] · [[wiki:room_updates|Update behavior]] · [[updates:start|Release history]]

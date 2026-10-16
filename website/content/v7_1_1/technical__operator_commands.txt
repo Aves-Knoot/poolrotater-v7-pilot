@@ -1,0 +1,66 @@
+====== v7 operator commands ======
+
+These are administrative commands on the hosting machine, **not dot commands to send in osu! or Discord**. Use the protected admin entry from the currently registered release, as root, with the exact instance selected. An entry from an old release intentionally refuses after upgrade. Get the entry path and artifact hashes from the qualified kit or maintainer; do not guess a release directory.
+
+^ Reference | v7.1.1 common runtime and retained v7.1.0 migration boundary, October 16, 2026 |
+^ Installation guide | Follow the exact kit's README and upgrade guide; this overview does not replace their admission checks or configuration schemas |
+
+The examples use ''$E'' as shorthand for the complete, instance-bound protected administrator invocation. It must already select the correct installed entry and instance. Do not paste the shorthand until your kit has defined it.
+
+===== Inspect the installation =====
+^ Action ^ Purpose ^
+| ''check'' / ''code-proof'' | Validate the protected installation/code binding |
+| ''status'' / ''support'' | Inspect lifecycle, authorization, catalog and ownership summaries; support is suitable for redacted diagnostics |
+| ''room-settings-status'' | Read saved room settings |
+| ''network-status'' / ''network-support'' | Inspect enrollment, heartbeat and network-agent observations |
+| ''ratings-status'' / ''ratings-support'' | Distinguish local capture, pending uploads, synchronization and selected feedback mode |
+| ''ownership-review'' | Read-only ownership preparation with the hosting and network services stopped as required by the kit |
+
+Systemd failure and room ownership are different facts. A stopped old process can leave a failed unit while the authoritative journal and committed recovery receipt report clean ownership. A local ''start_allowed: false'' with ''startup_admission_not_evaluated_by_local_status'' means status has not performed startup admission. ''recovery_required'' is a real recovery hold. Fresh startup still checks identity, client/scopes and ownership; do not treat a valid token alone as permission to start.
+
+===== Setup, catalogs and services =====
+^ Action ^ Purpose and boundary ^
+| ''configure'' / ''authorize'' | Configure the operator's local OAuth client and complete their own sign-in; keep secret inputs local |
+| ''catalog-import'' | Download/import full prepared catalogs using the kit's exact HTTPS origin, trusted keys, CA and hash pins |
+| ''room-settings-configure'' | Apply supported saved settings through the protected schema; existing topology changes require review |
+| ''unit'' / ''start'' / ''stop'' | Install the service unit, perform fresh startup admission, or intentionally close this instance's rooms |
+| ''network-configure'' / ''network-enroll'' | Apply bound hub configuration and redeem that operator's invitation |
+| ''network-unit'' / ''network-start'' / ''network-stop'' | Manage the separate network agent |
+| ''ratings-configure'' / ''ratings-reader-configure'' | Explicitly configure sharing and feedback-reading preferences |
+| ''ratings-sync'' / ''ratings-fetch'' | Supported one-shot upload/fetch operations; a running agent normally handles its own schedule |
+
+Configuration and catalog actions have additional required arguments or protected standard-input schemas. Follow the shipped guide rather than running an incomplete action name. Hub contribution permission is separate from enrollment and sharing consent. Running two controllers on one hosting account is not a supported way to add rooms.
+
+===== Compatible worker updates =====
+These retained worker actions operate through the registered v7 controller. Signed automatic releases normally use the independent updater instead of manual staging.
+
+<code sh>
+$E worker-stage --bundle /path/to/approved-worker.zip --sha256 <runtime-sha256>
+$E worker-queue --sha256 <runtime-sha256> --room room1 --room room4
+$E worker-status
+$E worker-cancel
+</code>
+
+Omit ''--room'' to select all configured rooms. Stage verifies compatibility and writes a root approval bound to this installation; it does not replace the controller. Queue waits for native empty/idle admission, and status reports its durable progress. Cancel affects pending rooms after an active handoff settles. A failed attempt needs explicit requeueing. Completed promotions remain selected after a clean restart.
+
+Shared controller changes use the all-configured-rooms-empty maintenance window. The first v7.1.0 storage migration remains manual and stopped; later compatible signed releases can use automatic delivery. Do not install an owner-only historical controller on a community host.
+
+===== Recovery and useful reports =====
+Ownership, pacing and catalog recovery commands require fresh evidence and exact transaction or journal bindings. Use REPAIR_UPGRADE.md from the actual kit with the maintainer. Do not delete journals, reset state or repeatedly start to escape a hold. ''systemctl reset-failed'' only clears systemd's failure marker; it does not prove a room has closed or repair ownership.
+
+Return room links, times/timezone, versions, completed maps, player-visible behavior and redacted support/network/ratings output. For failures include the safe failure code, HTTP status when known, and a short relevant traceback. Never send OAuth credentials/codes/URLs, token files, bound invitations, private state hashes, backups or raw player chat.
+
+[[guides:hosting|Hosting checklist]] · [[wiki:distributed_hosting|Hub participation]] · [[wiki:room_updates|Updates and recovery]]
+
+===== Sharing and automatic update actions =====
+^ Action ^ Purpose ^
+| ''network-reporting-configure'' | Set all four explicit statistics/consumption/operational/public-chat booleans from protected standard input; v7.1.1 uses enabled defaults when no profile exists |
+| ''network-reporting-support'' / ''network-reporting-sync'' | Inspect safe reporting diagnostics or perform one bounded synchronization step |
+| ''ratings-configure'' / ''ratings-reader-configure'' | Preserve or change contribution and canonical-versus-independent selection separately |
+| ''update-configure'' | Configure pinned release authority, TLS/origin, channel and explicit update policy; never substitute arbitrary remote trust |
+| ''update-status'' / ''update-check'' / ''update-download'' | Inspect discovery and waiting, check signed metadata, or download a verified target |
+| ''update-unit'' / ''update-start'' / ''update-stop'' | Prepare, start or disable the independent polling timer; stop does not kill an already committing transaction |
+| ''update-pause'' / ''update-resume'' | Pause or resume local policy without changing trust |
+| ''update-recover'' | Resolve a bound held transaction using its documented operation ID and reviewed decision |
+
+Use the current release’s README and V7_1_1_OPERATOR_GUIDE.md for complete schemas. Missing v7.1.1 policies default to sharing and automatic updates, while saved false values, independent reading, pauses and stopped polling are retained. Local network-start can initialize a missing updater only after enrollment; it does not grant server contribution rights. Private diagnostics are scrubbed and bounded, not publicly visible chat.

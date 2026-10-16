@@ -1,0 +1,36 @@
+====== How the statistics work ======
+
+===== Time and map counts =====
+
+**Connected time** measures recorded time spent present in an AutoHost room. It includes waiting, chatting and spectating. It is not an official osu! playtime counter. Standard and Mania totals follow the bot's own statistics. The 7K and 4K breakdowns cover rooms whose key count was recorded; older time can lack a key-count attribution. Time is a lifetime statistic: it cannot reliably be divided into weekly windows from the retained totals.
+
+**Map starts** count one player participating in one map start. Two players on the same map produce two player-map starts. Replays count again. **Different maps** counts distinct beatmap IDs. **Scores submitted** counts recorded score submissions, so an aborted attempt or missing submission does not become a finished score. **Active days** are distinct UTC days with recorded map participation.
+
+===== Performance points and achievements =====
+
+**PP gained** sums positive weighted top-100 improvement estimates recorded by the bot for these lobby plays. It does not sum raw score PP, poll official profile totals, include plays outside AutoHost, or reconstruct scores from before tracking began. Your account total can differ. Standard and Mania gains belong to different rulesets; the All lobbies sum is a community activity total, not a combined osu! profile rating.
+
+**Biggest PP jump** shows a player's highest positive recorded gain and its exact beatmap link. **Highest top-play PP** shows the largest recorded score PP among detected personal top-100 plays, which can differ from their largest gain. The PP store does not record every submitted score as a top-play achievement.
+
+**Average accuracy** uses recorded submissions with accuracy available. Rankings require at least 20 such scores; the ordinary average is shown after five. Averages are not normalized for difficulty or mods. **Century club**, **Map explorer**, **100 PP club**, **Regular**, and **Both rulesets** badges describe observed milestones, not prizes or official ranks.
+
+Rankings list up to 50 visible players for the selected measure. Community totals include hidden players anonymously; named rankings and spotlights exclude them. The lobby-type and date filters are independent. A 7-day view ranks events recorded in the past seven rolling days, not a calendar week.
+
+===== Freshness, visibility and history =====
+
+The website regenerates player statistics and occupancy history every five minutes from existing local records. Current lobby status uses a separate lightweight ten-second export. Open pages use those respective intervals and refresh when you return to the tab. Named rankings are withheld after ten minutes without a fresh statistics export; current maps and join controls are withheld after 35 seconds without fresh lobby status. Browser refreshes require JavaScript; with it disabled, use the native filters or reload to retrieve the latest snapshot. See [[status:start|live lobbies]] for the artwork panels and approximate song-progress timing.
+
+Use [[commands:hidden|.hidden]] in any lobby to opt out of named statistics. The account-wide setting also excludes the player from achievement spotlights and player details after the next successful refresh, normally within five minutes. [[commands:show|.show]] makes them public again. The setting does not delete operational history or remove anonymous community totals. If the website cannot verify visibility, it withholds named statistics.
+
+Occupancy graphs begin with the retained operations snapshots and continue with five-minute observations, kept for a rolling 31 days. No older occupancy is invented. The chart uses steps between observed counts and leaves gaps where data is unknown. Peak and average values describe samples within the selected window, not unobserved activity between samples. The table below the graphs offers the same recent observations as text.
+
+Current maps and future queues use confirmed playlist operations and match records. The map that actually started gameplay takes precedence over an early playlist promotion. If queue order cannot be confirmed, the page says so rather than guessing. Active difficulty comes from the current room title; other displayed settings describe configured values and may omit temporary in-memory preferences.
+
+The uptime counter measures the current uninterrupted bot-service run. Observed availability is the fraction of available service observations in the past 24 hours; gaps and short outages between observations may affect its meaning. It is not a claim about the bot's entire lifetime or network reachability.
+
+See [[statistics:start|player statistics]], [[status:start|live lobbies]], and [[wiki:stats_privacy|statistics and privacy]].
+
+===== Community coverage in v7.1 =====
+The existing page offers combined and per-host views from the owner ledger and eligible shared public-room events. Stable player IDs merge named records; overlapping intervals and duplicate achievements are deduplicated. Historical cumulative time is identified separately when exact intervals are unavailable. The private publisher reads full inputs before selecting public top rankings, so leaderboard truncation does not change totals.
+
+v7.1.1 enables missing reporting profiles by default and preserves explicit opt-outs. Private/unknown-room history is never automatically imported. Personal statistics, diagnostic reporting and public directory occupancy are separate: the Lobby activity total can include a fresh listed room without exposing its roster or chat. See [[wiki:stats_privacy|privacy]], [[wiki:distributed_hosting|community coverage]] and [[guides:hosting|operator choices]].

@@ -46,6 +46,16 @@ def read_json(path, default=None):
     try: return json.loads(path.read_text())
     except (OSError, ValueError): return default
 
+def configured_room_aliases():
+    """Only explicit host topology can prove a room slot is not configured."""
+    host=read_json(APP/'config/host.json',{})
+    rows=host.get('rooms') if isinstance(host,dict) else None
+    if not isinstance(rows,list) or not 1<=len(rows)<=4:return None
+    aliases=[row.get('alias') if isinstance(row,dict) else None for row in rows]
+    if (any(alias not in ('room1','room2','room3','room4') for alias in aliases)
+            or len(set(aliases))!=len(aliases)):return None
+    return set(aliases)
+
 def runtime_rooms(now, service):
     """Prefer version-pinned worker observations; never infer health from a PID."""
     path=APP/'state/rolling/public-status.json'
@@ -55,6 +65,7 @@ def runtime_rooms(now, service):
     fresh=-5<=now-number(data.get('generated_at'))<=20
     rows=data.get('rooms') if isinstance(data.get('rooms'),dict) else {}
     result={}
+    configured=configured_room_aliases()
     def public_map(value):
         if not isinstance(value,dict) or type(value.get('beatmap_id')) is not int or value['beatmap_id']<=0:return None
         return dict(beatmap_id=value['beatmap_id'],label=clean(value.get('label')),stars=number(value.get('stars'),None),hit_length=number(value.get('hit_length'),None))
@@ -66,7 +77,8 @@ def runtime_rooms(now, service):
                    row.get('state') in ('IDLE','STARTING','PLAYING','SCORING') and
                    -5<=now-number(row.get('observed_at'))<=20 and
                    type(row.get('players')) is int and 0<=row['players']<=512)
-        offline=service.get('online') is False or (fresh and row.get('state')=='OFFLINE')
+        unconfigured=bool(fresh and configured is not None and alias not in configured and alias not in rows)
+        offline=service.get('online') is False or (fresh and row.get('state')=='OFFLINE') or unconfigured
         result[alias]=dict(valid=valid,room_id=row.get('room_id') if valid else None,
             state=row['state'] if valid else 'OFFLINE' if offline else 'STALE',
             players=row['players'] if valid else None,observed_at=row.get('observed_at') if valid else None,
@@ -444,6 +456,8 @@ def run(*, public=PUBLIC, state=STATE, now=None, publish_status=True):
     activity={**shell,'samples':history,'room_states':room_states,'room_labels':LABELS}
     atomic(public/'statistics.json',stats)
     if publish_status:atomic(public/'status.json',status)
+    from network_statistics import merge_live_activity
+    activity=merge_live_activity(activity,state,read_json(public/'status.json',status),read_json(public/'community/rooms.json',{}),now)
     atomic(public/'activity.json',activity)
     return stats,status,activity
 

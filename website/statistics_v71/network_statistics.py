@@ -377,3 +377,65 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
                 "tracked_pp_supported": tracked_pp,
                 "pre_opt_in_community_history": historical_import_present}
     return publish_groups(combined, hidden), {"hosts": views, "coverage": coverage}
+
+
+# Public occupancy observations, separate from personally identified statistics.
+def live_occupancy(owner, community, now):
+    import math
+    def fresh(value, limit):
+        return (type(value) is dict and value.get('available') is True
+            and all(type(value.get(k)) in (int,float) and math.isfinite(value[k]) for k in ('generated_at','expires_at'))
+            and now-30 <= value['generated_at'] <= now+30
+            and 0 < value['expires_at']-value['generated_at'] <= limit
+            and now < value['expires_at'])
+    # Native owner observations can last longer than public directory heartbeats.
+    if not fresh(owner,600) or not fresh(community,60) or community.get('more_available'):
+        return None
+    rooms=owner.get('rooms');others=community.get('rooms')
+    if not isinstance(rooms,list) or len(rooms)!=4 or not isinstance(others,list) or len(others)>100:
+        return None
+    count=0;seen=set();aliases=set()
+    for room in rooms:
+        if not isinstance(room,dict) or room.get('alias') not in ('room1','room2','room3','room4') or room['alias'] in aliases:return None
+        aliases.add(room['alias'])
+        if room.get('state')=='OFFLINE':continue
+        n=room.get('players');rid=room.get('room_id')
+        if type(n) is not int or not 0<=n<=128 or type(rid) is not int or rid<=0:return None
+        if rid not in seen:seen.add(rid);count+=n
+    community_count=0;room_count=0
+    for room in others:
+        if not isinstance(room,dict):return None
+        if room.get('visibility','public')!='public':continue
+        rid=room.get('room_id')
+        if type(rid) is not int or rid<=0:return None
+        if rid in seen:continue
+        seen.add(rid)
+        if room.get('state') not in ('playing','starting','idle','draining'):return None
+        n=room.get('players');until=room.get('fresh_until');hide=room.get('hide_at')
+        if (type(n) is not int or not 0<=n<=128 or any(type(t) not in (int,float) or not math.isfinite(t) or t<=now for t in (until,hide))):return None
+        community_count+=n;room_count+=1
+    return {'total':count+community_count,'owner':count,'community':community_count,'community_rooms':room_count}
+
+
+def merge_live_activity(activity, state, owner, community, now):
+    """Add complete network totals prospectively; never invent historical data."""
+    from pathlib import Path
+    import json, os
+    path=Path(state)/'network-occupancy.json'
+    try:
+        if path.is_symlink() or path.stat().st_size>2*1024**2:raise ValueError('unbounded history')
+        previous=json.loads(path.read_text())
+    except (OSError,ValueError):previous=[]
+    if not isinstance(previous,list):previous=[]
+    rows={row[0]:row for row in previous if isinstance(row,list) and len(row)==2
+          and type(row[0]) is int and now-31*86400<=row[0]<=now
+          and (row[1] is None or type(row[1]) is int and 0<=row[1]<=13312)}
+    current=live_occupancy(owner,community,now)
+    rows[int(now)]=[int(now),current['total'] if current else None]
+    samples=[rows[key] for key in sorted(rows)][-10000:]
+    temporary=path.with_suffix('.new')
+    with temporary.open('w') as stream:
+        os.chmod(temporary,0o600);json.dump(samples,stream);stream.flush();os.fsync(stream.fileno())
+    os.replace(temporary,path)
+    return {**activity,'network_totals':samples,'network_coverage_since':samples[0][0] if samples else None,
+            'network_current':current,'network_scope':'listed_public_rooms_including_spectators'}
