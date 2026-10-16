@@ -4072,13 +4072,20 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         self._chat_api_retry_at = 0.0
         return True, result
 
-    def poll_chat(self, force: bool = False) -> None:
-        now = time.time()
+    def _maintain_chat_keepalive(self, now: float) -> None:
+        """Keep account chat alive after delivering already-received commands."""
         if now - self._last_ack > 30:
             completed, _ = self._chat_api_call('chat_ack')
             if completed: self._last_ack = now
 
+    def poll_chat(self, force: bool = False) -> None:
+        now = time.time()
+
         if self._chat_websocket_enabled():
+            # The socket and broker only enqueue events. Apply them on this
+            # room thread before any potentially paced HTTP maintenance.
+            # Reconnect reconciliation still runs before its live batch in
+            # _drain_chat_websocket_inbox; cursor/deduplication rules stay intact.
             self._drain_chat_websocket_inbox()
             connected = bool(getattr(self.chat_websocket, "connected", False))
             try:
@@ -4093,6 +4100,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             if force:
                 self._reconcile_chat_history(reason="forced chat check")
                 self._drain_chat_websocket_inbox()
+                self._maintain_chat_keepalive(now)
                 return
             if connected:
                 if (
@@ -4108,10 +4116,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                         )
                     )
                     self._drain_chat_websocket_inbox()
+                self._maintain_chat_keepalive(now)
                 return
             # The account socket is offline or still connecting. Fall through
             # to the existing adaptive HTTP poll until it recovers.
 
+        self._maintain_chat_keepalive(now)
         if self._chat_patrol_enabled():
             self._drain_chat_patrol_inbox()
             if force:
@@ -4255,13 +4265,42 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                         )
 
             if content.startswith(self.prefix):
-                self.handle_command(
-                    sender_id,
-                    content,
-                    command_time=self._chat_message_time(m, now),
-                    command_item_id=batch_item_id,
-                    command_beatmap_id=batch_beatmap_id,
-                )
+                started = time.monotonic()
+                try:
+                    self.handle_command(
+                        sender_id,
+                        content,
+                        command_time=self._chat_message_time(m, now),
+                        command_item_id=batch_item_id,
+                        command_beatmap_id=batch_beatmap_id,
+                    )
+                finally:
+                    self._record_chat_command_duration(started)
+
+    def _record_chat_command_duration(self, started: float) -> None:
+        """Bounded, sampled handler timings without player or command content.
+
+        These measure processing, not socket transit or deferred reply delivery.
+        Recording failure durations must not turn an uncertain command into a
+        retry; the original exception still leaves the room thread normally.
+        """
+        now = time.monotonic()
+        samples = getattr(self, '_chat_command_durations', None)
+        if samples is None:
+            samples = self._chat_command_durations = deque(maxlen=64)
+            self._chat_command_timing_at = now
+        samples.append(max(0.0, now - started))
+        if now - self._chat_command_timing_at < 60.0:
+            return
+        self._chat_command_timing_at = now
+        ordered = sorted(samples)
+        log.info(
+            "chat command handler timing: samples=%d p50=%.3fs p95=%.3fs max=%.3fs "
+            "(processing only; excludes socket transit and deferred delivery)",
+            len(ordered), ordered[(len(ordered) - 1) // 2],
+            ordered[min(len(ordered) - 1, math.ceil(len(ordered) * .95) - 1)],
+            ordered[-1],
+        )
 
     def _handle_mania_command(self, user_id, cmd, parts):
         """Mania-only player UI; common moderation/voting remains shared."""
@@ -12647,6 +12686,15 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             if time.monotonic()-getattr(self,'_activity_checkpoint_at',0)>=60:
                 self._flush_all_lobby_time()
                 self._activity_checkpoint_at=time.monotonic()
+
+            # Apply queued live commands with fresh referee/configuration and
+            # shutdown state, before background work can wait on paced HTTP.
+            # All room mutations stay serialized on this same thread.
+            if self.channel_id:
+                self.poll_chat()
+                if not self.running:
+                    continue
+
             self._drain_ai_results()
             self._drain_discord_control_commands()
             self._flush_room_chat()
@@ -12655,9 +12703,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # This is snapshot-driven, so the inexpensive call below only
             # queues a Discord edit after a player/map/range/state change.
             self._update_discord_public_status()
-
-            if self.channel_id:
-                self.poll_chat()
 
             self._maybe_language_offer()
 
