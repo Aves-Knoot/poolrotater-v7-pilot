@@ -5,6 +5,9 @@ network service retains its OAuth namespace isolation.
 """
 import hashlib
 import os
+import re
+import shlex
+import stat
 from pathlib import Path
 import threading
 import time
@@ -37,10 +40,67 @@ def secrets(root, *, provider=False):
         values.extend(os.environ[n] for n in environment_names(root)|LEGACY_CREDENTIAL_NAMES if os.environ.get(n))
     integrations=contained(Path(root),'config/integrations.json')
     if integrations.exists():values.extend(secrets_from_mapping(read_json(integrations,maximum=1024*1024)))
+    if provider:
+        # The journal collector does not inherit the bot's credential environment.
+        # Read only the fixed private integration file; never execute its values.
+        envfile=contained(Path(root),'secrets/integrations.env')
+        if os.path.lexists(envfile):
+            fd=os.open(envfile,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+            with os.fdopen(fd,'r') as stream:
+                info=os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid!=os.geteuid()
+                        or info.st_mode&0o077 or info.st_nlink!=1 or info.st_size>65536):
+                    raise ValueError('invalid private integration environment')
+                for line in stream:
+                    if not line.strip() or line.lstrip().startswith('#'):continue
+                    name,sep,raw=line.partition('=')
+                    if not sep or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',name.strip()):
+                        raise ValueError('invalid private integration assignment')
+                    parsed=shlex.split(raw,comments=False,posix=True)
+                    if len(parsed)>1:raise ValueError('ambiguous private integration assignment')
+                    if parsed:values.append(parsed[0])
+        _,config=load(root)
+        room_paths=['config/gameplay.json','config/room-settings.json']
+        room_paths += ['config/rooms/'+room['alias']+'.json' for room in config['rooms']]
+        for relative in room_paths:
+            path=contained(Path(root),relative)
+            if os.path.lexists(path):values.extend(secrets_from_mapping(read_json(path,maximum=1024*1024)))
     for name in names:
         path=contained(Path(root),'secrets/'+name)
         if os.path.lexists(path):values.extend(secrets_from_mapping(read_json(path,maximum=65536)))
     return tuple(values)
+
+
+class CachedSecrets:
+    """Reload credentials on metadata/environment changes, before each emission.
+
+    No time-only cache window can expose a newly rotated credential. Keep a
+    bounded history in memory to scrub previous credentials in delayed errors.
+    The cache and its signature are never persisted, logged or uploaded.
+    """
+    def __init__(self,root):
+        self.root=Path(root);self.signature=None;self.values=()
+
+    def __call__(self):
+        root=self.root
+        paths=[root/'config/host.json',root/'config/integrations.json',root/'config/gameplay.json',root/'config/room-settings.json']
+        paths += sorted((root/'config/rooms').glob('*.json'))[:50]
+        paths += [root/'secrets'/name for name in ('network.json','integrations.json','integrations.env',
+            'provider-osu-token.json','provider-operator-client.json','provider-oauth-pending.json',
+            'provider-oauth-candidate.json','osu-token.json','operator-client.json',
+            'oauth-pending.json','oauth-candidate.json','private-pilot.json')]
+        stamps=[]
+        for path in paths:
+            try:
+                info=path.lstat();stamp=(info.st_dev,info.st_ino,info.st_mtime_ns,info.st_ctime_ns,info.st_size)
+            except FileNotFoundError:stamp=None
+            stamps.append((str(path),stamp))
+        signature=(tuple(stamps),tuple(sorted(os.environ.items())))
+        if signature!=self.signature:
+            fresh=secrets(root,provider=True)
+            self.values=tuple(dict.fromkeys((*fresh,*self.values)))[:512]
+            self.signature=signature
+        return self.values
 
 
 def logs(root):
@@ -48,12 +108,15 @@ def logs(root):
     root=Path(root);marker,_=load(root)
     # These files are independently scrubbed at emission time. Never tail raw
     # room logs in the namespace that cannot read the protected OAuth secrets.
-    sources=[Source('controller',root/'logs/reporting-controller.jsonl',structured=True,start_at_end=False)]
-    for path in sorted((root/'logs').glob('reporting-room*.jsonl'))[:16]:
+    sources=[Source('controller',root/'logs/reporting-controller.jsonl',structured=True,start_at_end=False,rotations=4)]
+    for path in sorted((root/'logs').glob('reporting-room*.jsonl'))[:50]:
         alias=path.name[len('reporting-'):-len('.jsonl')]
-        sources.append(Source(alias,path,room=alias,structured=True,start_at_end=False))
+        sources.append(Source(alias,path,room=alias,structured=True,start_at_end=False,rotations=4))
+    choice=root/'config/reporting.json'
+    since=(choice if choice.exists() else root/'.poolrotater-host.json').stat().st_mtime
     return LocalLogs(root/'state',installation_id=marker['installation_id'],generation=marker['generation'],
-                     secret_provider=lambda:secrets(root),sources=tuple(sources))
+                     secret_provider=lambda:secrets(root),sources=tuple(sources),
+                     full_stream=True,capture_start=since,quota_bytes=128*1024**2)
 
 
 def configure(root,value):
@@ -75,7 +138,9 @@ def support(root):
     from .activity.collector import Collector
     from .activity.reader import Reader
     root=Path(root);p=profile(root)
-    result={'ok':True,**{k:p[k] for k in CHOICES},'live_rooms_affected':False,'provider_dispatch':False}
+    result={'ok':True,**{k:p[k] for k in CHOICES},'live_rooms_affected':False,'provider_dispatch':False,
+        'log_scope':'all-poolrotater-rooms-and-services','minimum_log_level':'DEBUG',
+        'private_room_logs_included':p['operational_logs']}
     if (root/'state/activity-outbox.sqlite3').exists():result['activity']=Collector(root).status()
     if (root/'state/activity-cache.sqlite3').exists():result['statistics_cache']=Reader(root).status()
     if (root/'state/diagnostic-logs.sqlite3').exists():result['logs']=logs(root).support()
@@ -90,6 +155,16 @@ def support(root):
         result['agent_phase']=state.get('phase') if state.get('phase') in ('disabled','synchronized','retrying','not-enrolled','consent-pending','partial') else 'local-review-required'
         result['last_attempt_at']=state.get('at')
         result['capture_errors']=[e for e in state.get('capture_errors',[]) if e in ('activity-capture-unavailable','log-source-unavailable','activity-capacity-paused')]
+    external=root/'state/reporting-external.json'
+    if external.exists():
+        state=read_json(external)
+        fields(state,('format','phase','at','journal_records','worker_sources','worker_bytes','provider_dispatch'))
+        require(state['format']==1 and state['phase'] in ('collected','partial','retrying')
+            and state['provider_dispatch'] is False,'invalid_external_log_receipt')
+        number(state['at'])
+        require(all(type(state[k])is int and state[k]>=0 for k in ('journal_records','worker_sources','worker_bytes')),
+            'invalid_external_log_receipt')
+        result['external_logs']={k:state[k] for k in ('phase','at','journal_records','worker_sources','worker_bytes')}
     return result
 
 

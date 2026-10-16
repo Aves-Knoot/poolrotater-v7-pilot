@@ -251,6 +251,12 @@ class RollingSupervisor:
         logdir.mkdir(parents=True, exist_ok=True)
         try:
             with (logdir / f"{alias}-{generation}.log").open("ab", buffering=0) as output:
+                if cfg.get('_host_root'):
+                    try:
+                        from poolrotater_host.reporting_external import register_worker
+                        register_worker(cfg['_host_root'],alias,generation,manifest['version'])
+                    except Exception:
+                        log.warning('worker stderr capture registration unavailable for %s',alias)
                 mask = signal.pthread_sigmask(signal.SIG_BLOCK, (signal.SIGINT, signal.SIGTERM))
                 try:
                     worker.process = subprocess.Popen(

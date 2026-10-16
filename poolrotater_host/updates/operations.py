@@ -56,7 +56,10 @@ def command(instance,action,stream=None,operation_id=None,decision=None):
     result=agent.resolve(operation_id,decision)if decision is not None else agent.step(action)
     if action!='status':
         result['hub_report']=publish_report(instance,configured,result)
-    if action=='tick':result['cleanup']=scheduled_cleanup(instance,configured)
+    if action=='tick':
+        from ..reporting_external import safely_collect
+        result['diagnostics']=safely_collect(instance)
+        result['cleanup']=scheduled_cleanup(instance,configured)
     return result
 
 

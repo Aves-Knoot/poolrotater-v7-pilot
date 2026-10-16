@@ -41,25 +41,29 @@ class Source:
     public_rooms: tuple = ()
     start_at_end: bool = True
     structured: bool = False
+    rotations: int = 0
 
 
 class LocalLogs:
     def __init__(self, root, *, installation_id, generation, secret_provider=lambda: (),
                  sources=(), clock=time.time, quota_bytes=32*1024**2,
-                 retention_seconds=7*86400):
+                 retention_seconds=7*86400, full_stream=False, capture_start=None):
         identifier(installation_id); identifier(generation)
         require(type(quota_bytes) is int and 65536 <= quota_bytes <= 128*1024**2, 'invalid_log_quota')
         require(type(retention_seconds) is int and 60 <= retention_seconds <= 30*86400, 'invalid_log_retention')
         self.path = private_database(root, 'diagnostic-logs.sqlite3')
         self.installation_id, self.generation = installation_id, generation
         self.secret_provider, self.clock = secret_provider, clock
+        require(type(full_stream) is bool, 'invalid_log_scope')
+        if capture_start is not None: timestamp(capture_start)
+        self.full_stream, self.capture_start = full_stream, capture_start
         self.quota, self.retention = quota_bytes, retention_seconds
         self.sources = {}
         for source in sources:
             self._validate_source(source)
             require(source.name not in self.sources, 'duplicate_log_source')
             self.sources[source.name] = source
-        require(len(self.sources) <= 32, 'too_many_log_sources')
+        require(len(self.sources) <= 64, 'too_many_log_sources')
         with transaction(self.path) as db:
             for statement in SCHEMA.split(';'):
                 if statement.strip(): db.execute(statement)
@@ -76,6 +80,7 @@ class LocalLogs:
         label(source.name); label(source.room, nullable=True)
         require(type(source.version) is str and VERSION.fullmatch(source.version), 'invalid_log_version')
         require(type(source.private) is bool and type(source.start_at_end) is bool and type(source.structured) is bool and type(source.public_rooms) is tuple, 'invalid_log_source')
+        require(type(source.rotations) is int and 0 <= source.rotations <= 16, 'invalid_log_source')
         for alias in source.public_rooms: label(alias)
         require(Path(source.path).is_absolute(), 'absolute_log_source_required')
 
@@ -100,9 +105,15 @@ class LocalLogs:
                 # A future opt-in must not read the disabled interval.
                 db.execute('DELETE FROM cursors')
                 if operational:
-                    db.execute("UPDATE settings SET value=? WHERE key='capture_since'", (json.dumps(self.clock()),))
+                    since = self.clock()
+                    if previous['capture_since'] == 0 and self.capture_start is not None:
+                        since = min(since, self.capture_start)
+                    db.execute("UPDATE settings SET value=? WHERE key='capture_since'", (json.dumps(since),))
             if public_chat and not previous['public_chat']:
-                db.execute("UPDATE settings SET value=? WHERE key='chat_since'", (json.dumps(self.clock()),))
+                since = self.clock()
+                if previous['chat_since'] == 0 and self.capture_start is not None:
+                    since = min(since, self.capture_start)
+                db.execute("UPDATE settings SET value=? WHERE key='chat_since'", (json.dumps(since),))
         return self.support()
 
     def _increment(self, db, key, count=1):
@@ -155,7 +166,7 @@ class LocalLogs:
             settings = self._settings(db)
             if not settings['operational']: return False
             observed = self.clock() if at is None else at
-            if observed < settings['capture_since'] or private or (kind in ('chat', 'command') and (not settings['public_chat'] or room is None or observed < settings['chat_since'])):
+            if observed < settings['capture_since'] or (private and not self.full_stream) or (kind in ('chat', 'command') and (not settings['public_chat'] or (room is None and not self.full_stream) or observed < settings['chat_since'])):
                 self._increment(db, 'filtered'); return False
             for index in range(0, max(1, len(safe)), 4096):
                 self._insert(db, safe[index:index+4096], at=self.clock() if at is None else at,
@@ -180,9 +191,34 @@ class LocalLogs:
         require(self.sources.get(source.name) == source, 'log_source_not_allowlisted')
         with transaction(self.path) as db:
             if not self._settings(db)['operational']: return {'ok': True, 'read': 0}
-        try: fd, st = self._read_file(source.path)
+        # Drain known numbered rotations before the current sink. Keep one
+        # logical cursor across renames, rather than losing the unread tail.
+        with transaction(self.path) as db:
+            prior = db.execute('SELECT * FROM cursors WHERE source=?', (source.name,)).fetchone()
+        candidates = [Path(str(source.path)+'.'+str(i)) for i in range(source.rotations,0,-1)] + [Path(source.path)]
+        available=[]
+        for candidate in candidates:
+            try:
+                probe, info=self._read_file(candidate)
+                os.close(probe);available.append((candidate,info))
+            except FileNotFoundError:pass
+        if not available:return {'ok':True,'read':0,'source_absent':True}
+        selected=available[-1];rotation_drained=False
+        if source.rotations:
+            if prior is None and not source.start_at_end:selected=available[0]
+            elif prior is not None:
+                for index,(path,info) in enumerate(available):
+                    if (info.st_dev,info.st_ino)==(prior['device'],prior['inode']):
+                        if prior['offset']<info.st_size:selected=(path,info)
+                        elif index+1<len(available):
+                            selected=available[index+1];rotation_drained=True
+                        else:return {'ok':True,'read':0}
+                        break
+        try: fd, st = self._read_file(selected[0])
         except FileNotFoundError: return {'ok': True, 'read': 0, 'source_absent': True}
         try:
+            if (st.st_dev,st.st_ino)!=(selected[1].st_dev,selected[1].st_ino):
+                return {'ok':True,'read':0,'rotation_changed':True}
             with transaction(self.path) as db:
                 cursor = db.execute('SELECT * FROM cursors WHERE source=?', (source.name,)).fetchone()
                 epoch, offset, discarding, pem = str(uuid.uuid4()), 0, False, False
@@ -190,7 +226,8 @@ class LocalLogs:
                     require(cursor['path'] == str(Path(source.path)), 'log_source_binding_changed')
                     epoch, offset, discarding, pem = cursor['epoch'], cursor['offset'], bool(cursor['discarding']), bool(cursor['pem'])
                     if (cursor['device'], cursor['inode']) != (st.st_dev, st.st_ino):
-                        self._gap(db, 'source_rotated_unread_tail_unknown', 0, source=source.name, room=source.room)
+                        if not rotation_drained:
+                            self._gap(db, 'source_rotated_unread_tail_unknown', 0, source=source.name, room=source.room)
                         epoch, offset, discarding, pem = str(uuid.uuid4()), 0, False, False
                     elif st.st_size < offset:
                         self._gap(db, 'source_truncated', offset - st.st_size, source=source.name, room=source.room, epoch=epoch)
@@ -220,7 +257,7 @@ class LocalLogs:
                 data = raw[discarded_prefix:consumed].decode('utf-8', errors='replace')
                 settings = self._settings(db)
                 secrets = tuple(self.secret_provider())
-                if source.private:
+                if source.private and not self.full_stream:
                     if data: self._increment(db, 'filtered', len(data.splitlines()))
                     data = ''
                 if pem and not source.structured:
@@ -243,7 +280,7 @@ class LocalLogs:
                             require(type(entry) is dict and set(entry) == {'at', 'room', 'version', 'kind', 'private', 'text'}, 'invalid_structured_log')
                             label(entry['room'], nullable=True); timestamp(entry['at'])
                             require(type(entry['private']) is bool and entry['kind'] in ('operational', 'chat', 'command') and type(entry['text']) is str and type(entry['version']) is str and VERSION.fullmatch(entry['version']), 'invalid_structured_log')
-                            if entry['private']:
+                            if entry['private'] and not self.full_stream:
                                 self._increment(db, 'filtered'); continue
                             room, at, version, explicit_kind = entry['room'], entry['at'], entry['version'], entry['kind']
                             if at < settings['capture_since'] or (explicit_kind in ('chat', 'command') and at < settings['chat_since']):
@@ -258,7 +295,11 @@ class LocalLogs:
                         if room not in source.public_rooms and room != source.room:
                             self._increment(db, 'filtered'); continue
                     chat = explicit_kind in ('chat', 'command') or bool(_CHAT.search(line))
-                    if chat and (not settings['public_chat'] or room is None):
+                    if self.full_stream and not source.structured:
+                        from ..reporting_external import classify
+                        explicit_kind=classify(line)
+                        chat=explicit_kind in ('chat','command')
+                    if chat and (not settings['public_chat'] or (room is None and not self.full_stream)):
                         self._increment(db, 'filtered'); continue
                     kind = explicit_kind or ('command' if 'command from' in line.lower() else 'chat' if chat else 'operational')
                     for index in range(0, len(line), 4096):
@@ -273,6 +314,63 @@ class LocalLogs:
                 self._prune(db)
             return {'ok': True, 'read': consumed}
         finally: os.close(fd)
+
+    def external_cursor(self):
+        """Opaque journal cursor, never an arbitrary command or filesystem path."""
+        with transaction(self.path) as db:
+            row=db.execute("SELECT value FROM settings WHERE key='journal_cursor'").fetchone()
+            return json.loads(row[0]) if row else None
+
+    def external_since(self):
+        with transaction(self.path) as db:
+            row=db.execute("SELECT value FROM settings WHERE key='journal_since'").fetchone()
+            return timestamp(json.loads(row[0])) if row else self._settings(db)['capture_since']
+
+    def append_journal(self, entries, *, previous, cursor):
+        """Commit sanitized entries and their source cursor in one transaction.
+
+        Hub delivery runs concurrently in another process. An acknowledged batch
+        can never race a separate cursor file into replaying journal entries.
+        """
+        require(self.full_stream and type(entries) is list and len(entries)<=512,
+                'invalid_journal_batch')
+        require((cursor is None and not entries) or (type(cursor) is str and re.fullmatch(r'[A-Za-z0-9;=:_-]{1,1024}',cursor)),
+                'invalid_journal_cursor')
+        known=tuple(self.secret_provider())
+        with transaction(self.path) as db:
+            old=db.execute("SELECT value FROM settings WHERE key='journal_cursor'").fetchone()
+            require((json.loads(old[0]) if old else None)==previous,'journal_cursor_changed')
+            settings=self._settings(db)
+            if not settings['operational']:return False
+            seen_row=db.execute("SELECT value FROM settings WHERE key='journal_seen'").fetchone()
+            seen=json.loads(seen_row[0]) if seen_row else []
+            require(type(seen)is list and len(seen)<=2048 and all(type(v)is str and len(v)<=1024 for v in seen), 'invalid_journal_history')
+            since_row=db.execute("SELECT value FROM settings WHERE key='journal_since'").fetchone()
+            since=timestamp(json.loads(since_row[0])) if since_row else settings['capture_since']
+            epoch=str(uuid.uuid5(uuid.NAMESPACE_URL,cursor or 'journal-empty'))
+            for entry in entries:
+                require(type(entry) is dict and set(entry) in ({'at','text','kind','room'},{'at','text','kind','room','cursor'}),'invalid_journal_entry')
+                at=timestamp(entry['at']);kind=entry['kind'];room=label(entry['room'],nullable=True)
+                require(kind in ('operational','chat','command') and type(entry['text']) is str
+                        and len(entry['text'].encode())<=4*1024**2,'invalid_journal_entry')
+                entry_cursor=entry.get('cursor')
+                if entry_cursor is not None:
+                    require(type(entry_cursor)is str and re.fullmatch(r'[A-Za-z0-9;=:_-]{1,1024}',entry_cursor),'invalid_journal_cursor')
+                    if entry_cursor in seen:continue
+                    seen.append(entry_cursor)
+                since=max(since,at)
+                if at<settings['capture_since'] or (kind in ('chat','command') and
+                        (not settings['public_chat'] or at<settings['chat_since'])):
+                    self._increment(db,'filtered');continue
+                safe=scrub(entry['text'],known)
+                for index in range(0,max(1,len(safe)),4096):
+                    self._insert(db,safe[index:index+4096],at=at,source='systemd-journal',
+                        room=room,version='journal',kind=kind,epoch=epoch,start=0,end=0)
+            db.execute("INSERT OR REPLACE INTO settings VALUES('journal_cursor',?)",(json.dumps(cursor),))
+            db.execute("INSERT OR REPLACE INTO settings VALUES('journal_since',?)",(json.dumps(since),))
+            db.execute("INSERT OR REPLACE INTO settings VALUES('journal_seen',?)",(json.dumps(seen[-2048:]),))
+            self._prune(db)
+        return True
 
     def batch(self):
         with transaction(self.path) as db:

@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import time
 
-from .layout import atomic_json,read_json
+from .layout import atomic_json
 
 _CHAT=re.compile(r'(?i)(^CHAT\b|command from|public command suppressed|chat silenced|AI request queued|sending (?:chat|message)|(?:received|sent) (?:chat|message))')
 _ALIAS=re.compile(r'room[0-9]+\Z')
@@ -34,7 +34,7 @@ def witness(root,alias,generation,*,room_id,public):
 
 def install(root,*,alias=None,version='unknown'):
     from .diagnostic_logs import SanitizedJSONFormatter
-    from .reporting import secrets
+    from .reporting import CachedSecrets
     root=Path(root)
     if alias is not None and not _ALIAS.fullmatch(alias):return
     name='controller' if alias is None else alias
@@ -44,17 +44,13 @@ def install(root,*,alias=None,version='unknown'):
     def context(record):
         tag=alias if alias else record.threadName if _ALIAS.fullmatch(record.threadName) else None
         kind='command' if 'command from' in record.getMessage() or 'public command suppressed' in record.getMessage() else 'chat' if _CHAT.search(record.getMessage()) else 'operational'
-        private=kind!='operational' and tag is None
-        if tag:
-            try:
-                row=read_json(root/'state'/('reporting-visibility-'+tag+'.json'))
-                private=row.get('public') is not True
-            except Exception:private=True
-        return {'room':tag,'private':private,'kind':kind,'version':version}
-    handler=RotatingFileHandler(path,maxBytes=2*1024**2,backupCount=2,encoding='utf-8',delay=True)
-    handler._reporting_sink=str(path);handler.setLevel(logging.INFO)
+        # Diagnostics cover private rooms too. The independent statistics and
+        # directory visibility witnesses retain their original privacy rules.
+        return {'room':tag,'private':False,'kind':kind,'version':version}
+    handler=RotatingFileHandler(path,maxBytes=8*1024**2,backupCount=4,encoding='utf-8',delay=True)
+    handler._reporting_sink=str(path);handler.setLevel(logging.DEBUG)
     handler.addFilter(ConsentFilter(root))
-    handler.setFormatter(SanitizedJSONFormatter(secret_provider=lambda:secrets(root,provider=True),context_provider=context,version=version))
+    handler.setFormatter(SanitizedJSONFormatter(secret_provider=CachedSecrets(root),context_provider=context,version=version))
     logger.addHandler(handler)
 
 

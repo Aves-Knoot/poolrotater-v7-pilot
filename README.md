@@ -1,3 +1,7 @@
+# Current repair: v7.1.4
+
+Use the [v7.1.4 installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.4) and [operator guide](docs/V7_1_4_OPERATOR_GUIDE.md). This expands default diagnostic sharing to DEBUG, private rooms, fixed service journals and early worker stderr, with credentials scrubbed. Existing opt-outs and configuration are retained. Stopped or failed hosts require a local ownership check and supported upgrade/start; publishing does not remotely restart rooms. The controller update waits for all configured rooms to be safely empty. The separate empty-room refresh interruption is still under investigation.
+
 # Current room-worker update: v7.1.3
 
 Running v7.1.2 controllers can apply the [v7.1.3 worker update](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.3) one safely empty room at a time. See the [worker operator guide](docs/V7_1_3_OPERATOR_GUIDE.md). The shared controller stays on v7.1.2. For a fresh installation, use the v7.1.2 installer below; the v7.1.3 worker ZIP is not an installer kit. Paused and opted-out hosts keep their choices.

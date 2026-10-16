@@ -2,8 +2,9 @@
 
 The independent network unit does not need access to OAuth or Discord secrets.
 Install this on a dedicated bounded rotating JSONL sink in provider/workers.
-The context provider must determine room visibility at emission time, not later
-from the current public room roster. Raw ordinary logs remain local.
+The context provider classifies source/room/content at emission time. Full host
+reporting includes private diagnostics; explicit chat/all-log opt-outs still
+apply. Raw ordinary logs remain local.
 """
 import json
 import logging
@@ -28,7 +29,11 @@ class SanitizedJSONFormatter(logging.Formatter):
                      'version': context.get('version', self.version), 'kind': kind,
                      'private': context.get('private', False) is not False,
                      'text': scrub(line, self.secret_provider())}
-            return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+            # Scrub the whole exception/message before fragmenting it. Long
+            # tracebacks must not become an oversized unreadable JSONL record.
+            safe=value['text']
+            return '\n'.join(json.dumps({**value,'text':safe[index:index+4096]},
+                ensure_ascii=False,separators=(',',':')) for index in range(0,max(1,len(safe)),4096))
         except Exception:
             # Do not include exception text: secret-loader failures can contain
             # credentials. A safe operational marker makes the gap visible.
