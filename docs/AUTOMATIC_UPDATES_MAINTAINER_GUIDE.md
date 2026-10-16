@@ -12,7 +12,7 @@ The owner subsequently authorized activation of the complete release package.
 The standalone hub code was upgraded against its existing state with unchanged
 credentials, grants, ratings and epoch; the hub-only window was2.441seconds.
 No room controller/worker was restarted, no owner settings/queued rollout changed,
-and Xikeon's machine/consent has not been modified. The owner engine remains
+and the operator's machine/consent has not been modified. The owner engine remains
 v7.0.5. This activation supersedes the earlier development-only exclusion for
 these standalone services; it does not authorize arbitrary future room restarts.
 
@@ -61,7 +61,7 @@ It created no enrollment or room and removed temporary downloads. Evidence:
 `validation/automatic-updates/activation-preparation/public-origin-proof.json`.
 Private production checkpoints remain under
 `/opt/poolrotater-v7-cutover-tools/updater-activation-20261015/evidence/`.
-Xikeon must perform the same-instance bootstrap and consent in
+The operator must perform the same-instance bootstrap and consent in
 `PILOT_UPGRADE_706.md`. A first genuine successor's real-player automatic roll
 remains pending; do not fabricate one by publishing a synthetic QA artifact.
 

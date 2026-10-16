@@ -1,7 +1,7 @@
 # Opt-in hub updates
 
 The qualified v7.0.6 bootstrap and public release trust are being published for
-the operator pilot. For Xikeon's existing dev14 `two`, use PILOT_UPGRADE_706.md
+the operator pilot. For the operator's existing dev14 `two`, use PILOT_UPGRADE_706.md
 (the GitHub release asset is PILOT_UPGRADE.md) for exact paths, hashes and choices.
 Dev14 has no updater. This general guide does not grant operator consent.
 

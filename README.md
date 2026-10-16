@@ -1,12 +1,12 @@
 # Distributed PoolRotater v7.0.6 pilot
 
-Qualified one-time bootstrap for opt-in signed hub updates. Use the private
+Qualified one-time bootstrap for opt-in signed hub updates. Use the
 [release asset ZIP](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.0.6-updater-bootstrap), not GitHub
 Source ZIP, for installation. This source tree is the exact reviewed payload,
 public trust and selected documentation; research/player data, private credentials
 and signing keys are excluded.
 
-Existing Xikeon `two` on dev14: follow [PILOT_UPGRADE.md](PILOT_UPGRADE.md).
+Existing `two` installations on dev14: follow [PILOT_UPGRADE.md](PILOT_UPGRADE.md).
 Preserve the same installation/settings/catalogs/enrollment/votes. Stop only in a
 normal empty maintenance window; no reinstall, sign-in or owner-default reset.
 The supplied policy is paused with all automatic installation/report choices off.
@@ -28,3 +28,8 @@ The maintainer's current room engine remains v7.0.5; only standalone hub/release
 services were activated for this publication. Future real-player delivery
 acceptance awaits the operator's local upgrade/consent and a genuine successor.
 No synthetic QA release is published. Optional PP projection requires .NET8.
+
+This repository is public; it remains pilot software. Coordinate new host
+onboarding with the maintainer. Hub enrollment and every automatic-update consent
+choice remain separate local steps. See [SOURCE_POLICY.md](SOURCE_POLICY.md)
+for publication terms and [SECURITY.md](SECURITY.md) for sensitive-data handling.

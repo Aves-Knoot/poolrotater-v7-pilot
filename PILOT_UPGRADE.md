@@ -1,4 +1,4 @@
-# Xikeon: one-time dev14 → v7.0.6 updater bootstrap
+# Existing operator installation: one-time dev14 → v7.0.6 updater bootstrap
 
 Use the SAME `two` installation and keep `first` stopped. Preserve both rooms,
 chosen titles/ranges, all settings, OAuth/Discord, full catalogs, enrollment,
@@ -11,7 +11,7 @@ this document must not infer your consent from the maintainer's authorization.
 
 ## 1. Download and verify
 
-From the private release:
+From the release:
 
 https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.0.6-updater-bootstrap
 
