@@ -2,6 +2,7 @@
 
 PoolRotater separates room workers from the shared controller that owns the hosting account, referee connection and integrations. Compatible room code can move forward one empty room at a time; shared infrastructure changes need coordinated maintenance.
 
+^ Behavior reference | v7.1.1 · reviewed 2026-10-16 |
 ^ Current release reference | [[updates:v7_1_1|v7.1.1]]; signed controller successor from v7.1.0 |
 ^ First storage upgrade | v7.0.6/7/8 installations require the separate one-time stopped v7.1.0 migration |
 

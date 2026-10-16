@@ -127,7 +127,8 @@
         ".help",
         ".help <command>",
         ".help2",
-        ".commands"
+        ".commands",
+        ".help skip"
       ],
       "usage_rulesets": {
         ".help": [
@@ -146,6 +147,11 @@
           "mania7k"
         ],
         ".help <command>": [
+          "standard",
+          "mania4k",
+          "mania7k"
+        ],
+        ".help skip": [
           "standard",
           "mania4k",
           "mania7k"
@@ -1277,7 +1283,9 @@
         ".style ln,technical",
         ".style rice",
         ".style noodle",
-        ".style rice jack"
+        ".style rice jack",
+        ".style stream|chordjack",
+        ".style variety"
       ],
       "usage_rulesets": {
         ".style": [
@@ -1329,6 +1337,14 @@
           "mania7k"
         ],
         ".style rice jack": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style stream|chordjack": [
+          "mania4k",
+          "mania7k"
+        ],
+        ".style variety": [
           "mania4k",
           "mania7k"
         ]

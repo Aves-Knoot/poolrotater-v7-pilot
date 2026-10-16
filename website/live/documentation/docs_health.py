@@ -15,7 +15,7 @@ STATUS = Path('/var/lib/poolrotator-wiki/documentation/status.json')
 OUTPUT = Path('/var/lib/poolrotator-wiki/documentation/health.json')
 LINK = re.compile(r'\[\[([^\]|]+)')
 IMAGE = re.compile(r'\{\{([^}|]+)')
-REFERENCE = re.compile(r'^\^ Behavior reference \|\s*(v\d+\.\d+\.\d+)\s*·\s*reviewed\s+(\d{4}-\d{2}-\d{2})\s*\|', re.M)
+REFERENCE = re.compile(r'^\^ Behavior reference \|[^\r\n]*?\b(v\d+\.\d+\.\d+)\b[^\r\n]*?\breviewed\s+(\d{4}-\d{2}-\d{2})[^\r\n]*\|', re.M)
 USAGE_BLOCK = re.compile(r'^===== Usage and examples =====(.*?)(?=^===== |\Z)', re.M | re.S)
 MODE_NOTE = re.compile(r'\s+\((?:Standard|Mania|4K|7K)\)$')
 VERSION = re.compile(r'v(\d+)\.(\d+)\.(\d+)\b')
@@ -63,6 +63,27 @@ def target_id(raw, source):
         else:
             parts.append(item.lower().replace(' ', '_'))
     return ':'.join(parts) or 'start'
+
+
+def released_documentation(pages):
+    """Only a root-bound article/manifest review can explain a newer review label."""
+    import hashlib,stat
+    path=Path('/srv/poolrotator-wiki/documentation/reviewed-release.json')
+    try:
+        st=path.lstat()
+        if not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or st.st_mode&0o022:return None
+        review=read_json(path)
+        if not isinstance(review,dict) or not re.fullmatch(r'v7\.\d+\.\d+',review.get('version','')):return None
+        manifest=path.parent/'manifests'/(review['version']+'.json');info=manifest.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or info.st_mode&0o022 or hashlib.sha256(manifest.read_bytes()).hexdigest()!=review.get('manifest_sha256'):return None
+        rows=review.get('pages')
+        if not isinstance(rows,dict) or not 1<=len(rows)<=100:return None
+        for name,pin in rows.items():
+            if not re.fullmatch(r'[a-z0-9_]+(?::[a-z0-9_]+)*',name) or not isinstance(pin,str) or not re.fullmatch('[a-f0-9]{64}',pin):return None
+            article=pages/(name.replace(':','/')+'.txt')
+            if article.is_symlink() or article.stat().st_size>262144 or hashlib.sha256(article.read_bytes()).hexdigest()!=pin:return None
+        return review
+    except (OSError,ValueError,TypeError,AttributeError):return None
 
 
 def scan(pages=PAGES, media=MEDIA, release_path=RELEASE, published_path=PUBLISHED,
@@ -117,6 +138,7 @@ def scan(pages=PAGES, media=MEDIA, release_path=RELEASE, published_path=PUBLISHE
         except (OSError, UnicodeError):
             issue('page_unreadable', 'action', key)
 
+    documentation_review=released_documentation(pages)
     references = 0
     media_references = 0
     for source, text in texts.items():
@@ -160,6 +182,9 @@ def scan(pages=PAGES, media=MEDIA, release_path=RELEASE, published_path=PUBLISHE
             continue
         reviewed_version = version_tuple(match[1])
         published_version = version_tuple(verified)
+        review=documentation_review
+        if review and key in review['pages']:
+            published_version=max(published_version or (),version_tuple(review['version']) or ())
         try:
             datetime.strptime(match[2], '%Y-%m-%d')
         except ValueError:

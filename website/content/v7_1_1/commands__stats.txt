@@ -1,0 +1,24 @@
+====== Player statistics ======
+
+Shows AutoHost playtime and recorded PP-gain statistics for yourself or a named player, subject to that player’s visibility setting.
+
+^ Availability | All lobbies |
+^ Documentation status | Current behavior |
+^ Behavior reference | v7.1.1 · reviewed 2026-10-16 |
+
+===== Usage and examples =====
+<code>
+  .stats
+  .stats username
+</code>
+
+===== Limitations and timing =====
+These are bot-recorded statistics, not an authoritative replacement for the osu! profile. A hidden player’s public details are withheld.
+
+On participating v7.1 hosts, shared results use a local cache and state their freshness and coverage. Existing tracked playtime and PP gains are reused. Unreconciled local history is shown separately rather than added twice to the shared total. Hosts that have not enabled sharing/consumption keep their local behavior. See [[wiki:stats_privacy|privacy and cross-host limits]].
+
+===== Related articles =====
+See [[wiki:stats_privacy|related guide]], [[guides:using_commands|using commands]], and [[commands:start|all commands]].
+
+===== Host policy =====
+In v7.1.1, missing profiles enable shared-statistics consumption and public statistics sharing by default. Saved opt-outs remain. A host can still select local behavior; shared coverage is never inferred merely from a version number. See [[guides:hosting|operator settings and opt-outs]].

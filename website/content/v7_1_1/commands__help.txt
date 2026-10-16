@@ -1,0 +1,32 @@
+====== Help ======
+
+Shows help in lobby chat. ''.commands'' is an alias for ''.help''; ''.help <command>'' explains one command. ''.help2'' gives the expanded reference with staff controls only for the appropriate role.
+
+^ Availability | All lobbies |
+^ Documentation status | Current behavior |
+^ Behavior reference | v7.1.1 · reviewed 2026-10-16 |
+
+===== Usage and examples =====
+<code>
+  .help
+  .help skip
+  .help2
+  .commands
+</code>
+
+===== Common commands and full reference =====
+Compact help from [[updates:v7_0_3|v7.0.3]] is retained in the current releases. The default ''.help'' / ''.commands'' reply lists the most common actions and links to the full web reference:
+
+<code>
+.queue · .skip · .start · .harder/.easier · .good/.bad rate last map | All commands: https://poolrotater.com/commands
+</code>
+
+The English reply is 118 characters. Focused ''.help skip'' and the optional expanded ''.help2'' remain available. The concise common-command line is the same for staff and players; restricted controls are not exposed through it. Standard and Mania use the same common actions, and a custom command prefix is retained. All nine prepared non-English guidance packs point to the full link and focused help, with English first and one chat message.
+
+The current owner v7.0.7 and common v7.1 releases retain this short help. A published successor does not establish that a particular host already installed it; check its room title and diagnostics. The short [[https://poolrotater.com/commands|poolrotater.com/commands]] URL resolves to the full command reference.
+
+===== Limitations and timing =====
+Try ''.help'' on joining, then ''.help2'' for more commands or ''.help skip'' for one command's usage. Help is mode- and permission-aware. Newer workers also describe ''.time'', Jump/Rice/Noodle, ''.lang'' and Standard ''.dt [100]'' / ''.nm''. The room title identifies its worker version; the wiki finder combines the verified deployed-worker inventory with clearly labeled editorial supplements.
+
+===== Related articles =====
+See [[guides:using_commands|related guide]], [[guides:using_commands|using commands]], and [[commands:start|all commands]].

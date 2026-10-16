@@ -1,0 +1,21 @@
+====== Discord invite ======
+
+Returns the configured community Discord invite. Use it for current lobby status, questions, and support.
+
+^ Availability | All lobbies |
+^ Documentation status | Current behavior |
+^ Behavior reference | v7.1.1 · reviewed 2026-10-16 |
+
+===== Usage and examples =====
+<code>
+  .discord
+</code>
+
+===== Limitations and timing =====
+Use the invite supplied by the live bot. In v7.1, an unset or blank invite returns [[https://discord.gg/KmNhHbDEbv|the public PoolRotater Discord]]. A nonempty operator invite overrides that fallback. Disabling automatic reminders still leaves the on-demand command available.
+
+===== Related articles =====
+See [[community:start|related guide]], [[guides:using_commands|using commands]], and [[commands:start|all commands]].
+
+===== Website and Discord reminders =====
+[[updates:v7_0_2|v7.0.2 and later]] alternates automatic website and configured Discord notices on the existing post-match reminder schedule. Owner rooms retain a 40-minute interval, with audience suppression and no notices consumed in empty/silenced rooms. This does not change the on-demand ''.discord'' command. The short [[https://poolrotater.com/commands|poolrotater.com/commands]] link redirects to the current command reference.
