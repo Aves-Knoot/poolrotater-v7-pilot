@@ -88,6 +88,7 @@ class Collector:
 
     @staticmethod
     def _public_ranges(source,room,start,end):
+        if not Collector._table(source,'activity_visibility'):return []
         rows=source.execute('SELECT public,observed_at,mode FROM activity_visibility WHERE room_id=? AND observed_at<=? ORDER BY observed_at,id',(room,end)).fetchall()
         if start==end:
             return [(start,end,rows[-1]['mode'])] if rows and rows[-1]['public'] else []
@@ -184,7 +185,7 @@ class Collector:
                 query+=' AND created_at>=?';args.append(profile['consent_at'])
             query+=' ORDER BY rowid LIMIT ?';args.append(limit)
             rows=source.execute(query,args).fetchall()
-            if not rows:cursor=0
+            if not rows and reviewed_rooms is None:cursor=0
             for row in rows:
                 uid=int(row['user_id']);room=row['room_id'];historical=reviewed_rooms is not None
                 if uid in hidden or room is None or (historical and room not in reviewed):
@@ -201,7 +202,8 @@ class Collector:
             target.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',(cursor_key,str(cursor)))
         return added
 
-    def import_history(self, *, public_room_ids, public_history_confirmed=False, include_lobby_totals=False, limit=500):
+    def import_history(self, *, public_room_ids, public_history_confirmed=False,
+                       include_lobby_totals=False, exclude_unreviewed_players=False, limit=500):
         """Explicit reviewed backfill; old ledgers have no reliable private-room witness.
 
         Operator supplies reviewed public room IDs. Cumulative lobby totals need
@@ -211,6 +213,8 @@ class Collector:
         """
         require(type(public_room_ids) in (list,tuple) and all(type(r) is int and r>0 for r in public_room_ids),'invalid_activity_history_rooms')
         require(type(public_history_confirmed) is bool and type(include_lobby_totals) is bool,'explicit_activity_history_review_required')
+        require(type(exclude_unreviewed_players) is bool,'explicit_activity_history_review_required')
+        require(type(limit) is int and 1<=limit<=5000,'invalid_activity_limit')
         require(public_history_confirmed,'explicit_activity_history_review_required')
         require(not include_lobby_totals or bool(public_room_ids),'activity_history_room_provenance_required')
         history_paused=False
@@ -219,6 +223,13 @@ class Collector:
             source=self._source(self.ledger_path)
             try:
                 hidden={r[0] for r in source.execute('SELECT user_id FROM autohost_stats_privacy WHERE hidden=1')} if self._table(source,'autohost_stats_privacy') else set()
+                # A frozen legacy source must still honor today's opt-outs.
+                if self.privacy_path!=self.ledger_path:
+                    privacy=self._source(self.privacy_path)
+                    try:
+                        if self._table(privacy,'autohost_stats_privacy'):
+                            hidden.update(r[0] for r in privacy.execute('SELECT user_id FROM autohost_stats_privacy WHERE hidden=1'))
+                    finally:privacy.close()
                 if include_lobby_totals:
                     # Cumulative legacy time cannot be separated by room. It is
                     # only admissible if the reviewed public manifest covers
@@ -226,15 +237,33 @@ class Collector:
                     # authoritative private witness exists.
                     known={r[0] for r in source.execute('SELECT room_id FROM autohost_rooms')}
                     known.update(r[0] for r in source.execute('SELECT DISTINCT room_id FROM autohost_room_players'))
-                    require(known.issubset(set(public_room_ids)),'activity_history_incomplete_public_provenance')
-                    private={r[0] for r in source.execute('SELECT DISTINCT room_id FROM activity_visibility WHERE public=0')}
+                    reviewed=set(public_room_ids)
+                    excluded=set()
+                    if exclude_unreviewed_players:
+                        # Scalar cumulative totals cannot be split by room.
+                        # Withhold the entire player's baseline if any known
+                        # participation lacks reviewed public provenance.
+                        participants={}
+                        for uid,room in source.execute('SELECT user_id,room_id FROM autohost_room_players'):
+                            participants.setdefault(uid,set()).add(room)
+                        excluded={uid for uid,rooms in participants.items() if not rooms.issubset(reviewed)}
+                    else:
+                        require(known.issubset(reviewed),'activity_history_incomplete_public_provenance')
+                    private={r[0] for r in source.execute('SELECT DISTINCT room_id FROM activity_visibility WHERE public=0')} if self._table(source,'activity_visibility') else set()
                     # Initial random-password admission precedes any players;
                     # only private witnesses overlapping actual presence are
                     # contradictory to a reviewed all-public history.
                     for room in private:
                         for interval in source.execute('SELECT started_at,ended_at FROM activity_presence WHERE room_id=?',(room,)):
                             ranges=self._public_ranges(source,room,interval[0],interval[1])
-                            require(sum(end-start for start,end,_ in ranges)>=interval[1]-interval[0]-.001,'activity_history_private_time_refused')
+                            if sum(end-start for start,end,_ in ranges)<interval[1]-interval[0]-.001:
+                                require(exclude_unreviewed_players and room not in reviewed,'activity_history_private_time_refused')
+                rooms_key='history_achievement_rooms_'+profile['consent_id']
+                rooms_signature=canonical(sorted(set(public_room_ids))).decode()
+                prior_rooms=target.execute('SELECT value FROM meta WHERE key=?',(rooms_key,)).fetchone()
+                if prior_rooms is None or prior_rooms[0]!=rooms_signature:
+                    target.execute("DELETE FROM meta WHERE key IN ('cursor_autohost_pp_achievements_history','cursor_autohost_pp_achievements_mania_history')")
+                    target.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',(rooms_key,rooms_signature))
                 added=self._achievements(source,target,profile,hidden,limit=limit,reviewed_rooms=public_room_ids)
                 if include_lobby_totals:
                     row=target.execute("SELECT value FROM meta WHERE key='history_source_id'").fetchone()
@@ -248,16 +277,22 @@ class Collector:
                     cutoff=float(cutoff_row[0]) if cutoff_row else self.clock()
                     if not cutoff_row:
                         target.execute("INSERT INTO meta VALUES(?,?)",('history_cutoff_'+profile['consent_id'],str(cutoff)))
+                        if exclude_unreviewed_players:
+                            target.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('history_public_review_'+profile['consent_id'],canonical(sorted(reviewed)).decode()))
                         for table,mode in (('autohost_lobby_time','standard'),('autohost_lobby_time_mania','mania')):
                             if not self._table(source,table):continue
                             for row in source.execute('SELECT * FROM '+table):
                                 if row['user_id'] in hidden:continue
+                                if exclude_unreviewed_players and (row['user_id'] in excluded or row['user_id'] not in participants):continue
                                 p={'source_id':source_id,'mode':mode,'cutoff':min(cutoff,float(row['last_leave_at'] or row['first_join_at'] or cutoff)),'user_id':int(row['user_id']),'username':str(row['username'] or row['user_id']),
                                    'total_seconds':max(0,float(row['total_seconds'])),'visit_count':max(0,int(row['visit_count'])),
                                    **{k:row[k] for k in ('first_join_at','last_join_at','last_leave_at')}}
                                 key='baseline:'+mode+':'+str(row['user_id'])
                                 target.execute('INSERT INTO history_baselines(consent_id,source_key,payload,user_id) VALUES(?,?,?,?)',
                                                (profile['consent_id'],key,canonical(p).decode(),row['user_id']))
+                    elif exclude_unreviewed_players:
+                        prior=target.execute('SELECT value FROM meta WHERE key=?',('history_public_review_'+profile['consent_id'],)).fetchone()
+                        require(prior is not None and json.loads(prior[0])==sorted(reviewed),'activity_history_frozen_review_mismatch')
                     # Frozen whole-source summaries are queued in bounded chunks.
                     # A full ordinary queue cannot roll back the frozen source or
                     # require importing more than the queue can ever contain.
@@ -269,9 +304,18 @@ class Collector:
                         if enqueued is None:history_paused=True;break
                         added+=enqueued
                         target.execute('UPDATE history_baselines SET queued=1 WHERE consent_id=? AND source_key=?',(profile['consent_id'],pending['source_key']))
+                complete=True
+                for table in ('autohost_pp_achievements','autohost_pp_achievements_mania'):
+                    if not self._table(source,table):continue
+                    maximum=source.execute('SELECT COALESCE(MAX(rowid),0) FROM '+table).fetchone()[0]
+                    cursor=target.execute('SELECT value FROM meta WHERE key=?',('cursor_'+table+'_history',)).fetchone()
+                    complete=complete and (maximum==0 or bool(cursor and int(cursor[0])>=maximum))
+                if include_lobby_totals:
+                    complete=complete and not target.execute('SELECT 1 FROM history_baselines WHERE consent_id=? AND queued=0 LIMIT 1',(profile['consent_id'],)).fetchone()
+                history_paused=history_paused or (not complete and target.execute('SELECT COUNT(*) FROM outbox').fetchone()[0]>=MAX_OUTBOX_EVENTS)
             finally:source.close()
         return {'ok':True,'historical_events_queued':added,'public_history_explicitly_reviewed':True,
-                'history_capture_paused':history_paused,'provider_dispatch':False}
+                'history_capture_paused':history_paused,'history_scan_complete':bool(complete),'provider_dispatch':False}
 
     def batch(self, *, limit=MAX_EVENTS):
         require(type(limit) is int and 1<=limit<=MAX_EVENTS,'invalid_activity_limit')

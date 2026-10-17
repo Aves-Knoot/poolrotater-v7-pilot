@@ -46,7 +46,74 @@ class StandardPool(MapPool):
         self._dt_valid_until = 0
         self._dt_refresh_after = 0
         self._dt_source_signature = None
+        share = float(kwargs.get('stream_share', .5))
+        self._last_variety_mix = (1 - share, share) if 0 < share < 1 else (.5, .5)
         super().__init__(db_path, **kwargs)
+
+    def active_styles(self):
+        """Explicit Standard styles; Variety has no individual style toggles."""
+        return tuple(style for style in ('farm', 'stream', 'jump')
+                     if style in self.source_mode.split('+'))
+
+    def source_mode_label(self):
+        if '+' in self.source_mode:
+            return self.source_mode
+        return super().source_mode_label()
+
+    def set_source_mix(self, farm_share, stream_share):
+        count = super().set_source_mix(farm_share, stream_share)
+        if count and self.source_mode == 'variety':
+            self._last_variety_mix = (self.farm_share, self.stream_share)
+        return count
+
+    @staticmethod
+    def _style_member(item, style):
+        return bool(getattr(item, 'is_' + style, False))
+
+    def set_style_toggle(self, style, enabled=None):
+        if style not in ('farm', 'stream', 'jump') or enabled is not None and type(enabled) is not bool:
+            raise ValueError('Unknown Standard style or toggle')
+        styles = set(self.active_styles())
+        enabled = style not in styles if enabled is None else enabled
+        if enabled:
+            styles.add(style)
+        else:
+            styles.discard(style)
+        return self.set_style_selection(styles)
+
+    def set_style_selection(self, styles):
+        """Atomically change future picks, leaving DT and queued items alone."""
+        styles = set(styles)
+        if styles - {'farm', 'stream', 'jump'}:
+            raise ValueError('Unknown Standard styles')
+        if self.loved_mode:
+            return 0
+        previous = set(self.active_styles())
+        if styles == previous:
+            return len(self.maps)
+        saved = self.__dict__.copy()
+        try:
+            if not styles:
+                count = self.set_variety_mode(*self._last_variety_mix)
+            else:
+                self.source_mode = '+'.join(style for style in ('farm', 'stream', 'jump') if style in styles)
+                self.farm_share = 1.0 if 'farm' in styles else 0.0
+                self.stream_share = 1.0 if 'stream' in styles else 0.0
+                self.stream_enabled = 'stream' in styles
+                count = self.reload()
+                # Do not tell players an unavailable newly enabled style is on.
+                if any(not any(self._style_member(item, style) for item in self.maps)
+                       for style in styles - previous):
+                    count = 0
+            if count:
+                return count
+        except (OSError, sqlite3.Error, ValueError):
+            pass
+        except Exception:
+            self.__dict__.clear(); self.__dict__.update(saved)
+            raise
+        self.__dict__.clear(); self.__dict__.update(saved)
+        return 0
 
     def dt_enabled(self):
         return (self.dt_override if self.dt_override is not None else
@@ -133,10 +200,20 @@ class StandardPool(MapPool):
             raise
 
     def next_map(self, *, native_only=False):
+        if len(self.active_styles()) > 1:
+            maps = self.maps
+            self.maps = [m for m in maps if m.beatmap_id not in self._playlist_reserved]
+            try:
+                return self._next_map(native_only=native_only)
+            finally:
+                self.maps = maps
+        return self._next_map(native_only=native_only)
+
+    def _next_map(self, *, native_only=False):
         # Parent repeat/style fallback must never revive a disabled variant.
+        dt_ready = self.dt_enabled() and self.dt_catalog_ready()
         self.maps = [m for m in self.maps if not m.is_dt or
-                     (self.dt_enabled() and self.dt_catalog_ready()
-                      and m.beatmap_id not in self._dt_excluded)]
+                     (dt_ready and m.beatmap_id not in self._dt_excluded)]
         if not native_only and not self.dt_full:
             return super().next_map()
         maps = self.maps
@@ -216,7 +293,9 @@ class StandardPool(MapPool):
                   and row['hit_length'] >= self.stream_min_length)
         jump = JUMP_CATALOG.get(row['beatmap_id'], (0,0))
         approach_rate = None
-        if self.source_mode == 'jump':
+        if self.source_mode == 'jump' and hasattr(self, '_dt_jump_ars'):
+            approach_rate = self._dt_jump_ars.get(row['beatmap_id'])
+        elif self.source_mode == 'jump':
             # Read original AR without changing the immutable DT schema/catalog.
             try:
                 conn = sqlite3.connect(f'file:{Path(self.db_path).resolve()}?mode=ro', uri=True)
@@ -241,11 +320,76 @@ class StandardPool(MapPool):
                        approach_rate=approach_rate)
 
     def reload(self):
+        styles = self.active_styles()
+        if len(styles) < 2:
+            return self._reload_single()
+        # Reuse each existing verified style query and its sparse-pool policy.
+        # Mix their results rather than intersecting unrelated analysis scores.
+        saved = self.source_mode, self.farm_share, self.stream_share, self.stream_enabled
+        previous_maps = self.maps
+        groups = []
+        try:
+            for style in styles:
+                self.source_mode = style
+                self.farm_share = float(style == 'farm')
+                self.stream_share = float(style == 'stream')
+                self.stream_enabled = style == 'stream'
+                self._reload_single()
+                groups.append(self.maps)
+        except Exception:
+            self.maps = previous_maps
+            raise
+        finally:
+            self.source_mode, self.farm_share, self.stream_share, self.stream_enabled = saved
+        # Keep the existing separate NM/DT capacity, with fair source slots and
+        # no duplicate variants when a chart qualifies for several styles.
+        self.maps = []
+        for dt in (False, True):
+            merged = {}
+            for group in groups:
+                for item in group:
+                    if item.is_dt != dt:
+                        continue
+                    existing = merged.get(item.beatmap_id)
+                    if existing is None:
+                        merged[item.beatmap_id] = item
+                    else:
+                        self._merge_map(existing, item)
+                        existing.is_jump |= item.is_jump
+                        existing.jump_score = max(existing.jump_score, item.jump_score)
+                        existing.jump_relaxed_score = max(existing.jump_relaxed_score, item.jump_relaxed_score)
+                        if existing.approach_rate is None:
+                            existing.approach_rate = item.approach_rate
+            ranked = [iter([merged[item.beatmap_id] for item in group if item.is_dt == dt]) for group in groups]
+            selected = {}
+            while ranked and len(selected) < self.limit:
+                remaining = []
+                for items in ranked:
+                    for item in items:
+                        if item.beatmap_id in selected:
+                            continue
+                        selected[item.beatmap_id] = item
+                        remaining.append(items)
+                        break
+                    if len(selected) >= self.limit:
+                        break
+                ranked = remaining
+            self.maps.extend(selected.values())
+        return len(self.maps)
+
+    def _reload_single(self):
         super().reload()
         if hasattr(self, '_query_min_passcount') or not self.dt_enabled():
             return len(self.maps)
         nm = self.maps
-        options = [self._dt_map(row) for row in self._dt_rows()]
+        rows = self._dt_rows()
+        if self.source_mode == 'jump':
+            rows = [row for row in rows if any(JUMP_CATALOG.get(row['beatmap_id'], (0, 0))[:2])]
+            self._dt_jump_ars = self._jump_approach_rates(rows)
+        try:
+            options = [self._dt_map(row) for row in rows]
+        finally:
+            self.__dict__.pop('_dt_jump_ars', None)
         options = [m for m in options if m is not None and m.beatmap_id not in self._dt_excluded
                    and m.beatmap_id not in self._runtime_excluded]
         target = min(self.limit,self.sparse_passcount_min_maps)
@@ -268,9 +412,30 @@ class StandardPool(MapPool):
         self.maps = nm+selected
         return len(self.maps)
 
+    def _jump_approach_rates(self, rows):
+        """Read AR once per reload, not once per DT catalog candidate."""
+        ids = [row['beatmap_id'] for row in rows]
+        if not ids:
+            return {}
+        conn = None
+        try:
+            conn = sqlite3.connect(Path(self.db_path).resolve().as_uri() + '?mode=ro', uri=True)
+            values = {}
+            for start in range(0, len(ids), 500):
+                batch = ids[start:start+500]
+                values.update(conn.execute('SELECT beatmap_id,ar FROM beatmaps WHERE beatmap_id IN (' +
+                                           ','.join('?' for _ in batch) + ')', batch))
+            return values
+        except (OSError, sqlite3.Error):
+            return {}  # Older catalogs without AR keep the existing fallback.
+        finally:
+            if conn is not None:
+                conn.close()
+
     def _weighted_pick(self, candidates):
         nm = [m for m in candidates if not m.is_dt]
-        dt = [m for m in candidates if m.is_dt and self.dt_enabled() and self.dt_catalog_ready()
+        dt_ready = self.dt_enabled() and self.dt_catalog_ready()
+        dt = [m for m in candidates if m.is_dt and dt_ready
               and m.beatmap_id not in self._dt_excluded]
         passcount_max = self._passcount_reference(nm + dt)
         # Ordinary mixing retains its no-consecutive-DT guard. Explicit 100%
@@ -280,7 +445,20 @@ class StandardPool(MapPool):
         group = dt if choose_dt else nm
         if not group:
             return None
-        item = super()._weighted_pick(group, passcount_max=passcount_max)
+        mode = self.source_mode
+        try:
+            if len(self.active_styles()) > 1:
+                buckets = [(style, [m for m in group if self._style_member(m, style)])
+                           for style in self.active_styles()]
+                buckets = [(style, maps) for style, maps in buckets if maps]
+                if not buckets:
+                    return None
+                self.source_mode, group = random.choice(buckets)
+                if self.source_mode == 'jump':
+                    group = [m for m in group if m.jump_score > 0] or group
+            item = super()._weighted_pick(group, passcount_max=passcount_max)
+        finally:
+            self.source_mode = mode
         self._last_dt_pick = item.is_dt
         return item
 

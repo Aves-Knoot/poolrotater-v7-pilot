@@ -1,3 +1,7 @@
+# Current release: v7.1.9
+
+Use the [v7.1.9 installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.9), [operator guide](docs/V7_1_9_OPERATOR_GUIDE.md) and [release notes](docs/V7_1_9_RELEASE_NOTES.md). Reviewed public historical stats can be shared across hosts; completed missing-name lookups no longer remain syncing. Standard styles mix independently, DT remains separate, .aim aliases .jump and .t aliases .time. This combined controller release waits for all configured rooms to empty. Existing settings, credentials, catalogs, enrollment, privacy and update choices remain. Older repair launchers retain their original pins.
+
 # Current release: v7.1.8
 
 Use the [v7.1.8 installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.8), [operator guide](docs/V7_1_8_OPERATOR_GUIDE.md) and [maintenance procedures](docs/MAINTENANCE_OPERATOR_GUIDE.md). Supported controller-owned one-map/empty maintenance, cancellation, safer child startup, consecutive upgrade recovery and richer status preserve existing gameplay and data. Automatic controller updates wait for all configured rooms to empty; worker updates remain per-room. Stopped or recovery-required hosts need their local supported checks before one start attempt. Older repair launchers retain their old pins; use the current launcher for new attempts.

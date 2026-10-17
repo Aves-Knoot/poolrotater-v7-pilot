@@ -96,7 +96,7 @@ _PUBLIC_COMMANDS = frozenset({
     "help", "help2", "commands", "discord", "ai", "queue", "farm", "stream",
     "variety", "pool", "start", "skip", "s", "harder", "easier", "hidden", "show",
     "stats", "lobby", "pp", "map", "style", "jack", "chordjack", "ln", "technical",
-    "wait", "time", "dt", "nm", "lang", "language", "jump", "rice", "noodle", "noodles", "redo", "replay", "repeat", "again", "freedomdive",
+    "wait", "time", "dt", "nm", "lang", "language", "jump", "aim", "rice", "noodle", "noodles", "redo", "replay", "repeat", "again", "freedomdive",
 }) | frozenset(RATING_COMMANDS)
 
 _REPLAY_COMMANDS = frozenset({"redo", "replay", "repeat", "again"})
@@ -127,7 +127,7 @@ _COMMAND_HELP = {
     "discord": ("discord", "Get the community Discord invite."),
     "ai": ("ai <question>", "Ask the optional bot chat feature when enabled."),
     "farm": ("farm", "Prefer farm maps for future picks."),
-    "dt": ("dt [100]", "Allow mixed DT; .dt 100 prefers every pick DT with NoMod fallback. Disable with .nm."),
+    "dt": ("dt [on|off|100]", "DT is separate from styles. on allows mixed DT; 100 prefers DT with NoMod fallback. off/.nm disables it."),
     "nm": ("nm", "No DT picks; replace unplayed DT maps safely. A running match finishes."),
     "jump": ("jump", "Snap-aim Standard maps, including slider jumps; prefers short maps and AR 9–10."),
     "rice": ("rice", "Prefer tap-dominant Mania maps with few holds and streams; tap chords allowed."),
@@ -142,7 +142,7 @@ _COMMAND_HELP = {
     "technical": ("technical", "Prefer technical Mania charts for future picks."),
 }
 _COMMAND_HELP_ALIASES = {
-    "commands": "help", "language": "lang", "s": "skip", "redo": "replay", "repeat": "replay",
+    "commands": "help", "language": "lang", "s": "skip", "t": "time", "aim": "jump", "redo": "replay", "repeat": "replay",
     "again": "replay", "noodles": "noodle", "g": "good", "b": "bad", "okay": "ok",
     "meh": "ok", "mid": "ok", "neutral": "ok", "fine": "ok",
     "average": "ok", "alright": "ok",
@@ -2726,6 +2726,13 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             if getattr(new_pool, 'mixed_dt', False):
                 new_pool.set_dt_override(getattr(self.pool, 'dt_override', None),
                                          full=getattr(self.pool, 'dt_full', False))
+                if (callable(getattr(type(self.pool), 'active_styles', None))
+                        and all(desired.get(key) == self.cfg.get(key)
+                                for key in ('stream_enabled', 'stream_share'))):
+                    styles = self.pool.active_styles()
+                    new_pool._last_variety_mix = self.pool._last_variety_mix
+                    if styles and not new_pool.set_style_selection(styles):
+                        raise ValueError('active styles do not fit the rebuilt catalog')
         except Exception as exc:
             log.warning("hot pool rebuild rejected; keeping current pool: %s", exc)
             return []
@@ -4378,6 +4385,29 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             self.say(f"{display_label} enabled—{n} eligible map{'s' if n != 1 else ''}. Future picks only.")
         return True
 
+    def _handle_standard_style_toggle(self, user_id, cmd, parts, is_privileged):
+        # Legacy/Mania/Loved pools keep their existing source handlers. Native
+        # Standard pools expose the independent mix without new shared state.
+        if cmd not in {'farm', 'stream', 'jump', 'variety'} or not callable(getattr(type(self.pool), 'set_style_toggle', None)):
+            return False
+        if cmd == 'variety':
+            if not is_privileged and user_id not in self.gameplay_player_ids():
+                self.say("Join as a player to change this lobby's style.")
+                return True
+            return False  # Retain validated legacy percentage arguments.
+        if len(parts) > 2 or len(parts) == 2 and parts[1].lower() not in {'on', 'off'}:
+            self.say(f"Usage: {self.prefix}{cmd} [on|off]")
+            return True
+        if not is_privileged and user_id not in self.gameplay_player_ids():
+            self.say("Join as a player to change this lobby's style.")
+            return True
+        enabled = None if len(parts) == 1 else parts[1].lower() == 'on'
+        if not self.pool.set_style_toggle(cmd, enabled):
+            self.say("No eligible maps for that style with the current filters. Previous pool kept.")
+        else:
+            self.say(f"{self.pool.source_mode_label().title()} enabled—{len(self.pool.maps)} eligible maps. Future picks only.")
+        return True
+
     @player_language_command
     def handle_command(
         self,
@@ -4395,6 +4425,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             cmd = cmd[len(self.prefix):]
         if cmd == "language":
             cmd = "lang"
+        if cmd == "t":
+            cmd = "time"
+        if cmd == "aim":
+            cmd = "jump"
         log.info("command from %s: %s", user_id, text)
         p = self.prefix
         is_admin = self._is_admin(user_id)
@@ -4438,6 +4472,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         mania = self.cfg.get("ruleset_id", 0) == 3
         if mania and self._handle_mania_command(user_id, cmd, parts):
             return
+        if not mania and self._handle_standard_style_toggle(user_id, cmd, parts, is_privileged):
+            return
 
         if cmd in ("help", "commands"):
             if len(parts) > 1:
@@ -4453,6 +4489,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     usage, description = _COMMAND_HELP[canonical]
                     if mania and canonical == "variety":
                         usage, description = "variety", "Return to a mix of Mania styles for future picks."
+                    elif canonical == "time":
+                        description += f" Alias: {p}t."
+                    elif not mania and canonical in {"farm", "stream", "jump"} and callable(getattr(type(self.pool), 'set_style_toggle', None)):
+                        usage = f"{canonical} [on|off]"
+                        description = ("Toggle this style independently; enabled styles mix. DT stays separate. "
+                                       f"Reset styles with {p}variety." + (f" Alias: {p}aim." if canonical == 'jump' else ''))
                     elif getattr(self.pool, "loved_mode", False) and canonical in {"farm", "stream", "variety"}:
                         description = "Map source commands are unavailable in this Loved lobby."
                     elif canonical == "farm" and mania and not self.pool.mania_farm_enabled:
@@ -4478,7 +4520,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             source_commands = (
                 f"{p}map {p}style {p}jack {p}chordjack {p}stream {p}ln {p}technical {p}rice {p}noodle {p}variety {p}farm " if mania else
                 "" if getattr(self.pool, "loved_mode", False) else
-                f"{p}farm {p}stream {p}jump {p}variety [farm% stream%] {p}dt [100] {p}nm "
+                f"{p}farm {p}stream {p}jump/{p}aim {p}variety [farm% stream%] {p}dt [on|off|100] {p}nm "
             )
             if mania:
                 self.say(f"{self._mania_key_label()} Ranked/Approved; variety may include vetted converts. Fixed difficulty; {p}harder/{p}easier vote in {self._difficulty_vote_step():.2f}* steps. Styles are heuristic, not guaranteed PP efficiency.")
@@ -4486,7 +4528,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             public_commands = (
                 f"Commands: {p}queue {p}pool {source_commands}{p}stats [username] {p}lobby "
                 f"{p}start {p}pp [mods] [acc%...] "
-                f"{p}wait {p}time "
+                f"{p}wait {p}time/{p}t "
                 f"{p}redo/{p}replay/{p}repeat "
                 f"{p}good/{p}g {p}bad/{p}b {p}ok {p}skip/{p}s "
                 f"{p}harder {p}easier "
@@ -4685,21 +4727,23 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 self.say("DT mixing is available in Standard Ranked lobbies with normal fixed mods.")
                 return
             full_dt = cmd == 'dt' and len(parts) == 2 and parts[1] in ('100', '100%')
-            if len(parts) != 1 and not full_dt:
-                self.say(f"Usage: {p}dt [100] | Disable with {p}nm" if cmd == 'dt'
+            toggle_dt = cmd == 'dt' and len(parts) == 2 and parts[1].lower() in ('on', 'off')
+            if len(parts) != 1 and not full_dt and not toggle_dt:
+                self.say(f"Usage: {p}dt [on|off|100] | Disable with {p}nm" if cmd == 'dt'
                          else f"Usage: {p}nm")
                 return
             if not is_privileged and user_id not in self.gameplay_player_ids():
                 return
-            if cmd == 'dt' and not self._dt_fixed_mods_supported():
+            enable_dt = cmd == 'dt' and (not toggle_dt or parts[1].lower() == 'on')
+            if enable_dt and not self._dt_fixed_mods_supported():
                 self.say("DT mixing is unavailable with this lobby's fixed mods.")
                 return
             if full_dt:
                 self.pool.set_dt_override(True, full=True)
             else:
-                self.pool.set_dt_override(cmd == 'dt')
+                self.pool.set_dt_override(enable_dt)
             self._dt_full_refresh_pending = full_dt
-            if cmd == 'dt':
+            if enable_dt:
                 self.say("DT 100% enabled; NoMod fallback | Mixed with .dt | Disable with .nm"
                          if full_dt else "dt enabled, buckle up gamers | Disable with .nm")
                 if full_dt and self.state in (IDLE, SCORING):
@@ -5047,7 +5091,15 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     except Exception:
                         log.warning("shared statistics username cache unavailable")
                     if resolved is None:
-                        self.say(f"{requester_name} — shared stats for {requested_name} are syncing; try again shortly.")
+                        try:
+                            lookup_status = self.pp_stats.reader.lookup_status(
+                                requested_name, ruleset_id=self.pp_stats.ruleset_id)
+                        except Exception:
+                            lookup_status = None
+                        if lookup_status == 'not_found':
+                            self.say(f"{requester_name} — no shared AutoHost stats are available for {requested_name} yet.")
+                        else:
+                            self.say(f"{requester_name} — shared stats for {requested_name} are syncing; try again shortly.")
                         return
 
                 if resolved is None:

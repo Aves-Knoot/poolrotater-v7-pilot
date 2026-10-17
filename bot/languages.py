@@ -406,6 +406,10 @@ class PlayerLanguages:
         if not parts or uid not in self.players:
             return english
         cmd = parts[0].removeprefix(self.prefix).lower()
+        if cmd == "t":
+            cmd = "time"
+        if cmd == "aim":
+            cmd = "jump"
         record = self._language_record(uid)
         language = record["language"]
         if language is None:

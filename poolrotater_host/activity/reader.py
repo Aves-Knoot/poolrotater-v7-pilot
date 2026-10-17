@@ -16,6 +16,7 @@ class Reader:
             db.execute('CREATE TABLE IF NOT EXISTS queries(query_key TEXT PRIMARY KEY,ruleset_id INTEGER NOT NULL,user_id INTEGER,username TEXT,queued REAL NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS privacy(user_id INTEGER PRIMARY KEY,hidden INTEGER NOT NULL,observed REAL NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS names(username TEXT NOT NULL,ruleset_id INTEGER NOT NULL,user_id INTEGER NOT NULL,PRIMARY KEY(username,ruleset_id))')
+            db.execute('CREATE TABLE IF NOT EXISTS lookups(username TEXT NOT NULL,ruleset_id INTEGER NOT NULL,fetched REAL NOT NULL,PRIMARY KEY(username,ruleset_id))')
 
     def request(self, *, user_id=None, username=None, ruleset_id=0):
         require(type(ruleset_id) is int and ruleset_id in (0,3),'invalid_activity_ruleset')
@@ -23,6 +24,9 @@ class Reader:
         if user_id is not None:integer(user_id);key='id:'+str(user_id)
         else:text(username,80);key='name:'+username.casefold()
         with connection(self.path) as db:
+            if username is not None:
+                miss=db.execute('SELECT fetched FROM lookups WHERE username=? AND ruleset_id=?',(username.casefold(),ruleset_id)).fetchone()
+                if miss and 0<=self.clock()-miss[0]<=self.max_age:return True
             exists=db.execute('SELECT 1 FROM queries WHERE query_key=?',(str(ruleset_id)+':'+key,)).fetchone()
             if exists is None and db.execute('SELECT COUNT(*) FROM queries').fetchone()[0]>=200:return False
             db.execute('INSERT OR IGNORE INTO queries VALUES(?,?,?,?,?)',(str(ruleset_id)+':'+key,ruleset_id,user_id,username,self.clock()))
@@ -48,6 +52,18 @@ class Reader:
         if row is None:return None
         value=self.user_stats(row[0],ruleset_id=ruleset_id)
         return (row[0],value['username']) if value and not value.get('hidden') else None
+
+    def lookup_status(self,username,*,ruleset_id=0):
+        """A validated empty reply is not an indefinitely pending request.
+
+        Hidden and absent names deliberately have the same public result. The
+        short negative cache expires so a later history import can be found.
+        """
+        text(username,80)
+        require(type(ruleset_id) is int and ruleset_id in (0,3),'invalid_activity_ruleset')
+        with connection(self.path) as db:
+            row=db.execute('SELECT fetched FROM lookups WHERE username=? AND ruleset_id=?',(username.casefold(),ruleset_id)).fetchone()
+        return 'not_found' if row and 0<=self.clock()-row[0]<=self.max_age else 'pending'
 
     def hidden(self,user_id,*,ruleset_id=0):
         value=self.user_stats(user_id,ruleset_id=ruleset_id)
@@ -89,6 +105,14 @@ class Reader:
                 for key in ('achievement_count','visit_count','map_plays'):integer(own[key],0)
             validated.append(item)
         with connection(self.path) as db:
+            returned_names={item['username'].casefold() for item in validated if not item['hidden']}
+            for name in names:
+                normalized=name.casefold()
+                if normalized in returned_names:
+                    db.execute('DELETE FROM lookups WHERE username=? AND ruleset_id=?',(normalized,mode))
+                else:
+                    db.execute('DELETE FROM names WHERE username=? AND ruleset_id=?',(normalized,mode))
+                    db.execute('INSERT OR REPLACE INTO lookups VALUES(?,?,?)',(normalized,mode,self.clock()))
             for item in validated:
                 db.execute('INSERT OR REPLACE INTO privacy VALUES(?,?,?)',(item['user_id'],int(item['hidden']),self.clock()))
                 if item['hidden']:
@@ -98,12 +122,14 @@ class Reader:
                     db.execute("DELETE FROM cache WHERE user_id=? AND json_extract(payload,'$.hidden')=1",(item['user_id'],))
                 db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?,?)',(item['user_id'],mode,canonical(item).decode(),self.clock()))
                 if not item['hidden']:
+                    db.execute('DELETE FROM lookups WHERE username=? AND ruleset_id=?',(item['username'].casefold(),mode))
                     db.execute('DELETE FROM names WHERE user_id=? AND ruleset_id=?',(item['user_id'],mode))
                     db.execute('INSERT OR REPLACE INTO names VALUES(?,?,?)',(item['username'].casefold(),mode,item['user_id']))
             for row in selected:db.execute('DELETE FROM queries WHERE query_key=?',(row['query_key'],))
             # Bounded cache can be rebuilt; hidden markers remain conservative.
             db.execute('DELETE FROM cache WHERE rowid IN (SELECT rowid FROM cache ORDER BY fetched DESC LIMIT -1 OFFSET 5000)')
             db.execute('DELETE FROM names WHERE NOT EXISTS(SELECT 1 FROM cache c WHERE c.user_id=names.user_id AND c.ruleset_id=names.ruleset_id)')
+            db.execute('DELETE FROM lookups WHERE rowid IN (SELECT rowid FROM lookups ORDER BY fetched DESC LIMIT -1 OFFSET 5000)')
         return {'ok':True,'queries':len(selected),'players':len(validated),'provider_dispatch':False}
 
     def status(self):
@@ -145,4 +171,5 @@ class DeferredReader:
         except (OSError,sqlite3.Error,NetworkError):return None
     def user_stats(self,*args,**kwargs):return self._call('user_stats',*args,**kwargs)
     def lookup(self,*args,**kwargs):return self._call('lookup',*args,**kwargs)
+    def lookup_status(self,*args,**kwargs):return self._call('lookup_status',*args,**kwargs)
     def hidden(self,*args,**kwargs):return self._call('hidden',*args,**kwargs)

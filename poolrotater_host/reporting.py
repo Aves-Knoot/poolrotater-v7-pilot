@@ -150,11 +150,11 @@ def support(root):
         fields(state,('format','phase','at','live_rooms_affected','provider_dispatch','capture_errors'))
         require(type(state['format']) is int and state['format']==1 and state['live_rooms_affected'] is False
                 and state['provider_dispatch'] is False,'invalid_reporting_receipt')
-        number(state['at']);require(type(state['capture_errors']) is list and len(state['capture_errors'])<=3,'invalid_reporting_receipt')
+        number(state['at']);require(type(state['capture_errors']) is list and len(state['capture_errors'])<=4,'invalid_reporting_receipt')
         # Never copy arbitrary mutable payloads to support output.
         result['agent_phase']=state.get('phase') if state.get('phase') in ('disabled','synchronized','retrying','not-enrolled','consent-pending','partial') else 'local-review-required'
         result['last_attempt_at']=state.get('at')
-        result['capture_errors']=[e for e in state.get('capture_errors',[]) if e in ('activity-capture-unavailable','log-source-unavailable','activity-capacity-paused')]
+        result['capture_errors']=[e for e in state.get('capture_errors',[]) if e in ('activity-capture-unavailable','log-source-unavailable','activity-capacity-paused','activity-history-review-required')]
     external=root/'state/reporting-external.json'
     if external.exists():
         state=read_json(external)
@@ -190,6 +190,14 @@ class Reporter:
                     # An unreadable privacy source must hold activity upload;
                     # independent diagnostic collection can still proceed.
                     activity_ready=False;capture_errors.append('activity-capture-unavailable')
+                if activity_ready:
+                    try:
+                        from .activity.history import step as history_step
+                        history_step(root)
+                    except Exception:
+                        # A refused historical review must not stop ordinary
+                        # public telemetry, cache refresh or diagnostic uploads.
+                        capture_errors.append('activity-history-review-required')
             if p['operational_logs']:
                 for source in local.sources.values():
                     try:local.collect(source)

@@ -62,6 +62,38 @@ class ReportingIntegrationTests(unittest.TestCase):
         self.assertEqual(Collector(self.root).status()['pending_events'],0)
         self.assertIn('lifecycle info retained',str(HubLogs(self.store).search()))
         self.assertFalse(reporting.support(self.root)['provider_dispatch'])
+
+    def test_reviewed_history_captures_uploads_and_resolves_name_over_real_https(self):
+        from bot.ppstats import PPStatsStore
+        from poolrotater_host.activity import history
+        self.enable()
+        marker,_=load(self.root)
+        store=PPStatsStore(str(self.root/'state/controller-ratings.db'))
+        self.ledger.record_room_open(room_id=71,room_name='Invented public historical room',created_at=20)
+        self.ledger.record_room_player_join(room_id=71,user_id=9,username='Historical Player',joined_at=20)
+        with store._connect() as db:
+            db.execute("INSERT INTO autohost_lobby_time VALUES(9,'Historical Player',306467,123,20,80,90,90)")
+        atomic_json(self.root/history.PLAN,{'format':1,**marker,'public_room_ids':[71],
+            'public_history_confirmed':True,'include_lobby_totals':True,'exclude_unreviewed_players':True})
+        for _ in range(6):self.reporter.step()
+        self.assertEqual(len(Repository(self.store).snapshot()['baselines']),1)
+        reader=Reader(self.root);self.assertIsNone(reader.lookup('Historical Player'))
+        for _ in range(3):self.reporter.step()
+        self.assertEqual(reader.lookup('Historical Player'),(9,'Historical Player'))
+        self.assertEqual(reader.user_stats(9)['total_lobby_seconds'],306467)
+        self.assertEqual(read_json(self.root/history.RECEIPT)['phase'],'queued')
+        self.assertEqual(Collector(self.root).status()['pending_events'],0)
+
+    def test_refused_history_review_does_not_block_ordinary_activity_or_logs(self):
+        from poolrotater_host.activity import history
+        self.enable();self.presence()
+        atomic_json(self.root/history.PLAN,{'format':1,'unreviewed':True})
+        reporting.logs(self.root).append('diagnostic during history refusal',room='room1')
+        receipts=[self.reporter.step() for _ in range(6)]
+        self.assertTrue(all('activity-history-review-required' in r['capture_errors'] for r in receipts))
+        self.assertEqual(len(Repository(self.store).snapshot()['presence']),1)
+        self.assertIn('diagnostic during history refusal',str(HubLogs(self.store).search()))
+        self.assertIn('activity-history-review-required',reporting.support(self.root)['capture_errors'])
     def test_outage_preserves_unsent_and_replays_once(self):
         self.enable();self.presence()
         with patch.object(self.client,'transport',side_effect=NetworkError('hub_unavailable',503)):
