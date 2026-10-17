@@ -2,7 +2,7 @@
 
 No OAuth or provider calls. Admission uses the running workers' existing private
 maintenance gate and fresh independent broker/worker roster observations. Any
-late join cancels admission. Interrupted commits require explicit review.
+late join cancels admission. Interrupted commits resume only through evidence-bound native recovery.
 """
 import hashlib
 import math
@@ -97,6 +97,24 @@ def _rows(target, parent, *, now, after=None):
                 or not row.get('room_id') or row['room_id'] != status.get('room_id')):
             return None
     return rooms
+
+
+def _uncertain_maintenance(target,parent,job,*,now):
+    """Fresh worker uncertainty can refuse admission, never authorize a mutation.
+
+    _rows deliberately rejects non-idle/paused observations. Inspect this narrow
+    negative evidence independently so a cancelled gate cannot masquerade as an
+    ordinary endless empty-room wait while its worker is fenced.
+    """
+    value=_control(target['root']/'state/rolling/status.json',parent['service_uid'],optional=True)
+    if type(value)is not dict:return False
+    generated=value.get('generated_at');rows=value.get('rooms')
+    if (type(generated)not in(int,float) or not math.isfinite(generated)
+            or not 0<=now-generated<=8 or type(rows)is not dict
+            or set(rows)!=set(job['rooms'])):return False
+    return any(type(row)is dict and type(row.get('status'))is dict
+        and type(row['status'].get('maintenance'))is dict
+        and row['status']['maintenance'].get('uncertain')is True for row in rows.values())
 
 
 def _same_rooms(rows, job):
@@ -219,7 +237,8 @@ def queue(instance, bundle, sha256, *, from_sha256, deployment_id=None, release_
             'process':_process(service['MainPID']), 'rooms':sorted(aliases),
             'configuration':_config_hashes(target['root']), 'service_enabled':service['UnitFileState']=='enabled',
             'network_active':network['ActiveState']=='active', 'network_enabled':network['UnitFileState']=='enabled',
-            'queued_at':time.time(), 'empty_since':None, 'reason':'waiting_for_all_rooms_empty'}
+            'queued_at':time.time(), 'empty_since':None, 'reason':'waiting_for_all_rooms_empty',
+            'automatic_recovery':{'format':1,'attempts':0}}
         if release_approval_required:job['release_approval_required']=True
         _write(path, job)
         return {'ok':True, 'phase':job['phase'], 'id':job['id'], 'release':staged['release'],
@@ -227,11 +246,18 @@ def queue(instance, bundle, sha256, *, from_sha256, deployment_id=None, release_
 
 
 def step(instance):
-    """Short timer iteration. A clean idle window may commit once; never retry a
-    partially executed stop/upgrade/start transaction without a human review.
-    """
+    """Fresh empty admission, or evidence-bound continuation of this exact job."""
     from .pilot_operations import _service_state, _systemctl
     target, marker, _, current = _binding(instance)
+    # Recovery owns both native locks itself. Never recursively acquire them.
+    observed=_control(target['prefix']/NAME)
+    if observed.get('phase') in ('committing','recovering','retrying'):
+        from .update_lifecycle import automatic_eligible
+        if automatic_eligible(observed):
+            from .updates.recovery import controller
+            result=controller(instance,observed['id'],'complete',automatic=True)
+            if result.get('phase')in('complete','held'):disarm(instance)
+            return result
     with file_lease(target['prefix'] / 'controller-update-admin.lock'):
         path = target['prefix'] / NAME; job = _control(path)
         if job.get('phase') in ('complete','cancelled','held'):
@@ -240,7 +266,10 @@ def step(instance):
         def save(**values):
             job.update(values); _write(path, job)
         if job.get('phase') not in ('waiting_empty','locking'):
-            save(phase='held', reason='interrupted_commit_requires_review')
+            save(phase='held', reason='interrupted_commit_requires_review',
+                 failure_stage=job.get('stage','recovery_validation'),
+                 failure_code='update_recovery_limit' if job.get('automatic_recovery') else 'update_interrupted_commit',
+                 next_action='review_controller_update_with_operation_id')
             return {'ok':False,'phase':'held','reason':job['reason']}
         parent = job['before']
         try: same_process=_process(_service_state(instance)['MainPID']) == job['process']
@@ -264,7 +293,15 @@ def step(instance):
             if job['phase']=='locking': _gate(target,parent,job,None)
             save(phase='held',reason='controller_approval_expired_or_incompatible')
             return {'ok':False,'phase':'held','reason':job['reason']}
-        now=time.time(); rows=_rows(target,parent,now=now)
+        now=time.time()
+        if _uncertain_maintenance(target,parent,job,now=now):
+            save(phase='held',reason='maintenance_outcome_requires_review',stage='admission',
+                stage_at=now,failure_stage='admission',failure_code='update_maintenance_outcome_requires_review',
+                failure_at=now,next_action='review_controller_update_with_operation_id; retain_worker_uncertainty')
+            disarm(instance)
+            return {'ok':False,'phase':'held','reason':job['reason'],
+                'failure_stage':job['failure_stage'],'failure_code':job['failure_code']}
+        rows=_rows(target,parent,now=now)
         if rows is not None and set(rows) != set(job['rooms']): rows=None
         if job['phase']=='waiting_empty':
             if rows is None or any(r['status'].get('paused') for r in rows.values()):
@@ -315,11 +352,15 @@ def step(instance):
                         _gate(target,parent,job,None)
                         save(phase='held',reason='ownership_journal_changed_before_commit')
                     else:
-                        save(phase='committing',commit_started_at=time.time(),reason='all_rooms_private_empty_and_drained')
+                        save(phase='committing',commit_started_at=time.time(),stage='approval',stage_at=time.time(),reason='all_rooms_private_empty_and_drained',
+                             automatic_recovery=job.get('automatic_recovery',{'format':1,'attempts':0}))
                         try: _commit(instance,target,parent,job,save)
-                        except Exception:
-                            save(phase='held',reason='commit_requires_review_retain_all_state')
-                            raise
+                        except Exception as error:
+                            from .update_lifecycle import failed
+                            failed(save,job,error)
+                            if job['phase']=='held':disarm(instance)
+                            return {'ok':False,'phase':job['phase'],'reason':job['reason'],
+                                    'failure_stage':job.get('failure_stage'),'failure_code':job['failure_code']}
         return {'ok':True,'phase':job['phase'],'reason':job.get('reason')}
 
 
@@ -336,26 +377,37 @@ def _commit(instance,target,parent,job,save):
         from .updates.approval import require_approved
         require_approved(validate_runtime(parent,target['prefix'])['manifest'],
                          validate_runtime(job['after'],target['prefix'])['manifest'],parent,job['after'])
+    from .update_lifecycle import checkpoint,wait_stopped
+    checkpoint(save,'approval')
     network._checked_unit(instance,optional=not job['network_active'])
     save(commit_admitted_at=time.time())
+    checkpoint(save,'network_stop')
     if job['network_enabled']: _systemctl('disable',network.name(instance))
     if job['network_active']: network.unit(instance,'stop')
+    checkpoint(save,'controller_stop')
     _systemctl('stop',target['unit'],timeout=100); _systemctl('disable',target['unit'])
-    from .pilot_installation import _stopped,require_no_service_processes
-    with _stopped(target['root'],parent['service_uid']):
-        require_no_service_processes(parent['service_uid'])
+    checkpoint(save,'cleanup')
+    wait_stopped(target['root'],parent['service_uid'],save=save)
     save(services_stopped_at=time.time())
     _gate(target,parent,job,None)
+    checkpoint(save,'upgrade')
     result=upgrade(instance,job['archive'],job['after']['bundle_sha256'],
                    from_sha256=parent['bundle_sha256'])
+    checkpoint(save,'configuration')
     if _config_hashes(target['root']) != job['configuration']:
         raise ConfigError('configuration changed during controller upgrade')
     save(upgrade_transition=result['transition_id'])
+    checkpoint(save,'controller_start',startup_attempted_at=time.time())
     started=lifecycle(instance,'start')
     if not started.get('ok'): raise ConfigError('upgraded controller startup requires review')
+    checkpoint(save,'readiness')
+    from .updates.recovery import wait_for_workers
+    wait_for_workers(instance,target,job['after'])
+    checkpoint(save,'network_restore')
     if job['service_enabled']: _systemctl('enable',target['unit'])
     if job['network_active']: network.unit(instance,'start')
     if job['network_enabled']: _systemctl('enable','poolrotater-v7-network-'+instance+'.service')
+    checkpoint(save,'completion')
     save(phase='complete',reason='controller_upgraded_configuration_preserved',completed_at=time.time())
     disarm(instance)
 

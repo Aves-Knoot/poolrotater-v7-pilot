@@ -16,7 +16,7 @@ import zipfile
 ENV = {'PATH':'/usr/sbin:/usr/bin:/bin', 'LANG':'C.UTF-8',
        'PYTHONDONTWRITEBYTECODE':'1', 'MALLOC_ARENA_MAX':'2'}
 REPORT_BASE = Path('/var/lib/poolrotater-v7-repair-reports')
-EXPECTED_VERSION = 'v7.1.9'
+EXPECTED_VERSION = 'v7.1.10'
 
 
 class RepairError(ValueError):

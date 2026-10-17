@@ -1,5 +1,6 @@
 """Native evidence -> durable opt-in outbox. No network/provider calls on gameplay paths."""
 import json
+import math
 from pathlib import Path
 import sqlite3
 import time
@@ -12,6 +13,28 @@ from .contracts import event, batch, MAX_BODY, MAX_EVENTS
 
 MAX_OUTBOX_EVENTS = 50000
 MAX_PRIVACY_EVENTS = 50000
+
+
+def provider_identity(value):
+    """Native ledgers also retain internal identities; only provider IDs travel."""
+    return type(value) is int and 1 <= value <= 2**53-1
+
+
+def privacy_rows(source):
+    hidden=set();payloads=[];invalid=0;internal=0
+    if Collector._table(source,'autohost_stats_privacy'):
+        for uid,choice,updated in source.execute('SELECT user_id,hidden,updated_at FROM autohost_stats_privacy'):
+            if not provider_identity(uid):
+                internal+=1;continue
+            if (type(choice) is not int or choice not in (0,1)
+                    or type(updated) not in (int,float) or not math.isfinite(updated)
+                    or not 0 <= updated <= 2**53-1):
+                # Malformed preferences for a real player are never treated as
+                # permission to share. The global fence also holds old outbox.
+                hidden.add(uid);invalid+=1;continue
+            if choice:hidden.add(uid)
+            payloads.append({'user_id':uid,'hidden':bool(choice),'updated_at':float(updated)})
+    return hidden,payloads,invalid,internal
 
 
 class Collector:
@@ -57,7 +80,16 @@ class Collector:
     def consent(self):
         with connection(self.path) as db:return self._profile(db)
 
+    @staticmethod
+    def _excluded(db,kind):
+        row=db.execute("SELECT value FROM meta WHERE key='identity_exclusions'").fetchone()
+        counts=json.loads(row[0]) if row else {}
+        counts[kind]=min(1000000,counts.get(kind,0)+1)
+        db.execute("INSERT OR REPLACE INTO meta VALUES('identity_exclusions',?)",(canonical(counts).decode(),))
+
     def _enqueue(self, db, profile, key, kind, payload):
+        if not provider_identity(payload.get('user_id')):
+            self._excluded(db,kind);return False
         digest=fingerprint(payload)
         previous=db.execute('SELECT digest FROM seen WHERE source_key=?',(key,)).fetchone()
         if previous and previous[0]==digest:return False
@@ -108,19 +140,26 @@ class Collector:
             since=profile['consent_at']
             privacy=self._source(self.privacy_path)
             try:
-                hidden=set()
-                if self._table(privacy,'autohost_stats_privacy'):
-                    for row in privacy.execute('SELECT user_id,hidden,updated_at FROM autohost_stats_privacy'):
-                        payload={'user_id':int(row['user_id']),'hidden':bool(row['hidden']),'updated_at':float(row['updated_at'])}
-                        if payload['hidden']:
-                            hidden.add(payload['user_id']);target.execute("DELETE FROM outbox WHERE user_id=? AND kind!='privacy'",(payload['user_id'],))
-                        enqueued=self._enqueue(target,profile,'privacy:'+str(row['user_id']),'privacy',payload)
-                        if enqueued is None:privacy_safe=False;capture_paused=True
-                        else:added+=enqueued
+                hidden,payloads,invalid,internal=privacy_rows(privacy)
+                target.execute("INSERT OR REPLACE INTO meta VALUES('identity_exclusions',?)",(canonical({'privacy':min(1000000,internal)}).decode(),))
+                target.execute("INSERT OR REPLACE INTO meta VALUES('invalid_privacy_preferences',?)",(str(invalid),))
+                if invalid:privacy_safe=False;capture_paused=True
+                valid_preferences={p['user_id'] for p in payloads}
+                for uid in hidden:
+                    target.execute("DELETE FROM outbox WHERE user_id=? AND kind!='privacy'",(uid,))
+                    # An older pending public choice cannot overtake a malformed
+                    # newer preference. Keep source and seen evidence intact.
+                    if uid not in valid_preferences:
+                        target.execute('DELETE FROM privacy_outbox WHERE user_id=?',(uid,))
+                        target.execute('DELETE FROM seen WHERE source_key=?',('privacy:'+str(uid),))
+                for payload in payloads:
+                    enqueued=self._enqueue(target,profile,'privacy:'+str(payload['user_id']),'privacy',payload)
+                    if enqueued is None:privacy_safe=False;capture_paused=True
+                    else:added+=enqueued
             finally:privacy.close()
             target.execute("INSERT OR REPLACE INTO meta VALUES('privacy_safe',?)",('true' if privacy_safe else 'false',))
             if not privacy_safe:
-                return {'ok':True,'capture_enabled':True,'collected':added,'capture_paused':True,'privacy_safe':False}
+                return {'ok':True,'capture_enabled':True,'collected':added,'capture_paused':True,'privacy_safe':False,'privacy_review_required':bool(invalid)}
             source=self._source(self.ledger_path)
             try:
                 require(all(self._table(source,t) for t in ('activity_visibility','activity_presence','activity_joins','activity_leaves')),'activity_ledger_migration_required')
@@ -133,7 +172,9 @@ class Collector:
                         prior=source.execute('SELECT * FROM '+table+' WHERE id=?',(cursor,)).fetchone()
                         require(prior is not None and fingerprint(dict(prior))==anchor[0],'activity_source_restore_requires_review')
                     for row in source.execute('SELECT * FROM '+table+' WHERE id>? ORDER BY id LIMIT ?',(cursor,limit)):
-                        uid=int(row['user_id']);start=float(row['started_at'] if kind=='presence' else row['occurred_at']);end=float(row['ended_at'] if kind=='presence' else row['occurred_at'])
+                        if not provider_identity(row['user_id']):
+                            self._excluded(target,kind);cursor=row['id'];continue
+                        uid=row['user_id'];start=float(row['started_at'] if kind=='presence' else row['occurred_at']);end=float(row['ended_at'] if kind=='presence' else row['occurred_at'])
                         if end<since or uid in hidden:
                             cursor=row['id'];continue
                         for begin,finish,mode in self._public_ranges(source,row['room_id'],max(start,since),end):
@@ -155,6 +196,8 @@ class Collector:
                     rows=source.execute("SELECT p.rowid AS source_row,m.*,p.user_id,p.username,p.score_submitted,p.accuracy FROM autohost_matches m JOIN autohost_match_players p ON p.match_key=m.match_key WHERE m.result='completed' AND m.ended_at IS NOT NULL AND m.started_at>=? AND p.rowid>? ORDER BY p.rowid LIMIT ?",(since,match_cursor,limit)).fetchall()
                     if not rows:match_cursor=0
                     for row in rows:
+                        if not provider_identity(row['user_id']):
+                            self._excluded(target,'match');match_cursor=row['source_row'];continue
                         if row['user_id'] in hidden:
                             match_cursor=row['source_row'];continue
                         ranges=self._public_ranges(source,row['room_id'],row['started_at'],row['ended_at'])
@@ -187,7 +230,9 @@ class Collector:
             rows=source.execute(query,args).fetchall()
             if not rows and reviewed_rooms is None:cursor=0
             for row in rows:
-                uid=int(row['user_id']);room=row['room_id'];historical=reviewed_rooms is not None
+                if not provider_identity(row['user_id']):
+                    self._excluded(target,'achievement');cursor=row['source_row'];continue
+                uid=row['user_id'];room=row['room_id'];historical=reviewed_rooms is not None
                 if uid in hidden or room is None or (historical and room not in reviewed):
                     cursor=row['source_row'];continue
                 ranges=self._public_ranges(source,room,row['created_at'],row['created_at'])
@@ -222,13 +267,15 @@ class Collector:
             profile=self._profile(target);require(profile and profile['enabled'],'statistics_sharing_disabled')
             source=self._source(self.ledger_path)
             try:
-                hidden={r[0] for r in source.execute('SELECT user_id FROM autohost_stats_privacy WHERE hidden=1')} if self._table(source,'autohost_stats_privacy') else set()
+                hidden,_,invalid,_=privacy_rows(source)
+                require(not invalid,'activity_privacy_preferences_require_review')
                 # A frozen legacy source must still honor today's opt-outs.
                 if self.privacy_path!=self.ledger_path:
                     privacy=self._source(self.privacy_path)
                     try:
-                        if self._table(privacy,'autohost_stats_privacy'):
-                            hidden.update(r[0] for r in privacy.execute('SELECT user_id FROM autohost_stats_privacy WHERE hidden=1'))
+                        current_hidden,_,invalid,_=privacy_rows(privacy)
+                        require(not invalid,'activity_privacy_preferences_require_review')
+                        hidden.update(current_hidden)
                     finally:privacy.close()
                 if include_lobby_totals:
                     # Cumulative legacy time cannot be separated by room. It is
@@ -282,6 +329,8 @@ class Collector:
                         for table,mode in (('autohost_lobby_time','standard'),('autohost_lobby_time_mania','mania')):
                             if not self._table(source,table):continue
                             for row in source.execute('SELECT * FROM '+table):
+                                if not provider_identity(row['user_id']):
+                                    self._excluded(target,'baseline');continue
                                 if row['user_id'] in hidden:continue
                                 if exclude_unreviewed_players and (row['user_id'] in excluded or row['user_id'] not in participants):continue
                                 p={'source_id':source_id,'mode':mode,'cutoff':min(cutoff,float(row['last_leave_at'] or row['first_join_at'] or cutoff)),'user_id':int(row['user_id']),'username':str(row['username'] or row['user_id']),
@@ -298,7 +347,7 @@ class Collector:
                     # require importing more than the queue can ever contain.
                     for pending in target.execute('SELECT source_key,payload,user_id FROM history_baselines WHERE consent_id=? AND queued=0 ORDER BY rowid LIMIT ?',
                                                   (profile['consent_id'],limit)).fetchall():
-                        if pending['user_id'] in hidden:
+                        if pending['user_id'] in hidden or not provider_identity(pending['user_id']):
                             target.execute('UPDATE history_baselines SET queued=1 WHERE consent_id=? AND source_key=?',(profile['consent_id'],pending['source_key']));continue
                         enqueued=self._enqueue(target,profile,pending['source_key'],'baseline',json.loads(pending['payload']))
                         if enqueued is None:history_paused=True;break
@@ -349,7 +398,12 @@ class Collector:
     def status(self):
         with connection(self.path) as db:
             profile=self._profile(db);row=db.execute("SELECT value FROM meta WHERE key='last_collected'").fetchone()
-            return {'ok':True,'capture_enabled':bool(profile and profile['enabled']),
+            invalid=db.execute("SELECT value FROM meta WHERE key='invalid_privacy_preferences'").fetchone()
+            exclusions=db.execute("SELECT value FROM meta WHERE key='identity_exclusions'").fetchone()
+            safe=db.execute("SELECT value FROM meta WHERE key='privacy_safe'").fetchone()
+            return {'ok':True,'identity_exclusions_last_scan':json.loads(exclusions[0]) if exclusions else {},
+                    'privacy_review_required':bool(invalid and int(invalid[0])),
+                    'privacy_safe':safe is None or safe[0]=='true','capture_enabled':bool(profile and profile['enabled']),
                     'consent_id':profile['consent_id'] if profile else None,'consent_at':profile['consent_at'] if profile else None,
                     'pending_events':db.execute('SELECT COUNT(*) FROM outbox').fetchone()[0]+db.execute('SELECT COUNT(*) FROM privacy_outbox').fetchone()[0],
                     'pending_privacy_events':db.execute('SELECT COUNT(*) FROM privacy_outbox').fetchone()[0],

@@ -150,11 +150,14 @@ def support(root):
         fields(state,('format','phase','at','live_rooms_affected','provider_dispatch','capture_errors'))
         require(type(state['format']) is int and state['format']==1 and state['live_rooms_affected'] is False
                 and state['provider_dispatch'] is False,'invalid_reporting_receipt')
-        number(state['at']);require(type(state['capture_errors']) is list and len(state['capture_errors'])<=4,'invalid_reporting_receipt')
+        number(state['at']);require(type(state['capture_errors']) is list and len(state['capture_errors'])<=5,'invalid_reporting_receipt')
         # Never copy arbitrary mutable payloads to support output.
         result['agent_phase']=state.get('phase') if state.get('phase') in ('disabled','synchronized','retrying','not-enrolled','consent-pending','partial') else 'local-review-required'
         result['last_attempt_at']=state.get('at')
-        result['capture_errors']=[e for e in state.get('capture_errors',[]) if e in ('activity-capture-unavailable','log-source-unavailable','activity-capacity-paused','activity-history-review-required')]
+        result['agent_observation_current']=0<=time.time()-state['at']<=120
+        result['reporting_health']='stalled' if not result['agent_observation_current'] else (
+            'blocked' if state['capture_errors'] else result['agent_phase'])
+        result['capture_errors']=[e for e in state.get('capture_errors',[]) if e in ('activity-capture-unavailable','log-source-unavailable','activity-capacity-paused','activity-history-review-required','activity-privacy-review-required')]
     external=root/'state/reporting-external.json'
     if external.exists():
         state=read_json(external)
@@ -185,7 +188,8 @@ class Reporter:
                 try:
                     require(not any((root/'state').glob('reporting-visibility-invalid-*.json')),'activity_visibility_requires_review')
                     captured=collector.collect()
-                    if captured.get('capture_paused'):capture_errors.append('activity-capacity-paused')
+                    if captured.get('privacy_review_required'):capture_errors.append('activity-privacy-review-required')
+                    elif captured.get('capture_paused'):capture_errors.append('activity-capacity-paused')
                 except Exception:
                     # An unreadable privacy source must hold activity upload;
                     # independent diagnostic collection can still proceed.

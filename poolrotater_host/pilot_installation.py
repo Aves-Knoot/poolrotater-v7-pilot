@@ -123,6 +123,12 @@ def _publish_intent(prefix, intent):
         finally: os.close(fd)
 
 
+class CleanupPending(ConfigError):
+    """Only positively identified local process/owner-lock cleanup contention."""
+    def __init__(self,code,message):
+        super().__init__(message);self.code=code
+
+
 @contextmanager
 def _quiescent(root, uid):
     """Hold the existing owner lock without resolving or modifying room state."""
@@ -134,7 +140,7 @@ def _quiescent(root, uid):
                 or stat.S_IMODE(st.st_mode) != 0o600):
             raise ConfigError('invalid pilot owner lock')
         try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError: raise ConfigError('pilot installation must be stopped') from None
+        except BlockingIOError: raise CleanupPending('update_owner_lock_busy','pilot installation must be stopped') from None
         yield
     finally: os.close(fd)
 
@@ -150,7 +156,7 @@ def require_no_service_processes(uid):
         except (FileNotFoundError, ProcessLookupError): continue
         except OSError: raise ConfigError('cannot verify stopped pilot processes') from None
         if uid in [int(value) for value in fields['Uid'].split()] and not fields['State'].strip().startswith('Z'):
-            raise ConfigError('dedicated pilot processes still running; wait for cleanup')
+            raise CleanupPending('update_children_still_running','dedicated pilot processes still running; wait for cleanup')
 
 
 @contextmanager

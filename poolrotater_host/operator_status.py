@@ -46,6 +46,12 @@ def summary(target, parent, service, *, current_observation=None):
         result['queued_update']={'kind':'controller','target_version':_version(controller.get('after',{}).get('release')),
             'phase':controller.get('phase'),'blocking_reason':controller.get('reason'),
             'all_rooms_empty_required':True}
+        from .update_lifecycle import STAGES,CODES
+        from .service_diagnostics import FAILURE_CODES
+        for key,allowed in (('failure_stage',STAGES),('failure_code',CODES|FAILURE_CODES)):
+            if controller.get(key) in allowed:result['queued_update'][key]=controller[key]
+        result['queued_update']['services_unexpectedly_offline']=bool(controller.get('commit_admitted_at')
+            and service.get('ActiveState')not in('active','activating') and controller.get('phase')=='held')
     else:
         from .worker_deployment import read_job,result_path
         job=read_job(parent)
@@ -63,9 +69,19 @@ def summary(target, parent, service, *, current_observation=None):
     if result['maintenance']['phase']=='requires_review':action='review_maintenance_status; cancel_retained_request_before_new_maintenance'
     elif result['maintenance']['phase']=='complete':action='selected_rooms_closed; stop_service_then_follow_supported_upgrade_or_start_procedure'
     elif result['maintenance']['phase'] not in ('absent','cancelled','expired'):action='observe_maintenance_status; cancellation_available'
+    elif result['queued_update'] and result['queued_update']['phase']=='held':action='review_controller_update_with_operation_id; services_offline_is_an_outage' if result['queued_update'].get('services_unexpectedly_offline') else 'review_held_update_before_new_deployment'
+    elif result['queued_update'] and result['queued_update']['phase']in('committing','recovering','retrying'):action='observe_bounded_controller_recovery; retain_state_if_held'
     elif result['queued_update']:action='wait_for_safe_update_window; inspect_update_status_for_blocking_reason'
     elif service.get('ActiveState')!='active':action='inspect_support_and_stopped_ownership_review_before_local_start'
     elif any(r.get('phase') in ('parked','recovery_required') for r in result['workers'].values()):action='review_affected_alias; preserve_healthy_siblings'
     else:action='hosting; observe_health_and_player_feedback'
+    update=result['queued_update']
+    result['hosting_state']=('update_outage' if update and update.get('services_unexpectedly_offline') else
+        'update_requires_review' if update and update['phase']=='held' else
+        'updating' if update and update['phase']in('committing','recovering','retrying') else
+        'waiting_for_empty_rooms' if update else 'hosting' if service.get('ActiveState')=='active' else 'stopped')
+    from .operations_health import project
+    reporting=_control(target['root']/'state/reporting-agent.json',parent['service_uid'],private=True,optional=True)
+    result['operations_health']=project(service,controller,reporting,now=time.time())
     result['operator_next_action']=action
     return result

@@ -71,7 +71,7 @@ def _fresh_running(target,parent):
     from ..ratings.operations import _identity
     from ..layout import load
     with _identity(parent['service_uid']):_,host=load(target['root'])
-    observation=_control(target['root']/'state/rolling/status.json',parent['service_uid'])
+    observation=_control(target['root']/'state/rolling/status.json',parent['service_uid'],optional=True)or{}
     now=time.time();generated=observation.get('generated_at')
     require(type(generated)in(int,float) and math.isfinite(generated) and 0<=now-generated<=8,
             'update_recovery_fresh_workers_required')
@@ -89,6 +89,35 @@ def _fresh_running(target,parent):
     return rows
 
 
+def wait_for_workers(instance,target,current,*,seconds=30):
+    """Observe the same successor while its first independent status is published.
+
+    Provider readiness precedes the first rolling-status write during cold full
+    catalog startup. This only waits for fresh local evidence; it cannot start,
+    stop, replace or adopt a process, and every other refusal remains immediate.
+    """
+    from .. import pilot_operations as pilot
+    from ..controller_update import _process
+    from .contracts import UpdateError
+    service=pilot._service_state(instance)
+    require(bool(service['MainPID'])and service['ActiveState']in('active','activating'),
+        'update_existing_controller_requires_review')
+    identity=_process(service['MainPID']);deadline=time.monotonic()+seconds
+    while True:
+        observed=pilot._service_state(instance)
+        require(observed['MainPID']==service['MainPID'] and observed['ActiveState']in('active','activating')
+            and _process(observed['MainPID'])==identity,'update_existing_controller_requires_review')
+        try:_fresh_running(target,current)
+        except UpdateError as error:
+            if str(error)!='update_recovery_fresh_workers_required' or time.monotonic()>=deadline:raise
+            time.sleep(min(.5,max(0,deadline-time.monotonic())))
+        else:
+            final=pilot._service_state(instance)
+            require(final['MainPID']==service['MainPID']and final['ActiveState']in('active','activating')
+                and _process(final['MainPID'])==identity,'update_existing_controller_requires_review')
+            return
+
+
 def _approval(target,job,*,recovering=False):
     from .approval import require_upgrade,require_approved
     before=validate_runtime(job['before'],target['prefix'])['manifest']
@@ -97,22 +126,31 @@ def _approval(target,job,*,recovering=False):
     check(before,after,job['before'],job['after'],recovering=recovering)
 
 
-def _restore_services(instance,target,current,job):
+def _restore_services(instance,target,current,job,*,save=None,automatic=False):
     from .. import pilot_operations as pilot
     from ..network import operations as network
     state=pilot._service_state(instance)
     if state['MainPID']:
         require(state['ActiveState']in('active','activating'),'update_existing_controller_requires_review')
         pilot._wait_ready(target,current)  # observation only, no duplicate start
-        _fresh_running(target,current)
     else:
         require(state['ActiveState']in('inactive','failed'),'update_existing_controller_requires_review')
         if network._state(instance)['MainPID']:network.unit(instance,'stop')
-        with pilot._stopped(target['root'],current['service_uid']):
-            from ..pilot_installation import require_no_service_processes
-            require_no_service_processes(current['service_uid'])
+        if automatic and job.get('startup_attempted_at'):
+            raise ConfigError('update_start_outcome_requires_review')
+        from ..update_lifecycle import wait_stopped,checkpoint
+        wait_stopped(target['root'],current['service_uid'],save=save or (lambda **values:None))
+        if save:checkpoint(save,'controller_start',startup_attempted_at=time.time())
         started=pilot.lifecycle(instance,'start')
         require(started.get('ok')is True,'update_recovery_start_requires_review')
+    wait_for_workers(instance,target,current)
+    _restore_integrations(instance,target,job)
+
+
+def _restore_integrations(instance,target,job):
+    """Restore saved service intent without starting/stopping the bot."""
+    from .. import pilot_operations as pilot
+    from ..network import operations as network
     pilot._systemctl('enable'if job['service_enabled']else'disable',target['unit'])
     if job['network_active']:
         state=network._state(instance)
@@ -127,8 +165,30 @@ def _restore_services(instance,target,current,job):
         pilot._systemctl('enable'if job['network_enabled']else'disable',network.name(instance))
 
 
-def controller(instance,operation_id,decision='review'):
+def controller(instance,operation_id,decision='review',*,automatic=False):
+    try:return _controller(instance,operation_id,decision,automatic=automatic)
+    except Exception as error:
+        # No arbitrary exception text, request parameters or credentials survive.
+        # Rebind/re-read while locked before annotating this exact transaction.
+        try:
+            from ..pilot_upgrade import _binding
+            from .. import controller_update as native
+            from ..update_lifecycle import failed
+            target,_,_,_=_binding(instance)
+            with file_lease(target['prefix']/'controller-update-admin.lock'):
+                path=target['prefix']/native.NAME;job=_control(protected(path))
+                if job.get('id')==operation_id and job.get('phase')not in('complete','cancelled') and decision=='complete':
+                    def save(**values):job.update(values);_write(path,job)
+                    failed(save,job,error)
+                    if automatic:return {'ok':False,'phase':job['phase'],'failure_code':job['failure_code'],
+                        'failure_stage':job['failure_stage'],'reason':job['reason']}
+        except Exception:pass  # Never replace the original refusal with reporting failure.
+        raise
+
+
+def _controller(instance,operation_id,decision='review',*,automatic=False):
     identifier(operation_id)
+    require(type(automatic)is bool and (not automatic or decision=='complete'),'update_recovery_decision_refused')
     require(decision in('review','complete','cancel','rollback'),'update_recovery_decision_refused')
     from ..pilot_installation import _admin
     from ..pilot_upgrade import _binding
@@ -162,6 +222,9 @@ def controller(instance,operation_id,decision='review'):
             require(phase=='aborted' and current==job['before'],'update_controller_rollback_refused')
             return {'ok':True,'phase':'cancelled','services_restarted':False,'replayed':True}
         require(job['phase']!='cancelled' or decision=='cancel','update_cancelled_controller_requires_new_operation')
+        if automatic:
+            from ..update_lifecycle import automatic_eligible
+            require(automatic_eligible(job),'update_recovery_limit')
         archive=protected(Path(job['archive']))
         require(archive==target['prefix']/('controller-'+job['after']['bundle_sha256']+'.zip')
             and hashlib.sha256(archive.read_bytes()).hexdigest()==job['after']['bundle_sha256'],
@@ -195,29 +258,41 @@ def controller(instance,operation_id,decision='review'):
                 after_version=after_manifest.get('version')if current==job['after']and phase=='committed'else None)
         require(configuration_matches(),'update_recovery_configuration_changed')
         _archive(target,job)
+        def save(**values):job.update(values);_write(target['prefix']/native.NAME,job)
+        from ..update_lifecycle import checkpoint
+        if automatic:
+            save(phase='recovering',automatic_recovery={**job['automatic_recovery'],
+                'attempts':job['automatic_recovery']['attempts']+1,'last_attempt_at':time.time()})
+        checkpoint(save,'recovery_validation')
         if current==job['before'] and service['MainPID']:
             # A prior stop wasn't dispatched/completed. Never inherit old empty
             # observations or a boot's process identity, and never stop players.
             require(phase!='prepared','update_upgrade_pending_while_service_running')
             require(service['ActiveState']=='active','update_existing_controller_requires_review')
             _fresh_running(target,current);_approval(target,job)
+            checkpoint(save,'network_restore')
+            _restore_integrations(instance,target,job)
             native._gate(target,current,job,None)
             reset={k:v for k,v in job.items()if k not in('commit_started_at','commit_admitted_at','services_stopped_at',
                 'upgrade_transition','nonce','lock_started','locked_since','room_ids','worker_identity')}
             reset.update(phase='waiting_empty',process=native._process(service['MainPID']),empty_since=None,
                          reason='operator_recovery_requires_new_empty_room_admission')
             _write(target['prefix']/native.NAME,reset)
+            # Held manual jobs disarm their owned timer. Re-arm only that
+            # receipt-bound launcher; independent updater jobs have no timer.
+            if job.get('timer_sha256'):native._arm(instance)
             return {'ok':True,'phase':'waiting_empty','services_restarted':False,'fresh_empty_window_required':True}
         if current==job['before'] or phase=='prepared':
             require(not service['MainPID'] and service['ActiveState']in('inactive','failed'),
                     'update_existing_controller_requires_review')
             from ..network import operations as network
             if network._state(instance)['MainPID']:network.unit(instance,'stop')
-            with pilot._stopped(target['root'],current['service_uid']):
-                from ..pilot_installation import require_no_service_processes
-                require_no_service_processes(current['service_uid'])
+            from ..update_lifecycle import wait_stopped
+            checkpoint(save,'cleanup')
+            wait_stopped(target['root'],current['service_uid'],save=save)
             native._gate(target,job['before'],job,None)
             from ..pilot_upgrade import upgrade as finish
+            checkpoint(save,'upgrade')
             if phase=='prepared':
                 result=finish(instance,archive,job['after']['bundle_sha256'],from_sha256=job['before']['bundle_sha256'],
                               recover='complete',transaction_id=upgrade['transition_id'])
@@ -233,7 +308,8 @@ def controller(instance,operation_id,decision='review'):
         upgrade=_upgrade(target,job,current)
         require(upgrade is not None and upgrade['phase']=='committed','update_recovery_committed_upgrade_required')
         _approval(target,job,recovering=True)
-        _restore_services(instance,target,current,job)
+        checkpoint(save,'readiness')
+        _restore_services(instance,target,current,job,save=save,automatic=automatic)
         # The successor may have materialized its own version after a previous
         # interrupted start or the start just observed above. Prove every old
         # queued byte again, rather than treating that expected stamp as a user
@@ -241,7 +317,7 @@ def controller(instance,operation_id,decision='review'):
         require(_configuration_matches(target,job,before_version=before_manifest.get('version'),
             after_version=after_manifest.get('version')),'update_recovery_configuration_changed')
         _write(target['prefix']/native.NAME,{**job,'phase':'complete','completed_at':time.time(),
-                                           'reason':'operator_recovered_controller_commit'})
+                                           'stage':'completion','reason':'automatic_recovered_controller_commit' if automatic else 'operator_recovered_controller_commit'})
         native.disarm(instance)
         return {'ok':True,'phase':'complete','existing_service_not_restarted':bool(service['MainPID']),
                 'configuration_preserved':True}
