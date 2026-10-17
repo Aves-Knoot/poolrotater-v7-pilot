@@ -193,19 +193,12 @@ def _owned_exchange(port, trust, request, deadline, *, execution=None):
     """
     _boundary(port, execution)
     require_child_platform()
-    context = multiprocessing.get_context('spawn')
-    receive, send = context.Pipe(duplex=False)
-    args = (send, port, trust, request, 5, os.getpid())
+    from .process_startup import start
+    args = (port, trust, request, 5, os.getpid())
     if execution is not None: args += (execution,)
-    process = context.Process(target=_worker, args=args, daemon=True)
-    target = None
+    process = target = receive = None
     try:
-        mask = signal.pthread_sigmask(signal.SIG_BLOCK, (signal.SIGINT, signal.SIGTERM))
-        try:
-            process.start()
-            target = OwnedChild(process.pid)
-        finally: signal.pthread_sigmask(signal.SIG_SETMASK, mask)
-        send.close()
+        process, target, receive = start(_worker, args, deadline)
         remaining = deadline - time.monotonic()
         if remaining <= 0 or not receive.poll(remaining): raise AuthError('provider_deadline_exceeded')
         # Child send_bytes is bounded. poll sees the frame header before its whole
@@ -235,13 +228,13 @@ def _owned_exchange(port, trust, request, deadline, *, execution=None):
     finally:
         mask = signal.pthread_sigmask(signal.SIG_BLOCK, (signal.SIGINT, signal.SIGTERM))
         try:
-            send.close(); receive.close()
-            if process.pid is not None:
+            if receive is not None: receive.close()
+            if process is not None and process.pid is not None:
                 if target is None: raise AuthError('provider_child_cleanup_uncertain')
                 target.kill()
                 process.join(timeout=1)
                 if process.exitcode is None: raise AuthError('provider_child_cleanup_uncertain')
-            process.close()
+            if process is not None: process.close()
         finally:
             if target is not None: target.close()
             signal.pthread_sigmask(signal.SIG_SETMASK, mask)
@@ -285,6 +278,8 @@ class DeadlineFixtureTransport:
             raise AuthError('invalid_provider_timeout')
         deadline = time.monotonic() + self.timeout
         request = prepare(method, path, form=form, bearer=bearer)
+        from .process_startup import preflight
+        preflight()
         with self.gate.admission(deadline):
             permit = _Permit(self.port, self.trust, self.gate, request, deadline)
             try: yield permit
@@ -302,6 +297,8 @@ class DeadlineFixtureTransport:
             raise AuthError('invalid_provider_timeout')
         deadline = time.monotonic() + self.timeout
         request = prepare_api(method, path, bearer=bearer, params=params, json_body=json_body)
+        from .process_startup import preflight
+        preflight()
         with self.gate.admission(deadline):
             permit = _Permit(self.port, self.trust, self.gate, request, deadline)
             try: yield permit

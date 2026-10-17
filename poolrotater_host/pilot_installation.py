@@ -163,7 +163,9 @@ def _stopped(root, uid):
             from .config import validate
             config = validate(_control(root / 'config/host.json', uid, private=True))
             value = _journal(_control(journal, uid, private=True), {r['alias'] for r in config['rooms']})
-            if any(s.get('phase') != 'stopped' or s.get('room_id') or s.get('ownership_unknown')
+            if any((s.get('phase') != 'stopped' and not (
+                       s.get('phase') == 'parked' and s.get('operation') == 'closed'))
+                   or s.get('room_id') or s.get('ownership_unknown')
                    or s.get('operation') in ('make_pending', 'close_pending') for s in value['rooms'].values()):
                 raise ConfigError('pilot ownership requires stopped reconciliation')
         recovery = _control(root / 'state/ownership-recovery.json', uid, private=True, optional=True)

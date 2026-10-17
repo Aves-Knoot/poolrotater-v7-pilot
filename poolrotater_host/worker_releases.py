@@ -84,8 +84,68 @@ def load_worker(root, release, *, prepared=False):
     raise ConfigError('worker release has no protected approval for this controller')
 
 
+def _committed_ancestors(parent, value):
+    """Follow exact archived transition links, never a directory-wide path search.
+
+    Receipts are root-protected, identity-bound and terminal. All runtime bytes
+    in the traversed chain must still validate. A missing link, rollback,
+    unfinished commit or excessive chain refuses retirement rather than guessing.
+    """
+    from .pilot_upgrade import _record, _transition
+    from .runtime_lifecycle import read_transition
+    prefix = Path(parent['prefix'])
+    _record(value, prefix, parent['installation_id'])
+    if read_transition(prefix, parent['installation_id']) != _transition(value, 'committed'):
+        raise ConfigError('retired launch transition and upgrade journal differ')
+    validate_runtime(parent, prefix)
+    seen = set()
+    for _ in range(16):
+        transition = value.get('predecessor_transition')
+        if transition is None: return
+        if transition.get('phase') != 'committed' or transition.get('operation') != 'activate':
+            return  # An aborted/rollback lineage does not authorize old launches.
+        key = transition['transition_id']
+        if key in seen: raise ConfigError('retired launch transition cycle')
+        seen.add(key)
+        path = prefix / 'upgrade-history' / (key + '.json')
+        receipt = _control(protected(path), maximum=1024*1024)
+        if (type(receipt) is not dict or set(receipt) != {'format','upgrade','transition'}
+                or type(receipt['format']) is not int or receipt['format'] != 1):
+            raise ConfigError('retired launch history receipt refused')
+        previous = _record(receipt['upgrade'], prefix, parent['installation_id'])
+        if (previous['phase'] != 'committed' or receipt['transition'] != transition
+                or transition != _transition(previous, 'committed')
+                or previous['after'] != value['before']):
+            raise ConfigError('retired launch history chain changed')
+        for runtime in (value['before'], previous['before']):
+            validate_runtime(runtime, prefix)
+        yield previous['before']
+        value = previous
+    raise ConfigError('retired launch history requires explicit review')
+
+
+def _retired_worker(before, pinned):
+    folder = Path(before['prefix'])/'worker-releases'/before['installation_id']
+    if not folder.exists(): return False
+    protected(folder)
+    paths = list(folder.glob('*.json'))
+    if len(paths) > 256: raise ConfigError('retired worker history requires review')
+    for path in paths:
+        approved = _control(protected(path))
+        candidate = approved.get('candidate', {}) if type(approved) is dict else {}
+        if candidate.get('release') != str(pinned): continue
+        # A candidate approved under another controller is not this ancestor's
+        # worker. Continue searching exact ancestor approvals only.
+        if approved.get('parent_sha256') != before['bundle_sha256']: continue
+        if path != receipt_path(before, candidate.get('bundle_sha256')):
+            raise ConfigError('retired worker approval filename changed')
+        validate_candidate(before, approved)
+        return True
+    return False
+
+
 def retired_controller(parent, pinned, row):
-    if (parent is None or row.get('phase') != 'stopped' or row.get('operation') != 'closed'
+    if (parent is None or row.get('phase') not in ('stopped','parked') or row.get('operation') != 'closed'
             or row.get('room_id') or row.get('ownership_unknown')):
         return False
     value = _control(Path(parent['prefix']) / 'pilot-upgrade.json', optional=True, maximum=512*1024)
@@ -99,15 +159,9 @@ def retired_controller(parent, pinned, row):
     # A stopped controller upgrade also retires workers explicitly approved for
     # its predecessor. Validate the old protected approval and complete immutable
     # contract; an arbitrary last_good path is never sufficient authority.
-    folder = Path(parent['prefix'])/'worker-releases'/parent['installation_id']
-    if not folder.exists(): return False
-    protected(folder)
-    for path in folder.glob('*.json'):
-        approved = _control(protected(path))
-        candidate = approved.get('candidate', {}) if type(approved) is dict else {}
-        if candidate.get('release') != str(pinned): continue
-        if path != receipt_path(before, candidate.get('bundle_sha256')):
-            raise ConfigError('retired worker approval filename changed')
-        validate_candidate(before, approved)
-        return True
+    if _retired_worker(before, pinned): return True
+    if value.get('predecessor_transition') is None: return False
+    for ancestor in _committed_ancestors(parent, value):
+        if ancestor['release'] == str(pinned) or _retired_worker(ancestor, pinned):
+            return True
     return False

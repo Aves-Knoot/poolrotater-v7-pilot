@@ -365,6 +365,9 @@ class RollingSupervisor:
         self.handles.pop(worker.broker.generation, None)
 
     def request(self, aliases, release):
+        maintenance=getattr(self,'_operator_maintenance_receipt',None)
+        if maintenance and maintenance.get('phase') not in ('complete','cancelled','expired'):
+            raise RuntimeError('maintenance_operation_pending')
         aliases = list(dict.fromkeys(aliases))
         if not aliases or any(alias not in self.configs for alias in aliases):
             raise ValueError("select existing room aliases")
@@ -598,6 +601,8 @@ class RollingSupervisor:
         # A completed handoff must not immediately launch its sibling ahead of
         # an already queued cancellation acknowledgement.
         self._protected_requests()
+        from poolrotater_host.operator_maintenance import poll as maintenance_poll
+        maintenance_poll(self)
         now = time.monotonic()
         for alias, worker in list(self.workers.items()):
             if alias == self.rollout_alias:

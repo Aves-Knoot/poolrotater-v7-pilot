@@ -73,7 +73,6 @@ def _retired_worker_target(target, parent, alias, row):
     return False
 
 
-
 def _rows(target, parent, *, now, after=None):
     # Native status uses 0640 inside the checked private 0700 state tree.
     # It is an observation, not a secret/ownership-authority record.
@@ -158,6 +157,8 @@ def queue(instance, bundle, sha256, *, from_sha256, deployment_id=None, release_
         locked_target, marker, parent = administrative_binding(instance)
         if locked_target != target:
             raise ConfigError('controller installation changed during admission')
+        from .operator_maintenance import require_idle
+        require_idle(target,parent)
         path = target['prefix'] / NAME
         old = _control(path, optional=True)
         if deployment_id is not None:
@@ -390,11 +391,75 @@ def cancel(instance):
         return {'ok':True,'phase':'cancelled','services_restarted':False}
 
 
+def _refresh_timer_service(instance, target, path, expected, candidate):
+    """Rebind only an exact recognized, quiescent native timer launcher."""
+    import re
+    from .pilot_operations import UNIT_BASE, _systemctl
+    actual=path.read_text()
+    prefix='ExecStart=/usr/bin/python3.12 -I -S -B '
+    lines=[line for line in actual.splitlines() if line.startswith('ExecStart=')]
+    if len(lines)!=1 or not lines[0].startswith(prefix):
+        raise ConfigError('unrecognized controller update unit')
+    suffix='/poolrotater_host/controller_update_entry.py '+instance
+    if not lines[0].endswith(suffix):raise ConfigError('unrecognized controller update unit')
+    old=Path(lines[0][len(prefix):-len(suffix)])
+    if (old.parent!=target['prefix']/'releases'
+            or re.fullmatch(r'v7\.[0-9]+\.[0-9]+-[a-f0-9]{16}',old.name) is None
+            or actual.replace(str(old),str(candidate['release']))!=expected):
+        raise ConfigError('unrecognized controller update unit')
+    from .pilot_upgrade import _code,_replace_code
+    old_entry=old/'poolrotater_host/controller_update_entry.py'
+    new_entry=candidate['release']/'poolrotater_host/controller_update_entry.py'
+    if _code(old_entry)!=_code(new_entry):
+        raise ConfigError('unrecognized controller update launcher')
+    timer=UNIT_BASE/('poolrotater-v7-controller-update-'+instance+'.timer')
+    # This fixed template is independent of the release path. Do not touch an
+    # unrelated same-named timer to make a stale service acceptable.
+    expected_timer=_timer_text(instance)
+    if not timer.exists() or protected(timer).read_text()!=expected_timer:
+        raise ConfigError('unrecognized controller update unit')
+    _systemctl('stop',timer.name)
+    raw=_systemctl('show',path.name,'--property=ActiveState,MainPID')
+    try:
+        rows=raw.decode('ascii').splitlines();state=dict(line.split('=',1)for line in rows)
+        if len(rows)!=2 or set(state)!={'ActiveState','MainPID'}:raise ValueError
+        if state['ActiveState'] not in ('inactive','failed') or state['MainPID']!='0':raise ValueError
+    except (ValueError,UnicodeError):
+        raise ConfigError('controller_update_unit_busy_or_unconfirmed') from None
+    _replace_code(path,expected.encode('ascii'))
+
+
+def _timer_text(instance):
+    name='poolrotater-v7-controller-update-'+instance
+    return f'''[Unit]
+Description=Wait for all PoolRotater rooms to empty ({instance})
+
+[Timer]
+OnActiveSec=30
+OnUnitInactiveSec=20
+AccuracySec=1
+Unit={name}.service
+
+[Install]
+WantedBy=timers.target
+'''
+
+
 def arm(instance):
     """Install the exact root timer only after queue admission and validation."""
+    target,_,_,_=_binding(instance)
+    with file_lease(target['prefix']/'controller-update-admin.lock'):
+        return _arm(instance)
+
+
+def _arm(instance):
     from .pilot_operations import UNIT_BASE, _systemctl
     target,_,_,_= _binding(instance)
     job=_control(target['prefix']/NAME)
+    if job['phase'] in ('complete','cancelled'):
+        return {'ok':True,'phase':job['phase'],'timer_armed':False,'rooms_stopped':False}
+    if job['phase'] in ('committing','held'):
+        raise ConfigError('controller_update_job_requires_review')
     candidate=validate_runtime(job['after'],target['prefix'])
     name='poolrotater-v7-controller-update-'+instance
     service=f'''[Unit]
@@ -412,23 +477,14 @@ TimeoutStartSec=1200
 LimitCORE=0
 Environment=LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 MALLOC_ARENA_MAX=2
 '''
-    timer=f'''[Unit]
-Description=Wait for all PoolRotater rooms to empty ({instance})
-
-[Timer]
-OnActiveSec=30
-OnUnitInactiveSec=20
-AccuracySec=1
-Unit={name}.service
-
-[Install]
-WantedBy=timers.target
-'''
+    timer=_timer_text(instance)
     for suffix,raw in (('.service',service),('.timer',timer)):
         path=UNIT_BASE/(name+suffix)
         if path.exists():
             protected(path)
-            if path.read_text()!=raw:raise ConfigError('unrecognized controller update unit')
+            if path.read_text()!=raw:
+                if suffix!='.service':raise ConfigError('unrecognized controller update unit')
+                _refresh_timer_service(instance,target,path,raw,candidate)
         else:
             with path.open('x')as out:out.write(raw);out.flush();os.fsync(out.fileno())
             path.chmod(0o644)

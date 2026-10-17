@@ -1,3 +1,7 @@
+# Current release: v7.1.8
+
+Use the [v7.1.8 installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.8), [operator guide](docs/V7_1_8_OPERATOR_GUIDE.md) and [maintenance procedures](docs/MAINTENANCE_OPERATOR_GUIDE.md). Supported controller-owned one-map/empty maintenance, cancellation, safer child startup, consecutive upgrade recovery and richer status preserve existing gameplay and data. Automatic controller updates wait for all configured rooms to empty; worker updates remain per-room. Stopped or recovery-required hosts need their local supported checks before one start attempt. Older repair launchers retain their old pins; use the current launcher for new attempts.
+
 # Current release: v7.1.7
 
 Use the [v7.1.7 live startup repair](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.7) and [release notes](docs/V7_1_7_RELEASE_NOTES.md). It retains prompt shared feedback and repairs the live adapter timeout interface used by initial room creation and empty-room refresh. Existing settings, OAuth, enrollment, full catalogs, history and explicit opt-outs are preserved. Older repair launchers retain their original pins; use the current repair launcher for stopped hosts.

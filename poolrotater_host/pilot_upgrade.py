@@ -73,7 +73,14 @@ def require_repair_compatible(before, after):
             ('v7.1.3', 'v7.1.7'),
             ('v7.1.4', 'v7.1.7'),
             ('v7.1.5', 'v7.1.7'),
-            ('v7.1.6', 'v7.1.7')):
+            ('v7.1.6', 'v7.1.7'),
+            ('v7.1.1', 'v7.1.8'),
+            ('v7.1.2', 'v7.1.8'),
+            ('v7.1.3', 'v7.1.8'),
+            ('v7.1.4', 'v7.1.8'),
+            ('v7.1.5', 'v7.1.8'),
+            ('v7.1.6', 'v7.1.8'),
+            ('v7.1.7', 'v7.1.8')):
         raise ConfigError('pilot repair requires its reviewed runtime family')
     for key in ('protocol', 'storage_epoch', 'requirements', 'python_hash', 'environment_hash'):
         if key not in before or before[key] != after.get(key):
@@ -259,6 +266,7 @@ def _archive_previous(prefix, installation_id, value, transition, current):
     parent = prefix / 'upgrade-history'
     parent.mkdir(mode=0o755, exist_ok=True)
     protected(parent)
+    parent.chmod(0o755)  # Closed launch retirement reads receipts as the service UID.
     path = parent / (value['transition_id'] + '.json')
     receipt = {'format':1, 'upgrade':value, 'transition':transition}
     previous = _control(path, optional=True, maximum=1024*1024)

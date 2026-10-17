@@ -30,11 +30,22 @@ _FAILURE_LOG_CODES = frozenset((
 ))
 
 
-def _log_failure(error, generation):
+def _log_failure(error, generation, session=None):
     code = error.code if type(error) is AuthError and error.code in _FAILURE_LOG_CODES else 'referee_transport_uncertain'
     # Generation is receiver-owned, not an upstream identity or payload.
     number = generation if type(generation) is int and 0 <= generation < 10**19 else 0
     log.warning('shared referee transport interrupted: code=%s generation=%d', code, number)
+    if session is not None:
+        try:
+            detail=session.diagnostics()
+            status=detail.get('exit_code')
+            uptime=detail.get('uptime_seconds')
+            if ((status is None or type(status) is int and -128<=status<=255)
+                    and type(uptime) in (int,float) and math.isfinite(uptime) and 0<=uptime<=10**9):
+                log.warning('referee child observation at interruption: generation=%d exit_code=%s uptime_seconds=%.2f',
+                            number,status,uptime)
+        except Exception:
+            log.warning('referee child observation unavailable: generation=%d',number)
 
 
 @dataclass(frozen=True)
@@ -108,6 +119,9 @@ class ProviderRefereeClient:
         # before admission; opening already holds the lifetime authority mutex.
         port = referee_port(self.auth) if command is None else None
         deadline = time.monotonic()+5
+        if command is None:
+            from .process_startup import preflight
+            preflight()
         with gate.admission(deadline):
             self._boundary()
             gate.exchange_started(kind='referee')
@@ -233,12 +247,12 @@ class ProviderRefereeClient:
                     self._message(value['value'], generation)
             except Exception as error:
                 self._failure = error if type(error) is AuthError else AuthError('referee_transport_uncertain')
-                _log_failure(error, generation)
+                _log_failure(error, generation, self._session)
             finally:
                 try: self._retire()
                 except Exception:
                     self._failure = AuthError('referee_child_cleanup_uncertain');self._stop.set()
-                    _log_failure(self._failure, generation)
+                    _log_failure(self._failure, generation, self._session)
                 self._attempt.set()
             if not established: break
             try: self._event('HubDisconnected', {'generation':generation}, generation)

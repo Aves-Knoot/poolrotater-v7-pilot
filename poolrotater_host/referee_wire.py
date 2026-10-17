@@ -234,28 +234,24 @@ class ChildSession:
         boundary(port, execution)
         self._lock = threading.Lock(); self._write = threading.Lock(); self.closed = False
         self._pidfd = None
-        context = multiprocessing.get_context('spawn')
-        self.pipe, child = context.Pipe(duplex=True)
-        args = (child,port,trust,bearer,os.getpid())
+        self._started_at = time.monotonic()
+        self._last_exit_code = None
+        from .process_startup import start
+        args = (port, trust, bearer, os.getpid())
         if execution is not None: args += (execution,)
-        self.process = context.Process(target=_worker, args=args,
-                                       name='referee-wire',daemon=True)
-        try:
-            mask = signal.pthread_sigmask(signal.SIG_BLOCK,(signal.SIGINT,signal.SIGTERM))
-            try:
-                self.process.start()
-                self._target = OwnedChild(self.process.pid)
-                self._pidfd = self._target.fd
-            finally: signal.pthread_sigmask(signal.SIG_SETMASK,mask)
-        except BaseException:
-            if self.process.pid is not None:
-                if self._pidfd is not None: self._target.kill()
-                self.process.join(timeout=1)
-            self.pipe.close()
-            if self._pidfd is not None: self._target.close();self._pidfd=None
-            if self.process.pid is None or self.process.exitcode is not None: self.process.close()
-            raise
-        finally: child.close()
+        self.process, self._target, self.pipe = start(
+            _worker, args, time.monotonic() + 5, name='referee-wire')
+        self._pidfd = self._target.fd
+
+    def diagnostics(self):
+        """Only parent-owned process facts; no token, endpoint or wire payload."""
+        # Multiprocessing's waitpid polling is not safe concurrently with a
+        # different thread's join()/close(). Share the existing retirement lock.
+        with self._lock:
+            code=self._last_exit_code
+            if not self.closed:
+                code=self.process.exitcode
+            return {'exit_code':code,'uptime_seconds':round(max(0.,time.monotonic()-self._started_at),2)}
 
     def receive(self, deadline, stop=None):
         value = receive_packet(self.pipe.fileno(),deadline,stop)
@@ -279,6 +275,7 @@ class ChildSession:
                     self._target.kill()
                     self.process.join(timeout=1)
                     if self.process.exitcode is None: raise AuthError('referee_child_cleanup_uncertain')
+                    self._last_exit_code=self.process.exitcode
                 self.pipe.close();self.process.close()
                 if self._pidfd is not None:self._target.close();self._pidfd=None
                 self.closed=True

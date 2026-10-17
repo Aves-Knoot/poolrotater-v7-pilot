@@ -16,7 +16,7 @@ def call(peer, method, *args, **kwargs):
     try:
         return peer.call(method, *args, **kwargs)
     except RemoteError as exc:
-        if exc.kind in ("HubDisconnected", "HubTransportError"):
+        if exc.kind in ("HubDisconnected", "HubTransportError", "InfrastructureCloseDeferred"):
             raise HubDisconnected(str(exc)) from exc
         if exc.kind == "HubInvocationUncertain":
             raise HubInvocationUncertain(str(exc)) from exc

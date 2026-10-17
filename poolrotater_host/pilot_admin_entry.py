@@ -86,6 +86,7 @@ def main():
         'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch',
         'room-settings-configure','room-settings-status',
         'worker-stage','worker-queue','worker-cancel','worker-status',
+        'maintenance-request','maintenance-cancel','maintenance-status',
         'update-configure','update-check','update-download','update-apply','update-pause','update-resume',
         'update-status','update-tick','update-recover','update-unit','update-start','update-stop','update-cleanup',
         'release-init','release-publish','release-promote','release-renew','release-resume','release-status'))

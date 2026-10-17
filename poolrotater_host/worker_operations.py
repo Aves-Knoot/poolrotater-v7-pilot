@@ -48,6 +48,8 @@ def command(instance, action, *, bundle=None, sha256=None, rooms=None, deploymen
             if not job or job['id']!=deployment_id or sha256 is not None and job['candidate_sha256']!=sha256:
                 raise ConfigError('worker cancellation request identity changed')
         if action == 'queue':
+            from .operator_maintenance import require_idle
+            require_idle(target,parent)
             controller = _control(prefix / 'controller-update.json', optional=True)
             if controller and controller.get('phase') not in ('complete','cancelled'):
                 raise ConfigError('controller deployment must finish or be resolved first')

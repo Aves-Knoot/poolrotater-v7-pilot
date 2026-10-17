@@ -119,6 +119,8 @@ class Lifecycle:
         self.last_status = 0
         self.last_control = None
         self.maintenance = MaintenanceGate()
+        from .operator_maintenance import WorkerDrain
+        self.operator_maintenance = WorkerDrain()
 
     def handle(self, method, *args, **kwargs):
         if method == "activate":
@@ -132,6 +134,13 @@ class Lifecycle:
             if self.bot:
                 self.bot.cfg["close_room_on_exit"] = False
                 self.bot.running = False
+            return True
+        if method == 'maintenance':
+            from poolrotater_host.operator_maintenance import validate
+            job, = args
+            validate(job, {'installation_id':job.get('installation_id'),
+                'generation':job.get('generation'),'bundle_sha256':job.get('parent_sha256')})
+            self.commands.put_nowait((method, job))
             return True
         if method not in ("prepare", "resume", "flush"):
             raise ValueError("unknown lifecycle command")
@@ -177,8 +186,9 @@ class Lifecycle:
             "version": bot.cfg["version"], "room_id": bot.room_id,
             "ready": bool(bot._room_ready), "running": bool(bot.running),
             "state": bot.state, "players": len(bot.players),
-            "paused": self.paused or self.maintenance.locked or self.maintenance.uncertain,
+            "paused": self.paused or self.maintenance.locked or self.maintenance.uncertain or self.operator_maintenance.phase=='ready',
             "maintenance": self.maintenance.status(), "control": self.last_control,
+            "operator_maintenance": self.operator_maintenance.status(),
             "reopenable": bool(bot._supervisor_reopenable_stop),
             "auto": bool(bot.cfg.get("auto_difficulty", True) and not bot.manual_range),
             "ruleset": bot.cfg.get("ruleset_id", 0), "loved": bool(bot.cfg.get("loved_mode", False)),
@@ -206,7 +216,9 @@ class Lifecycle:
             command, request_id = self.commands.get_nowait()
         except queue.Empty:
             command = None
-        if command == "prepare":
+        if command == "maintenance":
+            self.operator_maintenance.command(request_id)
+        elif command == "prepare":
             self.paused = bool(bot._room_ready and bot.state == IDLE and not bot.players
                                and bot.events.empty() and not bot._hub_rejoin_pending)
             self.last_control = {"id": request_id, "command": command, "ok": self.paused}
@@ -218,12 +230,13 @@ class Lifecycle:
             if ok:
                 bot._flush_all_lobby_time()
             self.last_control = {"id": request_id, "command": command, "ok": ok}
+        operator_ready = self.operator_maintenance.tick(bot)
         if command or time.monotonic() - self.last_status >= 1:
             self.peer.emit("status", self.status(bot))
             self.last_status = time.monotonic()
         if self.paused or maintenance_paused:
             time.sleep(.1)
-        return not (self.paused or maintenance_paused)
+        return operator_ready and not (self.paused or maintenance_paused)
 
 
 def run(sock, release):

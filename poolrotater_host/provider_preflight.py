@@ -146,6 +146,8 @@ class FixedProviderTransport:
         self._qualified_gate()
         deadline = time.monotonic() + self.configuration.request_timeout_seconds
         request = prepare(method, path, form=form, bearer=bearer)
+        from .process_startup import preflight
+        preflight()
         with self.gate.admission(deadline):
             permit = _Permit(None, self.trust, self.gate, request, deadline)
             try: yield permit
@@ -165,6 +167,8 @@ class FixedProviderTransport:
         self._qualified_gate()
         deadline = time.monotonic() + self.configuration.request_timeout_seconds
         request = prepare_api(method, path, bearer=bearer, params=params, json_body=json_body)
+        from .process_startup import preflight
+        preflight()
         with self.gate.admission(deadline):
             permit = _Permit(None, self.trust, self.gate, request, deadline)
             try: yield permit

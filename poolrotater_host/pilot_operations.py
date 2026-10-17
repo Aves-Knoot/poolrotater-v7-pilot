@@ -367,6 +367,8 @@ def status(instance):
     result = check(instance)
     unit = _unit(instance, optional=True)
     result['service_installed'] = unit is not None
+    state = {'ActiveState':'not-installed','MainPID':0}
+    observed = None
     if unit is not None:
         state = _service_state(instance)
         result.update(service_state=state['ActiveState'], service_enabled=state['UnitFileState'] == 'enabled')
@@ -412,6 +414,10 @@ def status(instance):
             authorization['next_action'] = 'resolve_ownership_recovery_before_start'
         elif result.get('catalog_recovery_required'):
             authorization['next_action'] = 'resolve_catalog_recovery_before_start'
+    from .operator_status import summary
+    result.update(summary(target,record,state,current_observation=observed))
+    if result.get('room_phase')=='recovery_required':
+        result['operator_next_action']='resolve_ownership_recovery_before_start; retain_instance_state'
     return result
 
 
@@ -571,6 +577,9 @@ def support(instance):
                 'service_phase', 'failure_http_status', 'last_service_phase',
                 'last_service_failure_code', 'last_service_failure_http_status'):
         if key in value: result[key] = value[key]
+    for key in ('installed_controller_version','running_controller_version','workers',
+                'maintenance','queued_update','operator_next_action','pacing_counter_scope'):
+        if key in value: result[key]=value[key]
     from .network.operations import command
     network=command(instance,'support')
     result['network']={key:network[key] for key in ('ok','configured','enrolled','pending_operation','directory',

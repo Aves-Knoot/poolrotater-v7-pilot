@@ -47,11 +47,17 @@ def main(argv=None):
                    'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch',
                    'room-settings-configure','room-settings-status',
                    'worker-stage','worker-queue','worker-cancel','worker-status',
+                   'maintenance-request','maintenance-cancel','maintenance-status',
                    'update-configure','update-check','update-download','update-apply','update-pause','update-resume',
                    'update-status','update-tick','update-recover','update-unit','update-start','update-stop','update-cleanup',
         'release-init','release-publish','release-promote','release-renew','release-resume','release-status'):
         command = commands.add_parser('pilot-' + action, help='explicit protected pilot ' + action)
         command.add_argument('--instance', required=True)
+        if action in ('maintenance-request','maintenance-cancel'):
+            command.add_argument('--operation-id',required=True)
+        if action == 'maintenance-request':
+            command.add_argument('--mode',required=True,choices=('empty','one-map'))
+            command.add_argument('--room',action='append')
         if action == 'worker-stage':
             command.add_argument('--bundle', required=True, type=Path)
             command.add_argument('--sha256', required=True)
@@ -134,6 +140,11 @@ def main(argv=None):
                 result = getattr(pilot, action.replace('-', '_'))(args.instance)
             elif action == 'unit': result = pilot.install_unit(args.instance)
             elif action == 'remove': result = pilot.remove_unit(args.instance)
+            elif action.startswith('maintenance-'):
+                from .operator_maintenance import command as maintenance_command
+                result=maintenance_command(args.instance,action.removeprefix('maintenance-'),
+                    operation_id=getattr(args,'operation_id',None),mode=getattr(args,'mode',None),
+                    rooms=getattr(args,'room',None))
             elif action.startswith('worker-'):
                 from .worker_operations import command as worker_command
                 result=worker_command(args.instance,action.removeprefix('worker-'),

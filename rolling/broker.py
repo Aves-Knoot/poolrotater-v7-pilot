@@ -26,6 +26,10 @@ class EventSink:
         self.broker.enqueue("hub", item)
 
 
+class InfrastructureCloseDeferred(HubDisconnected):
+    """Roster/occupancy refused closure before any journal intent or dispatch."""
+
+
 class Broker:
     def __init__(self, owner, alias, generation, cfg):
         self.private_pilot = getattr(owner, 'private_pilot', None)
@@ -233,9 +237,9 @@ class Broker:
         with self.owner.shared.lock:
             progress = self.hub.roster_progress()
             if self.hub.roster_fenced or (progress is not None and progress[2]):
-                raise HubDisconnected("refusing close while roster ordering is unresolved")
+                raise InfrastructureCloseDeferred("refusing close while roster ordering is unresolved")
             if require_empty and not self.empty():
-                raise HubDisconnected("refusing infrastructure close: room is occupied or roster is unknown")
+                raise InfrastructureCloseDeferred("refusing infrastructure close: room is occupied or roster is unknown")
             self.journal(operation="close_pending", ownership_unknown=True)
             self.uncertain = True
             result = self.hub.close_room(rid)
