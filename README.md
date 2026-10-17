@@ -1,6 +1,6 @@
-# Stopped-host repair: v7.1.6-repair1
+# Current release: v7.1.7
 
-Use the [corrected pinned repair release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.6-repair1) and [repair guide](docs/V7_1_6_REPAIR1.md) for an existing stopped host. This corrects timer MainPID handling and failure diagnostics in the installer helper; the bot runtime remains the exact published v7.1.6. The v7.1.5 repair launcher is superseded; its assets stay unchanged.
+Use the [v7.1.7 live startup repair](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.7) and [release notes](docs/V7_1_7_RELEASE_NOTES.md). It retains prompt shared feedback and repairs the live adapter timeout interface used by initial room creation and empty-room refresh. Existing settings, OAuth, enrollment, full catalogs, history and explicit opt-outs are preserved. Older repair launchers retain their original pins; use the current repair launcher for stopped hosts.
 
 # Current release: v7.1.6
 

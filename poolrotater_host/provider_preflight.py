@@ -105,6 +105,11 @@ class FixedProviderTransport:
                 raise AuthError('invalid_provider_pacing')
         self.trust, self.gate = trust, gate
 
+    @property
+    def timeout(self):
+        """Expose the same bounded request deadline as the fixture adapter."""
+        return self.configuration.request_timeout_seconds
+
     @classmethod
     def local_state(cls, configuration=None):
         """Explicit dormant local setup/status; no ambient trust or TLS required."""
