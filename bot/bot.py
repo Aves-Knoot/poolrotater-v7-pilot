@@ -6578,6 +6578,16 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if not old_room_id:
             return False
 
+        if close_reason == 'automatic_hard_restart':
+            now = time.monotonic()
+            if now < getattr(self, '_hard_restart_admission_retry_at', 0.):
+                return False
+            ready = getattr(self.hub, 'refresh_ready', None)
+            if callable(ready) and ready() is not True:
+                self._hard_restart_admission_retry_at = now + 5.
+                log.info('automatic hard restart postponed before close: ownership read admission unavailable')
+                return False
+
         # This intentionally works even during PLAYING: unlike a soft restart,
         # a hard restart destroys the room, so no playlist/settings mutation is
         # attempted in the active room state.

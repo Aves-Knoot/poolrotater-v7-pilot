@@ -1,3 +1,7 @@
+# Current repair: v7.1.5
+
+Use the [v7.1.5 installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.5) and [stopped repair/start guide](docs/V7_1_5_REPAIR_AND_START.md). The pinned launcher upgrades the existing stopped host, verifies recovery, and starts once only when requested. All existing settings, OAuth, catalogs, ratings, enrollment and opt-outs are preserved. Scheduled refresh now respects local cooldowns and retains replacement identity before confirmation. The paused maintenance/admin workflow is excluded. Signed registration leaves channel targets unchanged and does not queue other hosts.
+
 # Current repair: v7.1.4
 
 Use the [v7.1.4 installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.4) and [operator guide](docs/V7_1_4_OPERATOR_GUIDE.md). This expands default diagnostic sharing to DEBUG, private rooms, fixed service journals and early worker stderr, with credentials scrubbed. Existing opt-outs and configuration are retained. Stopped or failed hosts require a local ownership check and supported upgrade/start; publishing does not remotely restart rooms. The controller update waits for all configured rooms to be safely empty. The separate empty-room refresh interruption is still under investigation.

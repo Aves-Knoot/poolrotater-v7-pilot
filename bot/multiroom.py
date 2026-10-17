@@ -16,7 +16,7 @@ import time
 
 from .api import OsuApi
 from .discord_control import DiscordControl
-from .hub import HubDisconnected, HubTransportError
+from .hub import HubDisconnected, HubTransportError, HubInvocationUncertain
 
 log = logging.getLogger("multiroom")
 
@@ -110,7 +110,7 @@ class SharedReferee:
         # Unqualified local provenance cannot establish membership or roster
         # authority, even if the underlying connection remains available.
         for view in self.views:
-            if view.owned:
+            if view.owned or view.creating:
                 view.fence_roster(view.roster_progress())
         self._route("HubDisconnected", {})
 
@@ -190,6 +190,13 @@ class SharedReferee:
                 target = None
             targets = [target] if target else []
             if not targets:
+                for pending in self.views:
+                    if pending.creation_pending_id is not None and pending.creation_pending_id == rid:
+                        if len(pending.creation_events) >= 128:
+                            pending.creation_events_overflow = True
+                        else:
+                            pending.creation_events.append((name, copy.deepcopy(payload)))
+                        return
                 log.debug("unrouted/stale event %s (room %s)", name, rid)
         for target in targets:
             target.events.put((name, copy.deepcopy(payload)))
@@ -209,6 +216,13 @@ class RoomHub:
         self.joined = {}
         self.roster_fenced = False
         self.roster_cutoff = None
+        self.creation_observer = None
+        self.creation_begin = None
+        self.creation_committed = None
+        self.creation_pending_id = None
+        self.creation_events = []
+        self.creation_events_overflow = False
+        self.creating = False
 
     def is_connected(self):
         return self.shared.hub.is_connected() and not self.roster_fenced
@@ -247,18 +261,74 @@ class RoomHub:
 
     def make_room(self, *args, **kwargs):
         with self.shared.lock:
+            if self.creating:
+                raise HubInvocationUncertain('previous room creation is still being verified')
+            self.creating = True
+        try:
+            return self._make_room(*args, **kwargs)
+        finally:
+            with self.shared.lock:
+                self.creating = False
+                self.creation_pending_id = None
+                self.creation_events = []
+                self.creation_events_overflow = False
+
+    def _make_room(self, *args, **kwargs):
+        split = getattr(self.shared.hub, 'split_creation_verification', False) is True
+        with self.shared.lock:
             if self.shared.stopping.is_set():
                 raise HubDisconnected("supervisor is stopping")
             if self.owned:
                 raise RuntimeError("Refusing to create replacement before old room is closed")
+            if self.creation_begin is not None:
+                self.creation_begin()
             generation = self._generation()
-            result = self.shared.hub.make_room(*args, **kwargs)
-            rid = int(result["room_id"])
-            self.owned.add(rid)
-            self.shared.routes[rid] = self
-            self.joined[rid] = (generation, result)
-            log.info("%s owns room %s on the shared connection", self.alias, rid)
-            return result
+            if split:
+                result, generation = self.shared.hub.begin_make_room(*args, _on_created=self.creation_observer, **kwargs)
+                self.creation_pending_id = result['room_id']
+            elif getattr(self.shared.hub,'creation_observer_supported',False) is True:
+                result = self.shared.hub.make_room(*args,_on_created=self.creation_observer,**kwargs)
+            else:
+                result = self.shared.hub.make_room(*args, **kwargs)
+            if not split:
+                return self._adopt_created(result, generation)
+        result = self.shared.hub.finish_make_room(result, generation,
+            cancelled=self.shared.stopping.is_set)
+        with self.shared.lock:
+            return self._adopt_created(result, generation)
+
+    def _adopt_created(self, result, generation):
+        # Caller holds the shared routing lock. A candidate is never adopted
+        # after shutdown/generation change, even if its HTTP read succeeded.
+        if self.shared.stopping.is_set() or generation != self._generation():
+            raise HubInvocationUncertain('referee_generation_changed')
+        if self.creation_events_overflow or self.roster_fenced:
+            raise HubInvocationUncertain('referee_snapshot_requires_review')
+        if not self.shared.hub.is_connected():
+            raise HubInvocationUncertain('referee_generation_changed')
+        rid = int(result["room_id"])
+        self.owned.add(rid)
+        self.shared.routes[rid] = self
+        self.joined[rid] = (generation, result)
+        try:
+            if self.creation_committed is not None:
+                self.creation_committed(result)
+        except Exception:
+            self.owned.discard(rid)
+            self.shared.routes.pop(rid, None)
+            self.joined.pop(rid, None)
+            raise
+        # Candidate events have no mutation authority. Only after independent
+        # verification and the broker snapshot may they reach the room mirror.
+        for item in self.creation_events:
+            self.events.put(item)
+        self.creation_events = []
+        log.info("%s owns room %s on the shared connection", self.alias, rid)
+        return result
+
+    def refresh_ready(self):
+        check = getattr(self.shared.hub, 'refresh_ready', None)
+        return check() if callable(check) else True
 
     def invoke(self, method, args, **kwargs):
         # Never sit forever behind a room operation during shutdown.

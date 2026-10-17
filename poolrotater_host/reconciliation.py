@@ -1,6 +1,7 @@
 """Read-only ownership recovery preparation. Never grants startup authority."""
 import hashlib
 import json
+import math
 import os
 import stat
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ def _journal(value, aliases):
     try: json.dumps(value, allow_nan=False)
     except (ValueError, TypeError): raise AuthError('ownership_journal_refused') from None
     ids = set()
+    candidates={}
     for alias, state in value['rooms'].items():
         if alias not in aliases or not isinstance(state, dict): raise AuthError('ownership_journal_refused')
         rid = state.get('room_id')
@@ -50,6 +52,29 @@ def _journal(value, aliases):
             raise AuthError('ownership_journal_refused')
         if 'operation' in state and state['operation'] not in ('make_pending', 'owned', 'close_pending', 'closed'):
             raise AuthError('ownership_journal_refused')
+        candidate=creation_candidate(state)
+        if candidate is not None:
+            cid=candidate['room_id']
+            if cid in candidates:raise AuthError('ownership_journal_refused')
+            candidates[cid]=alias
+    for cid,alias in candidates.items():
+        if any(other!=alias and state.get('room_id')==cid for other,state in value['rooms'].items()):
+            raise AuthError('ownership_journal_refused')
+    return value
+
+
+def creation_candidate(state):
+    """Validated observed identity only; never room-owner or mutation authority."""
+    value=state.get('creation_candidate')
+    if value is None:return None
+    if (type(value) is not dict or set(value)!={'format','room_id','connection_generation','observed_at'}
+            or type(value['format']) is not int or value['format']!=1
+            or type(value['room_id']) is not int or not 0<value['room_id']<10**19
+            or type(value['connection_generation']) is not int or not 0<value['connection_generation']<2**63
+            or type(value['observed_at']) not in (int,float) or not math.isfinite(value['observed_at'])
+            or not 0<=value['observed_at']<=10**12
+            or state.get('operation')!='make_pending' or state.get('ownership_unknown') is not True):
+        raise AuthError('ownership_journal_refused')
     return value
 
 
@@ -115,24 +140,35 @@ class OfflineOwnershipReview:
         listed = [_room(v, account.user_id) for v in body]
         if len({v['room_id'] for v in listed}) != len(listed): raise AuthError('ownership_listing_refused')
         known = {state['room_id'] for state in journal['rooms'].values() if state.get('room_id') is not None}
+        known.update(creation_candidate(state)['room_id'] for state in journal['rooms'].values()
+                     if creation_candidate(state) is not None)
         reviews = []
         for alias, state in sorted(journal['rooms'].items()):
             rid = state.get('room_id')
             uncertain = state.get('ownership_unknown', False) or state.get('operation') in ('make_pending', 'close_pending')
             result = 'unknown_creation' if uncertain and rid is None else 'local_clean'
-            if rid is not None:
-                code, value = fetch('/api/v2/rooms/' + str(rid))
+            candidate=creation_candidate(state)
+            evidence_id=candidate['room_id'] if candidate else rid
+            if evidence_id is not None:
+                code, value = fetch('/api/v2/rooms/' + str(evidence_id))
                 if code == 200:
-                    detail = _room(value, account.user_id, rid)
-                    listed_detail = next((v for v in listed if v['room_id'] == rid), None)
+                    detail = _room(value, account.user_id, evidence_id)
+                    listed_detail = next((v for v in listed if v['room_id'] == evidence_id), None)
                     result = 'evidence_changed' if listed_detail and listed_detail != detail else (
                         'surviving_room' if detail['active'] else
                         'confirmed_ended' if detail['ended'] else 'inactive_unconfirmed')
                 else: result = 'unconfirmed_room'
             # A make_pending record can still contain the previous room ID.
             # Proving that old room ended does not identify the lost creation.
+            candidate_result=result if candidate else None
             if state.get('operation') == 'make_pending': result = 'unknown_creation'
-            reviews.append({'alias': alias, 'room_id': rid, 'result': result})
+            review={'alias': alias, 'room_id': rid, 'result': result}
+            if candidate:
+                review.update(creation_candidate_room_id=evidence_id,creation_candidate_result=candidate_result,
+                    next_action='close_surviving_candidate_locally_then_review' if candidate_result=='surviving_room' else
+                        'ownership_clear_performs_fresh_ended_owner_checks' if candidate_result=='confirmed_ended' else
+                        'retain_state; candidate_ownership_not_yet_confirmed')
+            reviews.append(review)
         if read() != observed: raise AuthError('ownership_journal_changed')
         return {'format': 1, 'execution': self.execution, 'live_ready': False,
                 'user_id': account.user_id, 'journal_sha256': digest, 'journal_unchanged': True,

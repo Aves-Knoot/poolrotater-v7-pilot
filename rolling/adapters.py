@@ -54,6 +54,16 @@ class Hub:
     def wait_connected(self, timeout=30):
         return call(self.peer, "hub.wait_connected", timeout)
 
+    def refresh_ready(self):
+        try:
+            return call(self.peer, "hub.refresh_ready") is True
+        except RemoteError as error:
+            # Older controllers do not expose this read-only advisory. Keep
+            # their existing behavior when a worker is independently updated.
+            if error.kind == 'ValueError' and str(error) == 'unsupported referee operation':
+                return True
+            raise
+
     def invalidate_membership(self, rid):
         return call(self.peer, "hub.invalidate_membership", rid)
 

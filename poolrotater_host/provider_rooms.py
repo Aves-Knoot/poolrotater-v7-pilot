@@ -6,7 +6,9 @@ room evidence uses qualified HTTPS and the same persistent admission authority.
 """
 from contextlib import contextmanager
 import copy
+import logging
 import os
+import time
 
 from .config import ConfigError
 from .oauth import AuthError
@@ -15,6 +17,12 @@ from .provider_contract import OWNED_PATH, ROOM_LIMIT, require_live_provider
 from .provider_room_state import binding, enroll, require_namespace
 from .reconciliation import _room, _journal, journal_path
 from .layout import read_json
+
+log = logging.getLogger(__name__)
+OWNER_READ_ATTEMPTS = 3
+OWNER_ADMISSION_BUDGET = 75.
+TEMPORARY_OWNER_STATUSES = frozenset((404,408,429,500,502,503,504))
+TEMPORARY_OWNER_ERRORS = frozenset(('provider_deadline_exceeded','provider_transport_uncertain'))
 
 
 def _authority(auth):
@@ -45,11 +53,21 @@ def _bearer(auth):
 
 def _fetch(auth, path):
     """Read-only 401 refresh once; never replay a referee mutation."""
+    def request(token):
+        # OAuth's generic wrapper deliberately masks all transport failures.
+        # For these fixed room GETs retain typed authority/cleanup failures so
+        # verification never mistakes them for a retryable network timeout.
+        try: result=auth.transport.request('GET',path,bearer=token)
+        except AuthError: raise
+        except Exception: raise AuthError('transport_reply_uncertain') from None
+        if (type(result) is not tuple or len(result)!=2 or type(result[0]) is not int
+                or not 100<=result[0]<=599):raise AuthError('invalid_provider_reply')
+        return result
     token = _bearer(auth)
-    code, value = auth._request('GET', path, token=token)
+    code, value = request(token)
     if code == 401:
         auth.invalidate_access_token(token)
-        code, value = auth._request('GET', path, token=_bearer(auth))
+        code, value = request(_bearer(auth))
     return code, value
 
 
@@ -74,6 +92,8 @@ def _snapshot(value, user_id, room_id=None):
 class ProviderRoomHub:
     offline_fixture = False
     requires_event_provenance = True
+    creation_observer_supported = True
+    split_creation_verification = True
 
     def __init__(self, auth, backend=None):
         _service(auth, backend)
@@ -107,15 +127,52 @@ class ProviderRoomHub:
         """Explicit fixture event; stale memberships must rejoin before mutation."""
         self.client.reconnect()
 
-    def make_room(self, *args, **kwargs):
+    def make_room(self, *args, _on_created=None, **kwargs):
+        snapshot, generation = self.begin_make_room(*args, _on_created=_on_created, **kwargs)
+        return self.finish_make_room(snapshot, generation)
+
+    def refresh_ready(self):
+        """No HTTP request and no mutation; keep the old room during cooldown."""
+        from .provider_pacing import ProviderAdmissionDeferred
+        self.client._boundary()
+        try:
+            return self.auth.transport.gate.read_delay() < min(.5, self.auth.transport.timeout / 4)
+        except ProviderAdmissionDeferred:
+            return False
+        except AuthError as error:
+            if error.code == 'provider_pacing_deferred': return False
+            raise
+
+    def begin_make_room(self, *args, _on_created=None, **kwargs):
+        """One referee mutation and durable candidate capture under hub lock."""
         from bot.hub import HubInvocationUncertain
+        if _on_created is not None and not callable(_on_created):
+            raise AuthError('referee_creation_record_requires_review')
         generation = self._connect_generation
         value = self.client.make_room(*args, **kwargs)
+        # This is candidate evidence only. Persist the returned ID before any
+        # follow-up read, generation check or full snapshot rejection can lose
+        # it. The callback cannot grant room membership or mutation authority.
+        rid=value.get('room_id') if type(value) is dict else None
+        if type(rid) is int and 0<rid<10**19:
+            channel=value.get('chat_channel_id')
+            channel=channel if type(channel) is int and 0<channel<10**19 else None
+            log.info('referee creation reply received before owner verification: room_id=%d chat_channel_id=%s',rid,channel)
+        if _on_created is not None and type(rid) is int and 0<rid<10**19:
+            try:_on_created(rid,generation)
+            except Exception:
+                raise HubInvocationUncertain('referee_creation_record_requires_review') from None
         if generation != self._connect_generation:
             raise HubInvocationUncertain('referee_generation_changed')
-        return self._checked_snapshot(value, generation)
+        return _snapshot(value, self.auth._active), generation
 
-    def _checked_snapshot(self, value, generation, room_id=None):
+    def finish_make_room(self, snapshot, generation, *, cancelled=None):
+        """Independent read phase; RoomHub calls this outside its routing lock."""
+        return self._checked_snapshot(snapshot, generation, wait_for_admission=True,
+                                      cancelled=cancelled)
+
+    def _checked_snapshot(self, value, generation, room_id=None, *,
+                          wait_for_admission=False, cancelled=None):
         """Validate referee membership and independent API creator evidence.
 
         No mutation is replayed if either response is uncertain. A missing
@@ -123,15 +180,59 @@ class ProviderRoomHub:
         """
         from bot.hub import HubInvocationUncertain
         snapshot = _snapshot(value, self.auth._active, room_id)
-        try:
-            code, detail = _fetch(self.auth, '/api/v2/rooms/' + str(snapshot['room_id']))
-            if code != 200: raise AuthError('ownership_room_evidence_unavailable')
-            evidence = _room(detail, self.auth._active, snapshot['room_id'])
-            if not evidence['active'] or evidence['ended']:
-                raise AuthError('ownership_room_evidence_refused')
-        except Exception:
-            raise HubInvocationUncertain('referee_room_owner_requires_review') from None
-        if generation != self._connect_generation:
+        from .provider_pacing import ProviderAdmissionDeferred
+        from .service_diagnostics import failure_details
+        deadline = time.monotonic() + OWNER_ADMISSION_BUDGET
+        attempt = 0
+        waiting = False
+        while attempt < OWNER_READ_ATTEMPTS:
+            retry=False; status=None
+            try:
+                if (generation!=self._connect_generation or not self.client.is_connected()
+                        or cancelled is not None and cancelled()):
+                    raise HubInvocationUncertain('referee_generation_changed')
+                if wait_for_admission:
+                    if time.monotonic() >= deadline:
+                        raise AuthError('referee_room_owner_requires_review')
+                    self.client._boundary()
+                    try:
+                        delay = self.auth.transport.gate.read_delay()
+                    except ProviderAdmissionDeferred:
+                        delay = self.auth.transport.timeout
+                    if delay >= min(.5, self.auth.transport.timeout / 4):
+                        if not waiting:
+                            log.warning('room owner verification waiting for existing admission cooldown: room_id=%d', snapshot['room_id'])
+                            waiting = True
+                        time.sleep(min(.5, max(0., deadline-time.monotonic())))
+                        continue
+                attempt += 1
+                code, detail = _fetch(self.auth, '/api/v2/rooms/' + str(snapshot['room_id']))
+                status=code
+                if code != 200:
+                    retry=code in TEMPORARY_OWNER_STATUSES
+                    raise AuthError('ownership_room_evidence_unavailable',http_status=code)
+                evidence = _room(detail, self.auth._active, snapshot['room_id'])
+                if not evidence['active'] or evidence['ended']:
+                    retry=not evidence['active'] and not evidence['ended']
+                    raise AuthError('ownership_room_evidence_refused')
+            except HubInvocationUncertain:raise
+            except Exception as error:
+                if status is None and type(getattr(error,'http_status',None)) is int:
+                    status=error.http_status
+                if isinstance(error,ProviderAdmissionDeferred):retry=True
+                elif isinstance(error,AuthError) and error.code in TEMPORARY_OWNER_ERRORS:retry=True
+                diagnostic=failure_details(error)
+                log.warning('room owner verification deferred/refused: room_id=%d attempt=%d code=%s http_status=%s',
+                    snapshot['room_id'],attempt,diagnostic['failure_code'],status)
+                if retry and attempt<OWNER_READ_ATTEMPTS and time.monotonic()<deadline:
+                    time.sleep(.25*max(1,attempt))
+                    continue
+                # Only our stable code and numeric status cross worker IPC.
+                # Never attach a provider body, snapshot, credential or raw error.
+                raise HubInvocationUncertain(str(AuthError('referee_room_owner_requires_review',
+                    http_status=status))) from None
+            break
+        if generation != self._connect_generation or not self.client.is_connected():
             raise HubInvocationUncertain('referee_generation_changed')
         return snapshot
 

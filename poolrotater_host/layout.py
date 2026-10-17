@@ -76,6 +76,10 @@ def atomic_json(path: Path, data, *, mode=0o600):
             temporary.unlink(missing_ok=True)
 
 
+class LeaseBusy(ConfigError):
+    """Validated local lock exists but could not be acquired; no lease granted."""
+
+
 @contextmanager
 def file_lease(path: Path, *, timeout=0.0):
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 <= timeout <= 30:
@@ -92,7 +96,7 @@ def file_lease(path: Path, *, timeout=0.0):
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise ConfigError('another process already owns this installation/account') from None
+                    raise LeaseBusy('another process already owns this installation/account') from None
                 time.sleep(max(0, min(.02, deadline - time.monotonic())))
         yield
     finally:

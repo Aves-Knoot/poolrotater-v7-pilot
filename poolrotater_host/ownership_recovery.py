@@ -9,7 +9,7 @@ import uuid
 from .config import ConfigError, contained
 from .layout import atomic_json, checked_root, load, read_json
 from .oauth import AuthError
-from .reconciliation import OfflineOwnershipReview, _journal, journal_path
+from .reconciliation import OfflineOwnershipReview, _journal, creation_candidate, journal_path
 
 RECOVERY_PATH = 'state/ownership-recovery.json'
 MAXIMUM = 196608
@@ -25,16 +25,22 @@ def _bounded(value, maximum):
 
 
 def identified(before, candidates=None):
-    """Explicit operator association, never inferred from a listing or title.
+    """Saved MakeRoom reply identity or explicit legacy operator association.
 
-    Only one lost initial creation is supported. The original journal remains
-    the transaction's before state; this projection is only for fresh API reads.
+    One explicit legacy association is supported, alongside durable candidates.
+    The original journal remains the transaction's before state; this projection
+    is only for fresh API reads and never proves that a candidate has ended.
     """
+    _journal(before,set(before['rooms']))
     projected = copy.deepcopy(before)
-    if candidates is None: return projected
-    if type(candidates) is not dict or len(candidates) != 1:
+    if candidates is not None and (type(candidates) is not dict or len(candidates) != 1):
         raise AuthError('ownership_creation_candidate_required')
-    for alias, rid in candidates.items():
+    chosen={alias:creation_candidate(state)['room_id'] for alias,state in before['rooms'].items()
+            if creation_candidate(state) is not None}
+    for alias,rid in (candidates or {}).items():
+        if alias in chosen and chosen[alias]!=rid:raise AuthError('ownership_creation_candidate_refused')
+        chosen[alias]=rid
+    for alias, rid in chosen.items():
         state = projected['rooms'].get(alias)
         if (type(alias) is not str or type(rid) is not int or not 0 < rid < 10**19
                 or type(state) is not dict or state.get('room_id') is not None
@@ -42,6 +48,7 @@ def identified(before, candidates=None):
                 or state.get('ownership_unknown') is not True):
             raise AuthError('ownership_creation_candidate_refused')
         state.update(room_id=rid, operation='close_pending')
+        if state.get('creation_candidate') is not None:state['creation_candidate']=None
     return projected
 
 
@@ -56,6 +63,7 @@ def cleared(before, candidates=None):
                 raise AuthError('ownership_recovery_unresolved')
             state.update(room_id=None, channel_id=None, ownership_unknown=False,
                          operation='closed', phase='stopped', pid=None)
+            if 'creation_verification_failure' in state:state['creation_verification_failure']=None
             count += 1
         elif state.get('ownership_unknown') or state.get('operation') in ('make_pending', 'close_pending'):
             raise AuthError('ownership_recovery_unresolved')
@@ -138,10 +146,11 @@ class OfflineOwnershipRecovery(OfflineOwnershipReview):
         except FileNotFoundError: raise AuthError('ownership_journal_missing') from None
 
     def _eligible(self, account, before, candidates=None):
-        if candidates is not None and self.execution not in ('provider-fixture', 'provider-live-pilot'):
+        has_candidates=candidates is not None or any(creation_candidate(s) for s in before['rooms'].values())
+        if has_candidates and self.execution not in ('provider-fixture', 'provider-live-pilot'):
             raise AuthError('ownership_creation_candidate_refused')
         report = self._inspect(account, journal=identified(before, candidates))
-        if ((candidates is not None and report['listing_at_limit'])
+        if ((has_candidates and report['listing_at_limit'])
                 or report['untracked_unconfirmed_room_ids'] or any(r['result'] not in
                 ('confirmed_ended', 'local_clean') for r in report['rooms'])):
             raise AuthError('ownership_recovery_unresolved')

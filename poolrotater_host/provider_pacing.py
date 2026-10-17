@@ -14,7 +14,7 @@ import time
 import uuid
 
 from .config import contained
-from .layout import atomic_json, checked_root, file_lease, load, owner_lease, read_json
+from .layout import LeaseBusy, atomic_json, checked_root, file_lease, load, owner_lease, read_json
 from .oauth import AuthError, _positive, diagnostic_lease
 from .provider_contract import PROVIDER_ORIGIN
 
@@ -215,6 +215,23 @@ class PersistentRequestGate:
         if value['phase'] != 'idle': raise AuthError('provider_pacing_recovery_required')
         if not clock_matches(value['clock'], self._now()): raise AuthError('provider_pacing_clock_changed')
 
+    def read_delay(self):
+        """Observe the existing gate without reserving, resetting or dispatching.
+
+        Room maintenance must not destroy a healthy room when its subsequent
+        ownership GET cannot be admitted. This is advisory only: the real GET
+        must still obtain ordinary admission after this observation.
+        """
+        try:
+            with self._lease(.1):
+                value = self._read()
+                self._healthy(value)
+                if value['halted']:
+                    raise AuthError('provider_pacing_deferred')
+                return max(0., self._wait_seconds(value, self._now()))
+        except LeaseBusy:
+            raise ProviderAdmissionDeferred('provider_pacing_deferred') from None
+
     @contextmanager
     def admission(self, deadline):
         remaining = deadline - time.monotonic()
@@ -222,6 +239,11 @@ class PersistentRequestGate:
         try:
             lease = self._lease(remaining)
             lease.__enter__()
+        except LeaseBusy:
+            # Only flock contention after all lock owner/type checks qualifies.
+            # This process holds no reservation and has sent no provider request.
+            # Do not write counters without the lease or change another holder.
+            raise ProviderAdmissionDeferred('provider_pacing_deferred') from None
         except AuthError: raise
         except Exception: raise AuthError('provider_pacing_busy') from None
         reserved = False

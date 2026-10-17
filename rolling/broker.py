@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import logging
 import queue
 import threading
 import time
 
 from bot.hub import HubDisconnected, HubInvocationUncertain
 from .adapters import Api
+
+log=logging.getLogger(__name__)
 
 HUB_METHODS = frozenset(("JoinRoom", "CloseRoom", "ChangeRoomSettings", "EditCurrentPlaylistItem",
     "AddPlaylistItem", "RemovePlaylistItem", "StartMatch", "StopMatchCountdown", "AbortMatch", "InvitePlayer", "KickPlayer"))
@@ -45,6 +48,10 @@ class Broker:
         self.outbox = queue.Queue(maxsize=1024)
         self.chat_inbox = queue.Queue(maxsize=1024)
         self.hub = owner.shared.room_view(alias, EventSink(self))
+        self.hub.creation_observer = self.creation_observed
+        self.hub.creation_begin = self.creation_begin
+        self.hub.creation_committed = self.creation_committed
+        self._creation_candidate = None
         self.discord = owner.discord.view_for(alias)
         self.modlog = owner.modlogs[alias]
         self.reporting_visibility(public=False)
@@ -141,6 +148,18 @@ class Broker:
     def journal(self, **values):
         self.owner.record(self.alias, **values)
 
+    def creation_observed(self, room_id, connection_generation):
+        """Persist unverified creation identity, never adopt ownership from it."""
+        if (not self.active or self.fenced or not self.uncertain or self.hub.owned
+                or type(room_id) is not int or not 0<room_id<10**19
+                or type(connection_generation) is not int or not 0<connection_generation<2**63):
+            raise HubInvocationUncertain('referee_creation_record_requires_review')
+        value={'format':1,'room_id':room_id,'connection_generation':connection_generation,
+               'observed_at':time.time()}
+        self.journal(creation_candidate=value)
+        self._creation_candidate=value
+        log.warning('room creation candidate recorded before owner verification: alias=%s room_id=%d',self.alias,room_id)
+
     def create(self, *args, **kwargs):
         with self.owner.shared.lock:
             if not self.active or self.fenced or self.quiesced:
@@ -151,15 +170,20 @@ class Broker:
             if self.private_pilot is not None:
                 from poolrotater_host.private_pilot import desired_password
                 chosen = desired_password(self.owner.runtime, self.private_pilot)
-            self.journal(operation="make_pending", ownership_unknown=True)
-            self.uncertain = True
-            result = self.hub.make_room(*args, **kwargs)
-            self.snapshot(result, private_creation=True)
-            self.private = True
-            self.pending_public = False
-            self.journal(operation="owned", room_id=int(result["room_id"]),
-                         channel_id=self.channel, ownership_unknown=False)
-            self.uncertain = False
+            if '_on_created' in kwargs:raise ValueError('reserved room creation argument')
+        # The referee mutation/candidate write still run under RoomHub's lock.
+        # Its independent HTTP confirmation must not hold the account-wide
+        # routing lock through a persistent admission cooldown.
+        try:result = self.hub.make_room(*args, **kwargs)
+        except Exception as error:
+            with self.owner.shared.lock:
+                if self._creation_candidate is not None:
+                    from poolrotater_host.service_diagnostics import failure_details
+                    self.journal(creation_verification_failure=failure_details(error))
+            raise
+        with self.owner.shared.lock:
+            if not self.active or self.fenced or self.quiesced:
+                raise HubInvocationUncertain('worker lost authority during room verification')
             if self.private_pilot is not None:
                 from poolrotater_host.private_pilot import capture_access, scrub
                 if chosen is not None:
@@ -180,6 +204,30 @@ class Broker:
                     self.uncertain = False
                 return scrub(result)
             return result
+
+    def creation_begin(self):
+        """Recheck authority and write intent immediately before MakeRoom."""
+        if not self.active or self.fenced or self.quiesced:
+            raise HubDisconnected('worker lost authority before room creation')
+        if self.hub.owned or self.uncertain:
+            raise HubInvocationUncertain('previous room ownership unresolved')
+        self.journal(operation='make_pending', ownership_unknown=True,
+                     creation_candidate=None, creation_verification_failure=None)
+        self.uncertain = True
+        self._creation_candidate = None
+
+    def creation_committed(self, result):
+        """RoomHub holds the routing lock through snapshot/journal adoption."""
+        if not self.active or self.fenced or self.quiesced:
+            raise HubInvocationUncertain('worker lost authority during room verification')
+        self.snapshot(result, private_creation=True)
+        self.private = True
+        self.pending_public = False
+        self.journal(operation='owned', room_id=int(result['room_id']),
+                     channel_id=self.channel, ownership_unknown=False,
+                     creation_candidate=None, creation_verification_failure=None)
+        self.uncertain = False
+        self._creation_candidate = None
 
     def close_room(self, rid, *, require_empty=True):
         with self.owner.shared.lock:
@@ -235,6 +283,8 @@ class Broker:
                 return self.hub.is_connected()
             if name == "wait_connected":
                 return self.hub.wait_connected(min(30, float(args[0])))
+            if name == "refresh_ready":
+                return self.hub.refresh_ready()
             if name == "make_room":
                 if self.quiesced:
                     raise HubDisconnected("room is quiesced")

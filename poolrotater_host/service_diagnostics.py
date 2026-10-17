@@ -4,6 +4,7 @@ FAILURE_CODES = frozenset(('invalid_provider_budget_loader', 'provider_budget_re
     'provider_budget_changed', 'owner_provider_budget_required', 'owner_provider_budget_mismatch',
     'owner_provider_budget_requires_completed_adoption', 'referee_snapshot_requires_review',
     'referee_room_owner_requires_review', 'referee_generation_changed',
+    'referee_creation_record_requires_review', 'ownership_room_evidence_unavailable',
     'ownership_listing_unavailable', 'ownership_listing_refused',
     'provider_existing_rooms_require_review', 'referee_unauthorized',
     'referee_rate_limited', 'referee_unavailable', 'service_failed',
@@ -162,7 +163,9 @@ FAILURE_CODES = FAILURE_CODES | frozenset((
     'provider_chat_access_unavailable', 'provider_chat_cannot_message',
     'provider_worker_ownership_recovery_required', 'provider_worker_failed',
     'provider_worker_exited', 'provider_worker_connection_closed',
-    'provider_cleanup_incomplete',
+    'provider_cleanup_incomplete', 'provider_child_setup_refused',
+    'maintenance_request_refused','maintenance_operation_pending','maintenance_operation_changed',
+    'maintenance_requires_running_controller','maintenance_room_topology_changed',
 ))
 
 
