@@ -39,10 +39,16 @@ class Scheduler:
                 previous=validate_receipt(read_json(self.path),self.sync.marker)
                 # Backward wall-clock movement is bounded to one normal interval.
                 if previous['attempted_at']<=now<previous['next_attempt_at']:
-                    return previous
+                    fresh = getattr(self.sync, 'has_fresh_feedback', None)
+                    if not (previous['phase'] == 'synchronized'
+                            and now >= previous['attempted_at'] + 5
+                            and fresh is not None and fresh(previous['attempted_at'], now)):
+                        return previous
             phase='synchronized';error=None;delay=1800;failures=0;uploaded=queried=0
             try:
-                result=self.sync.step();phase=result['phase']
+                scheduled = getattr(self.sync, 'scheduled_step', None)
+                result = scheduled(now) if scheduled is not None else self.sync.step()
+                phase=result['phase']
                 require(phase in PHASES,'invalid_ratings_sync_result')
                 uploaded=result.get('uploaded',0);queried=result.get('queried',0)
                 if phase in ('not-configured','sharing-disabled'):delay=60
@@ -89,12 +95,16 @@ class FetchScheduler:
         self.sync=sync;self.clock=clock;self.jitter=jitter
         self.path=contained(sync.root,'state/ratings-fetch-agent.json')
 
-    def tick(self):
+    def tick(self, *, uploaded_at=None):
         with file_lease(contained(self.sync.root,'state/ratings-fetch-agent.lock')):
             now=self.clock();previous=None
             if os.path.lexists(self.path):
                 previous=validate_fetch_receipt(read_json(self.path),self.sync.marker)
-                if previous['attempted_at']<=now<previous['next_attempt_at']:return previous
+                if previous['attempted_at']<=now<previous['next_attempt_at']:
+                    if not (uploaded_at is not None and previous['phase'] == 'activated'
+                            and previous['attempted_at'] < uploaded_at <= now
+                            and now >= previous['attempted_at'] + 5):
+                        return previous
             phase='independent';error=None;delay=60;failures=downloaded=pending=0
             try:
                 from .reader import profile
@@ -138,8 +148,13 @@ def run_combined(heartbeat,ratings,stop,*,snapshots=None):
                 receipt={'next_attempt_at':heartbeat.clock()+300}
             snapshot_due=heartbeat.clock()+60
             if snapshots is not None and not stop.is_set():
-                try:snapshot_due=snapshots.tick()['next_attempt_at']
+                try:
+                    uploaded_at = (receipt.get('attempted_at') if receipt.get('uploaded', 0) > 0
+                                   and receipt.get('phase') == 'synchronized' else None)
+                    snapshot_due=snapshots.tick(uploaded_at=uploaded_at)['next_attempt_at']
                 except (NetworkError,ConfigError,OSError,ValueError,KeyError,TypeError,sqlite3.Error):
                     snapshot_due=heartbeat.clock()+300
             now=heartbeat.clock()
-            stop.wait(max(1,min(60,heartbeat_due-now,receipt['next_attempt_at']-now,snapshot_due-now)))
+            # Lightweight local wake-up checks, not new HTTP polls. Persisted
+            # idle/retry/authority deadlines still decide actual dispatches.
+            stop.wait(max(1,min(5,heartbeat_due-now,receipt['next_attempt_at']-now,snapshot_due-now)))

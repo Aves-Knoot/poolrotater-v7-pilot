@@ -219,7 +219,24 @@ class Synchronizer:
         self.configure(share_ratings=True,only_if_missing=True)
         return True
 
-    def step(self):
+    def has_fresh_feedback(self, since, until):
+        """Read-only wake-up hint. Historical backlog does not accelerate itself."""
+        conn = self._conn()
+        try:
+            return conn.execute(
+                "SELECT 1 FROM rating_outbox WHERE phase IN ('pending','retryable') "
+                "AND json_extract(payload,'$.kind')='rating_set' "
+                "AND json_extract(payload,'$.observed_at')>? "
+                "AND json_extract(payload,'$.observed_at')<=? LIMIT 1", (since, until),
+            ).fetchone() is not None
+        finally:
+            conn.close()
+
+    def scheduled_step(self, now):
+        from .delivery import DeliveryBudget
+        return self.step(delivery=DeliveryBudget(self.root, self.marker, now))
+
+    def step(self, *, delivery=None):
         if not self.ensure_defaults():return {'ok':True,'phase':'not-configured','uploaded':0}
         with file_lease(self.lock_path),file_lease(self.network.lock_path):
             settings=self.profile()
@@ -230,6 +247,10 @@ class Synchronizer:
             require(fingerprint(profile)==settings['network_profile_sha256']
                     and all(credential[k]==settings[k] for k in ('host_id','server_epoch')),'ratings_restored_binding_requires_review')
             transport=self.network.transport(profile);body=self._body()
+            if delivery is not None:
+                # The synchronization lease serializes budget reservations too.
+                # Persist before dispatch; a lost response reuses the same IDs.
+                body['events'] = delivery.select(body['events'])
             uploaded=0
             if body['events']:
                 reply=transport.request('POST','/v1/events/batches',token=credential['credential'],body=body)

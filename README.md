@@ -1,3 +1,7 @@
+# Current release: v7.1.6
+
+Use the [v7.1.6 installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.6) and [operator guide](docs/V7_1_6_OPERATOR_GUIDE.md). Map feedback keeps the familiar reply and updates shared totals promptly without double-counting across hosts. Automatic controller deployment waits for all configured rooms to empty and preserves settings, OAuth, catalogs, enrollment and opt-outs. The v7.1.5 repair launcher remains pinned to its original repair release.
+
 # Current repair: v7.1.5
 
 Use the [v7.1.5 installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.5) and [stopped repair/start guide](docs/V7_1_5_REPAIR_AND_START.md). The pinned launcher upgrades the existing stopped host, verifies recovery, and starts once only when requested. All existing settings, OAuth, catalogs, ratings, enrollment and opt-outs are preserved. Scheduled refresh now respects local cooldowns and retains replacement identity before confirmation. The paused maintenance/admin workflow is excluded. Signed registration leaves channel targets unchanged and does not queue other hosts.

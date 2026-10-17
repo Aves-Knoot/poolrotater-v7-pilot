@@ -1245,6 +1245,24 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         notices[key] = (context, now)
         return True
 
+    def _acknowledge_saved_feedback(self, rating_label: str, user_id: int) -> None:
+        # The network agent publishes durable votes independently of gameplay.
+        # Retain the original map/title while waiting for its verified total.
+        from .feedback import FeedbackReplies
+        if not hasattr(self, "_feedback_replies"):
+            self._feedback_replies = FeedbackReplies(self.ratings)
+        for message in self._feedback_replies.enqueue(
+            self.last_played_map.beatmap_id, int(user_id),
+            self.last_played_map.title, rating_label,
+        ):
+            self.say(message, automatic=True)
+
+    def _drain_feedback_replies(self) -> None:
+        replies = getattr(self, "_feedback_replies", None)
+        if replies is not None:
+            for message in replies.drain():
+                self.say(message, automatic=True)
+
     def _maybe_prompt_for_rating(self) -> bool:
         """Optional feedback never crowds out useful replies/achievements."""
         if not self._rating_prompt_pending:
@@ -4875,7 +4893,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 context=getattr(self, '_rating_context', {}),
             )
             if first:
-                if rating == 0:
+                if self.ratings.reader is not None and rating != 0:
+                    self._acknowledge_saved_feedback(rating_label, user_id)
+                elif rating == 0:
                     self.say(
                         f"Thanks for the feedback! {self.last_played_map.title[:30]} "
                         f"— noted as {rating_label}.",
@@ -12705,6 +12725,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 if not self.running:
                     continue
 
+            self._drain_feedback_replies()
             self._drain_ai_results()
             self._drain_discord_control_commands()
             self._flush_room_chat()
