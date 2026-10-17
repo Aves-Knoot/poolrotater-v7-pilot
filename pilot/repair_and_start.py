@@ -16,11 +16,26 @@ import zipfile
 ENV = {'PATH':'/usr/sbin:/usr/bin:/bin', 'LANG':'C.UTF-8',
        'PYTHONDONTWRITEBYTECODE':'1', 'MALLOC_ARENA_MAX':'2'}
 REPORT_BASE = Path('/var/lib/poolrotater-v7-repair-reports')
-EXPECTED_VERSION = 'v7.1.5'
+EXPECTED_VERSION = 'v7.1.6'
+
+
+class RepairError(ValueError):
+    """A deliberately public, credential-free refusal code."""
 
 
 def require(condition, message):
-    if not condition: raise ValueError(message)
+    if not condition: raise RepairError(message)
+
+
+def failure_code(error):
+    # Only our own closed codes may be returned. Exception text from a provider,
+    # subprocess, filesystem or malformed JSON can contain private information.
+    if isinstance(error, RepairError) and re.fullmatch(r'(repair|report)_[a-z0-9_]{1,72}', str(error)):
+        return str(error)
+    if isinstance(error, subprocess.TimeoutExpired): return 'repair_operation_timeout'
+    if isinstance(error, json.JSONDecodeError): return 'repair_invalid_json'
+    if isinstance(error, OSError): return 'repair_local_io_failed'
+    return 'repair_unexpected_failure'
 
 
 def private_directory(path):
@@ -68,6 +83,7 @@ def unpack_runtime(kit, stage):
 class Operations:
     def __init__(self, instance, report):
         self.instance=instance;self.report=report;self.counter=0;self.record=None
+        self.operation='initialization'
 
     def save(self, label, value):
         self.counter+=1
@@ -75,6 +91,7 @@ class Operations:
         path.write_text(json.dumps(value,indent=2)+'\n');path.chmod(0o600)
 
     def systemctl(self, *args):
+        self.operation='systemctl_'+args[0]
         result=subprocess.run(['/usr/bin/systemctl',*args],env=ENV,cwd='/tmp',
             capture_output=True,text=True,timeout=35)
         require(result.returncode==0, 'repair_service_operation_refused')
@@ -82,12 +99,24 @@ class Operations:
 
     def state(self, unit):
         raw=self.systemctl('show',unit,'--property=LoadState,ActiveState,MainPID,UnitFileState')
-        result=dict(line.split('=',1) for line in raw.splitlines())
+        self.operation='inspect_timer_state' if unit.endswith('.timer') else 'inspect_service_state'
+        entries=[line.split('=',1) for line in raw.splitlines() if line]
+        require(all(len(row)==2 for row in entries) and len({row[0] for row in entries})==len(entries),
+                'repair_service_state_refused')
+        result=dict(entries)
+        # MainPID belongs to a service. Stock systemd omits it for timers,
+        # including loaded inactive timers. Never infer a missing service PID:
+        # the stopped-bot/updater proof must remain fail-closed.
+        if unit.endswith('.timer') and 'MainPID' not in result:
+            result['MainPID']='0'
         require(set(result)=={'LoadState','ActiveState','MainPID','UnitFileState'}, 'repair_service_state_refused')
+        require(re.fullmatch(r'[0-9]{1,10}',result['MainPID']) is not None
+                and int(result['MainPID'])<2**31, 'repair_service_state_refused')
         result['MainPID']=int(result['MainPID'])
         return result
 
     def admin(self, action, *args):
+        self.operation='operator_'+action
         entry=Path(self.record['release'])/'poolrotater_host/pilot_admin_entry.py'
         result=subprocess.run(['/usr/bin/python3.12','-I','-S',str(entry),
             '--instance',self.instance,action,*args],env=ENV,cwd='/tmp',
@@ -127,6 +156,7 @@ def run(args, kit, release, ops, installation, upgrade):
     if record['bundle_sha256']!=release['runtime_sha256']:
         supported={r['sha256'] for r in release['supported_predecessors']}
         require(record['bundle_sha256'] in supported, 'repair_predecessor_refused')
+        ops.operation='upgrade'
         result=upgrade.upgrade(args.instance,kit/'runtime.zip',release['runtime_sha256'],
                                from_sha256=record['bundle_sha256'])
         ops.save('upgrade',result)
@@ -194,16 +224,18 @@ def main():
     kit=Path(__file__).resolve().parent;release=verify_kit(kit)
     report=private_directory(private_directory(REPORT_BASE)/args.instance)/str(uuid.uuid4())
     private_directory(report)
+    ops=Operations(args.instance,report)
     try:
         with tempfile.TemporaryDirectory(prefix='prv7-verified-repair-') as folder:
             source=unpack_runtime(kit,Path(folder));sys.path.insert(0,str(source))
             from poolrotater_host import pilot_installation, pilot_upgrade
-            result=run(args,kit,release,Operations(args.instance,report),pilot_installation,pilot_upgrade)
+            result=run(args,kit,release,ops,pilot_installation,pilot_upgrade)
         result['reports']=str(report)
         (report/'result.json').write_text(json.dumps(result,indent=2)+'\n')
         print(json.dumps(result,indent=2))
-    except Exception:
+    except Exception as error:
         failure={'ok':False,'phase':'requires_review','reports':str(report),
+                 'failure_code':failure_code(error),'failed_operation':ops.operation,
                  'next_action':'retain_state_and_reports; do_not_retry_start_if_outcome_uncertain'}
         (report/'result.json').write_text(json.dumps(failure,indent=2)+'\n')
         print(json.dumps(failure,indent=2));raise SystemExit(2)
@@ -211,5 +243,6 @@ def main():
 
 if __name__=='__main__':
     try:main()
-    except (ValueError,OSError):
-        print(json.dumps({'ok':False,'phase':'repair_preflight_refused','service_started':False}));raise SystemExit(2)
+    except (ValueError,OSError) as error:
+        print(json.dumps({'ok':False,'phase':'repair_preflight_refused','failure_code':failure_code(error),
+                          'service_started':False}));raise SystemExit(2)

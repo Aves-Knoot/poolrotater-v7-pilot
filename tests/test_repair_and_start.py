@@ -2,9 +2,15 @@
 from scripts.test_isolation import require_test_isolation
 require_test_isolation('ordinary')
 import copy
+import contextlib
+import io
+import json
 from pathlib import Path
+import subprocess
+import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, patch
 
 from pilot import repair_and_start as repair
 
@@ -92,3 +98,90 @@ class WorkflowTests(unittest.TestCase):
         self.record['bundle_sha256']='d'*64
         with self.assertRaises(ValueError):self.run_workflow()
         self.assertFalse(any(x[0] in ('upgrade','ownership-clear','start') for x in self.ops.calls))
+
+    def test_full_workflow_uses_real_timer_parser_with_systemd_255_missing_mainpid(self):
+        workflow = self
+        class SystemdOps(FakeOps):
+            state = repair.Operations.state
+            def systemctl(self, *args):
+                if args[0] == 'show':
+                    pid = '' if args[1].endswith('.timer') else 'MainPID=0\n'
+                    return 'LoadState=loaded\nActiveState=inactive\n' + pid + 'UnitFileState=disabled\n'
+                return super().systemctl(*args)
+        self.ops = SystemdOps()
+        result=self.run_workflow()
+        self.assertEqual(result['phase'],'started')
+        self.assertEqual(sum(x[0]=='start' for x in self.ops.calls),1)
+        self.assertEqual(result['agents_started'],['network','update_polling'])
+
+
+class StateParsingTests(unittest.TestCase):
+    def setUp(self):
+        self.ops=repair.Operations('two',Path('/invented/private-report'))
+        self.ops.systemctl=Mock()
+
+    def state(self, raw, unit='poolrotater-v7-updates-two.timer'):
+        self.ops.systemctl.return_value=raw
+        return self.ops.state(unit)
+
+    def test_stock_loaded_inactive_and_active_timers_have_no_service_pid(self):
+        for phase in ('inactive','active'):
+            with self.subTest(phase=phase):
+                value=self.state(f'LoadState=loaded\nActiveState={phase}\nUnitFileState=disabled\n')
+                self.assertEqual(value['MainPID'],0)
+                self.assertEqual(value['ActiveState'],phase)
+
+    def test_a_printed_zero_pid_remains_compatible(self):
+        raw='LoadState=loaded\nActiveState=inactive\nMainPID=0\nUnitFileState=disabled\n'
+        self.assertEqual(self.state(raw)['MainPID'],0)
+        self.assertEqual(self.state(raw,'poolrotater-v7-network-two.service')['MainPID'],0)
+
+    def test_missing_service_pid_is_never_assumed_stopped(self):
+        raw='LoadState=loaded\nActiveState=inactive\nUnitFileState=disabled\n'
+        for unit in ('poolrotater-v7-pilot-two.service','poolrotater-v7-updates-two.service'):
+            with self.subTest(unit=unit),self.assertRaisesRegex(repair.RepairError,'^repair_service_state_refused$'):
+                self.state(raw,unit)
+
+    def test_active_service_pid_is_preserved(self):
+        raw='LoadState=loaded\nActiveState=active\nMainPID=123\nUnitFileState=disabled\n'
+        self.assertEqual(self.state(raw,'poolrotater-v7-updates-two.service')['MainPID'],123)
+
+    def test_malformed_duplicate_unknown_or_missing_properties_refuse(self):
+        base='LoadState=loaded\nActiveState=inactive\nUnitFileState=disabled\n'
+        for raw in (base+'LoadState=loaded\n',base+'MainPID=oops\n',base+'MainPID=-1\n',
+                    base+'MainPID=2147483648\n',base+'Unknown=yes\n',base.replace('LoadState=loaded\n',''),
+                    base+'malformed line\n'):
+            with self.subTest(raw=raw),self.assertRaises(repair.RepairError):self.state(raw)
+
+    def test_failure_code_exposes_only_deliberate_public_codes(self):
+        for error,code in ((repair.RepairError('repair_service_state_refused'),'repair_service_state_refused'),
+                           (repair.RepairError('provider token private-secret'),'repair_unexpected_failure'),
+                           (RuntimeError('private-secret'),'repair_unexpected_failure'),
+                           (OSError('private-secret'),'repair_local_io_failed'),
+                           (subprocess.TimeoutExpired('private-secret',35),'repair_operation_timeout')):
+            with self.subTest(code=code):self.assertEqual(repair.failure_code(error),code)
+
+
+class FailureReportingTests(unittest.TestCase):
+    def test_public_error_code_is_written_to_result_json_without_exception_details(self):
+        for error,code in ((repair.RepairError('repair_service_state_refused'),'repair_service_state_refused'),
+                           (RuntimeError('invented-private-secret'),'repair_unexpected_failure')):
+            with self.subTest(code=code),tempfile.TemporaryDirectory() as directory:
+                base=Path(directory);output=io.StringIO()
+                def private(path):
+                    path.mkdir(mode=0o700,parents=True,exist_ok=True)
+                    return path
+                with patch.object(repair,'REPORT_BASE',base),patch.object(repair,'verify_kit',return_value={}), \
+                     patch.object(repair,'unpack_runtime',return_value=Path(__file__).resolve().parents[1]), \
+                     patch.object(repair,'private_directory',side_effect=private), \
+                     patch.object(repair,'run',side_effect=error),patch.object(repair.os,'geteuid',return_value=0), \
+                     patch.object(repair.os,'chdir'),patch.object(repair.os,'umask'), \
+                     patch('sys.argv',['repair_and_start.py','--instance','two']), \
+                     contextlib.redirect_stdout(output),self.assertRaises(SystemExit) as exit:
+                    repair.main()
+                self.assertEqual(exit.exception.code,2)
+                result=json.loads(output.getvalue())
+                self.assertEqual(result['failure_code'],code)
+                self.assertEqual(result['failed_operation'],'initialization')
+                self.assertNotIn('invented-private-secret',output.getvalue())
+                self.assertEqual(json.loads((Path(result['reports'])/'result.json').read_text()),result)

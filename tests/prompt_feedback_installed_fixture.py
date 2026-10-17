@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 CANDIDATE = 'v7.1.6'
 BASELINE = sys.argv[1] if len(sys.argv)>1 else 'v7.1.1'
-assert BASELINE in ('v7.1.2','v7.1.5')
+assert BASELINE in ('v7.1.1','v7.1.2','v7.1.5')
 sys.path.insert(0,'/source/validation/v7.1.6-feedback/release/source')
 
 from scripts.test_isolation import require_test_isolation
