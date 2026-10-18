@@ -267,7 +267,8 @@ class RollingSupervisor:
                     worker.signal_target = OwnedChild(worker.process.pid)
                 finally: signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             worker.peer = broker.peer = Peer(parent, handler=broker.handle,
-                on_event=lambda n, v: self._event(worker, n, v), name=alias + "-" + generation[:8])
+                on_event=lambda n, v: self._event(worker, n, v), name=alias + "-" + generation[:8],
+                background_profiles=broker.cfg.get('background_player_profiles', False))
             worker.peer.start()
             threading.Thread(target=self._pump, args=(broker,), daemon=True, name=alias + "-events").start()
             return worker

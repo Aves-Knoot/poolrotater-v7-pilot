@@ -3652,7 +3652,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                  'text': text, 'automatic': automatic, 'lobby_only': lobby_only,
                  'discord_reply_channel': discord_reply_channel,
                  'expires_at': time.monotonic() + 120.0}
-        if getattr(self, '_pending_room_chat', None):
+        # Rate spacing belongs to the bounded outgoing queue. Never sleep the
+        # room thread while processing a batch of commands or join messages.
+        if (getattr(self, '_pending_room_chat', None)
+                or time.time() - getattr(self, '_last_sent', 0.0) < 1.5):
             self._queue_room_chat(entry)
             return
         try:
@@ -3686,7 +3689,13 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             else:
                 pending.popleft()
                 log.warning('oldest room chat expired while delivery queue is full')
-        pending.append(entry)
+        if entry['automatic']:
+            pending.append(entry)
+        else:
+            # Replies retain their order, but don't wait behind an unsolicited
+            # welcome/reminder backlog. All expiry/room/uncertain-send guards stay.
+            position = next((i for i, item in enumerate(pending) if item['automatic']), len(pending))
+            pending.insert(position, entry)
 
     def _flush_room_chat(self):
         """Bounded, ordered delivery without blocking gameplay on pacing waits.
@@ -3715,7 +3724,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         except ApiAdmissionDeferred:
             failures = min(5, getattr(self, '_room_chat_deferred_count', 0) + 1)
             self._room_chat_deferred_count = failures
-            self._room_chat_retry_at = now + min(15.0, float(2 ** (failures - 1)))
+            # This typed refusal is local and positively undispatched. The
+            # provider gate still owns spacing and Retry-After; a second
+            # exponential client delay only postpones an otherwise ready reply.
+            self._room_chat_retry_at = now + 1.0
             return
         except ApiChatDeliveryUncertain:
             log.warning('queued room chat delivery uncertain; message will not be resent')
@@ -3731,9 +3743,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return
         coordinator = getattr(self, "lazer_coordinator", None)
 
-        gap = time.time() - self._last_sent
-        if gap < 1.5:
-            time.sleep(1.5 - gap)
+        if time.time() - self._last_sent < 1.5:
+            raise ApiAdmissionDeferred('room_chat_spacing')
         if stopping():
             return
 
@@ -4082,19 +4093,25 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         """
         if method not in ('chat_ack', 'chat_messages'):
             raise ValueError('unsupported chat maintenance operation')
-        if time.monotonic() < getattr(self, '_chat_api_retry_at', 0.0):
+        retries = getattr(self, '_chat_maintenance_retries', None)
+        if retries is None:
+            retries = self._chat_maintenance_retries = {}
+        previous = retries.get(method, {'at': 0.0, 'failures': 0})
+        if time.monotonic() < previous['at']:
             return False, None
         try:
             result = getattr(self.api, method)(*args, **kwargs)
-        except (ApiAdmissionDeferred, ApiKeepaliveUnavailable, ApiChatReadUnavailable):
-            failures = min(5, getattr(self, '_chat_api_deferred_count', 0) + 1)
-            delay = min(15.0, float(2 ** (failures - 1)))
+        except (ApiAdmissionDeferred, ApiKeepaliveUnavailable, ApiChatReadUnavailable) as error:
+            failures = min(5, previous['failures'] + 1)
+            delay = 1.0 if isinstance(error, ApiAdmissionDeferred) else min(15.0, float(2 ** (failures - 1)))
             self._chat_api_deferred_count = failures
             self._chat_api_retry_at = time.monotonic() + delay
+            retries[method] = {'at': self._chat_api_retry_at, 'failures': failures}
             log.warning('chat maintenance unavailable for %s; retrying in %.1fs', method, delay)
             return False, None
         self._chat_api_deferred_count = 0
         self._chat_api_retry_at = 0.0
+        retries.pop(method, None)
         return True, result
 
     def _maintain_chat_keepalive(self, now: float) -> None:
@@ -10951,6 +10968,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         # The referee has already proved occupancy; profile data must never
         # determine whether this real player exists in the roster.
         self.players[user_id] = {"pp": None, "name": str(user_id), "status": "idle"}
+        if self.cfg.get('background_player_profiles', False):
+            # Presence is already authoritative. Optional profile/top-score
+            # network I/O must not hold commands or READY processing behind it.
+            self._defer_player_profile(user_id)
+            return
         mode_kwargs = {"mode": "mania"} if self.cfg.get("ruleset_id", 0) == 3 else {}
         try:
             u = self.api.user(user_id, **mode_kwargs)
@@ -11024,6 +11046,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
     def _flush_player_profiles(self):
         """At most one pending roster enrichment per tick; never sleep or rejoin."""
+        if self.cfg.get('background_player_profiles', False):
+            return self._flush_background_player_profiles()
         pending = getattr(self, "_pending_player_profiles", None)
         if not pending:
             return
@@ -11066,6 +11090,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                         if fields["pp"] is not None:
                             self.mark_auto_retune_pending()
                         pending.pop(uid, None)
+                        # A deferred username must still receive its configured
+                        # greeting once enrichment succeeds in this same room.
+                        self._send_custom_join_greeting(uid)
                         return
             except (ApiAdmissionDeferred, ApiProfileReadUnavailable):
                 pass  # Optional GET only; authority/child-cleanup/RPC failures still propagate.
@@ -11077,6 +11104,88 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             work["attempts"] = min(work["attempts"] + 1, 5)
             work["retry_at"] = now + min(15, 2 ** (work["attempts"] - 1))
             pending[uid] = work  # rotate behind other due profiles, avoiding starvation
+            return
+
+    def _flush_background_player_profiles(self):
+        """One bounded read job; apply its result only on this room thread.
+
+        Background work never changes players, READY state, room mutations,
+        ratings or greetings. Parent RPC still checks the exact worker authority.
+        Late results are discarded across departures/rejoins/room replacements.
+        """
+        pending = getattr(self, '_pending_player_profiles', {})
+        now = time.monotonic()
+        for uid, work in list(pending.items()):
+            if (now >= work['expires_at'] or uid not in self.players
+                    or self.players[uid] is not work['player']
+                    or (self.room_id, self.channel_id) != (work['room_id'], work['channel_id'])
+                    or uid in self.non_gameplay_user_ids() or self._is_project_banned(uid)):
+                pending.pop(uid, None)
+        active = getattr(self, '_background_profile_job', None)
+        if active is not None:
+            try:
+                profile, raw, error = active['result'].get_nowait()
+            except queue.Empty:
+                return
+            self._background_profile_job = None
+            uid, work = active['uid'], active['work']
+            if pending.get(uid) is not work:
+                return
+            if error is not None and not isinstance(error, (ApiAdmissionDeferred, ApiProfileReadUnavailable)):
+                raise error
+            fields = self._profile_fields(uid, profile)
+            if fields is not None:
+                work['profile'] = profile
+                if error is None and type(raw) is list:
+                    top = []
+                    for score in raw:
+                        if type(score) is not dict:
+                            continue
+                        pp, beatmap = score.get('pp'), score.get('beatmap')
+                        bid = beatmap.get('id', 0) if type(beatmap) is dict else 0
+                        if (type(pp) not in (int, float) or not math.isfinite(pp) or pp <= 0
+                                or type(bid) is not int or bid < 0):
+                            continue
+                        top.append((pp, bid))
+                    top.sort(reverse=True)
+                    fields.update(top=top, threshold=top[-1][0] if len(top) >= 100 else 0.0)
+                self.players[uid].update(fields)
+                if fields['pp'] is not None:
+                    self.mark_auto_retune_pending()
+                if error is None and type(raw) is list:
+                    pending.pop(uid, None)
+                    self._send_custom_join_greeting(uid)
+                    return
+            pending.pop(uid, None)
+            work['attempts'] = min(work['attempts'] + 1, 5)
+            work['retry_at'] = now + min(15, 2 ** (work['attempts'] - 1))
+            pending[uid] = work
+            return
+        for uid, work in pending.items():
+            if now < work['retry_at']:
+                continue
+            result = queue.Queue(maxsize=1)
+            api, profile = self.api, work['profile']
+            mode = {'mode': 'mania'} if self.cfg.get('ruleset_id', 0) == 3 else {}
+            def fetch(api=api, uid=uid, profile=profile, mode=mode, result=result):
+                raw = None
+                try:
+                    if profile is None:
+                        profile = api.user(uid, **mode)
+                    # Validate without reading/mutating any instance state.
+                    if (type(profile) is dict and profile.get('username')
+                            and profile.get('id', uid) == uid):
+                        raw = api.user_top_scores(uid, limit=100, **mode)
+                    result.put_nowait((profile, raw, None))
+                except Exception as error:
+                    result.put_nowait((profile, raw, error))
+            thread = threading.Thread(target=fetch, name='optional-player-profile', daemon=True)
+            self._background_profile_job = {'uid': uid, 'work': work, 'result': result, 'thread': thread}
+            try:
+                thread.start()
+            except Exception:
+                self._background_profile_job = None
+                raise
             return
 
     def mark_auto_retune_pending(self) -> None:

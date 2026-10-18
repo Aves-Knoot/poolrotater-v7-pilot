@@ -1,8 +1,8 @@
-# PoolRotater v7.1.12
+# PoolRotater v7.1.13
 
-Use the [installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.12), [operator guide](docs/V7_1_12_OPERATOR_GUIDE.md) and [release notes](docs/V7_1_12_RELEASE_NOTES.md). Download the installer asset, not the source ZIP.
+Use the [installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.13), [operator guide](docs/V7_1_13_OPERATOR_GUIDE.md) and [release notes](docs/V7_1_13_RELEASE_NOTES.md). Download the installer asset, not the source ZIP.
 
-Community profile-read resilience, live chat parity, automatic deferred stats replies and clearer website display. Complete local statistics and the nice-17 background resource policy are retained. Existing settings, credentials, catalogs, history, enrollment and privacy/update choices are preserved. Healthy hosts retain normal all-empty admission; an active host with every failed room confirmed closed can apply the repair. Deliberately stopped or uncertain hosts stay fenced.
+Shared personalized greetings, bounded optional profile reads, independent chat retries and nonblocking local statistics reads. Existing configuration, state, credentials, titles and opt-outs are preserved. Existing failed v7.1.11 hosts still need the documented one-time v7.1.12 activation before the successor can apply. No publication is proof of live activation.
 
 ## Fresh install
 
@@ -12,7 +12,7 @@ two-room Standard Auto + Mania4K configuration:
 ```bash
 sudo /usr/bin/python3.12 -I -S -B install.py --instance two \
   --preset standard-auto --preset mania-4k --bundle runtime.zip \
-  --sha256 7400e3c6c53cc5596fd74929fdcf615aecce43fb7340f4c3409f2663b8acfe32 --live-pilot
+  --sha256 98bc2e7a9a127062d7bbff451dbef743395dfe3dfb3c8453a4b53e268fa3010c --live-pilot
 ```
 
 Follow NETWORK_OPERATOR_GUIDE.md, LIVE_AUTHORIZATION.md and the current operator
@@ -22,7 +22,7 @@ is needed. Do not run a second controller for the same hosting account.
 
 ## Enabled defaults and opting out
 
-Before starting, review docs/V7_1_12_OPERATOR_GUIDE.md. Missing profiles enable public
+Before starting, review docs/V7_1_13_OPERATOR_GUIDE.md. Missing profiles enable public
 statistics sharing/consumption, sanitized operational/public-chat diagnostics,
 enrolled rating contribution and verified shared rating selection. New directory
 configuration defaults to public listing when omitted. Existing explicit false

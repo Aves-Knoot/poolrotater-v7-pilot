@@ -88,6 +88,7 @@ def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=No
             'requests_per_minute': 50, 'requests_burst_capacity': 60,
             'spectator_url': 'offline://fixture-referee',
             'chat_websocket_enabled': live,
+            'background_player_profiles': live,
             'chat_websocket_endpoint': 'wss://notify.ppy.sh' if live else '',
             'discord_control_enabled': False, 'discord_modlog_enabled': False,
             'discord_control_channel_id': 0, 'discord_control_guild_id': 0,

@@ -217,6 +217,40 @@ class Replica:
         return {'phase':'ready' if ready else 'unavailable','manifest':value,'checked':row['checked'],'next_check':row['next_check']}
 
     @contextmanager
+    def metadata(self):
+        """Command reads never reserve the background agent's SQLite writer.
+
+        Keep a short read transaction, private-path checks and current privacy
+        authority. No immutable flag here: the agent updates this small pointer
+        database. Only the separate completed player replica is immutable.
+        """
+        # Match the existing cache directory contract (not group/world
+        # writable); legacy caches may have a searchable 0755 state directory.
+        for parent in (self.path.parent, *self.path.parent.parents):
+            require(not parent.is_symlink(), 'unsafe_activity_storage')
+        info = self.path.parent.stat()
+        require(self.path.parent.is_dir() and info.st_uid == os.geteuid()
+                and not info.st_mode & 0o022, 'unsafe_activity_storage_parent')
+        if not os.path.lexists(self.path):
+            yield None
+            return
+        _private(self.path)
+        require(self.path.stat().st_size < 512*1024**2, 'activity_capacity_required', 503)
+        for suffix in ('-wal', '-shm', '-journal'):
+            side = Path(str(self.path)+suffix)
+            if os.path.lexists(side):
+                _private(side)
+        db = sqlite3.connect('file:'+quote(str(self.path))+'?mode=ro', uri=True, timeout=.05)
+        db.row_factory = sqlite3.Row
+        try:
+            db.execute('PRAGMA busy_timeout=50')
+            db.execute('PRAGMA query_only=ON')
+            db.execute('BEGIN')
+            yield db
+        finally:
+            db.close()
+
+    @contextmanager
     def database(self,state):
         # This is a closed, atomically published database, never a live WAL DB.
         path=_private(self.root/'state/activity-replica-downloads'/state['manifest']['content_id']/'replica.sqlite3')
@@ -226,7 +260,7 @@ class Replica:
         finally:db.close()
 
     def stats(self,uid,mode):
-        with connection(self.path) as db:state=self.observation(db)
+        with self.metadata() as db:state=self.observation(db) if db is not None else None
         if state is None or state['phase']=='legacy':return False,None
         if state['phase']!='ready':return True,None
         with self.database(state) as db:
@@ -236,7 +270,7 @@ class Replica:
         return True,value
 
     def lookup(self,name,mode):
-        with connection(self.path) as db:state=self.observation(db)
+        with self.metadata() as db:state=self.observation(db) if db is not None else None
         if state is None or state['phase']=='legacy':return False,None
         if state['phase']!='ready':return True,None
         with self.database(state) as db:
@@ -246,8 +280,8 @@ class Replica:
         value=json.loads(row[0]);return True,(value['user_id'],value['username'])
 
     def status(self):
-        with connection(self.path) as db:
-            state=self.observation(db)
+        with self.metadata() as db:
+            state=self.observation(db) if db is not None else None
             if state is None:return {'phase':'cold'}
             result={'phase':state['phase']}
             if 'manifest' in state:

@@ -23,12 +23,22 @@ class GreetingCooldown:
             return True
 
 
+# Public player-facing greetings approved by the maintainer for every host.
+# An explicit local mapping (including {}) retains the operator's override.
+DEFAULT_JOIN_GREETINGS = {'16480556': 'Mrnachos123 has joined the game. Muzan has been pinged.',
+ 'Frogma': 'some say he is the frog of all frogs, some say he is the frog of all time. All we know is that '
+           'FROGMA has joined the game.',
+ 'JustAria': 'Rawr x3 nuzzles pounces on you, uwu you so warm.. JustAria has joined!',
+ 'OLI67': 'A legend has joined the game, OLI67 is here to grace us with his presence.',
+ 'Zayoh': 'The man, the myth the legend, ZAYOH has joined the game. Blessed be the osu! gods.',
+ 'moocows': 'The one and only Moocows has joined the game. May peppy bow at the glory'}
+
 JOIN_GREETING_COOLDOWN = GreetingCooldown()
 
 
 def configured_greeting(cfg: dict, user_id: int, username: str) -> str | None:
     """Find a greeting by osu! user id first, then case-insensitive username."""
-    greetings = cfg.get("custom_join_greetings", {})
+    greetings = cfg.get("custom_join_greetings", DEFAULT_JOIN_GREETINGS)
     if not isinstance(greetings, dict):
         return None
 

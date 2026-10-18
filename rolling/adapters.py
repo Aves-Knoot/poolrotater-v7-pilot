@@ -100,6 +100,9 @@ class Api:
             try:
                 return call(self.peer, "api." + name, *args, **kwargs)
             except RemoteError as exc:
+                if name in ('user', 'user_top_scores') and exc.kind == 'BackgroundReadDeferred':
+                    from bot.api import ApiAdmissionDeferred
+                    raise ApiAdmissionDeferred(str(exc)) from exc
                 # Typed gate refusals establish no dispatch. Never infer this
                 # from a generic OAuth error string or an uncertain RPC reply.
                 if name in ('chat_ack', 'chat_messages', 'chat_send', 'user', 'user_top_scores', 'room_item_scores') and exc.kind == 'ProviderAdmissionDeferred':

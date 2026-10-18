@@ -97,7 +97,7 @@ def require_repair_compatible(before, after):
             ('v7.1.6', 'v7.1.10'),
             ('v7.1.7', 'v7.1.10'),
             ('v7.1.8', 'v7.1.10'),
-            ('v7.1.9', 'v7.1.10'), ('v7.1.10','v7.1.11'), ('v7.1.11','v7.1.12')):
+            ('v7.1.9', 'v7.1.10'), ('v7.1.10','v7.1.11'), ('v7.1.11','v7.1.12'), ('v7.1.12','v7.1.13')):
         raise ConfigError('pilot repair requires its reviewed runtime family')
     for key in ('protocol', 'storage_epoch', 'requirements', 'python_hash', 'environment_hash'):
         if key not in before or before[key] != after.get(key):

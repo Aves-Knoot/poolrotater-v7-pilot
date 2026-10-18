@@ -32,9 +32,17 @@ class UncertainResult(RuntimeError):
     pass
 
 
+class BackgroundReadDeferred(RuntimeError):
+    """The bounded optional profile lane is busy; this read was not dispatched."""
+
+
 class Peer:
-    def __init__(self, sock, handler=None, on_event=None, name="rpc"):
+    def __init__(self, sock, handler=None, on_event=None, name="rpc", *, background_profiles=False):
+        if type(background_profiles) is not bool:
+            raise ValueError('background profile policy must be explicit')
         self.sock, self.handler, self.on_event = sock, handler, on_event
+        self._background_profiles = background_profiles
+        self._profile_slot = threading.Lock()
         self.closed = threading.Event()
         self._send_lock = threading.Lock()
         self._pending_lock = threading.Lock()
@@ -147,18 +155,51 @@ class Peer:
                 msg = self._requests.get(timeout=.2)
             except queue.Empty:
                 continue
-            response = {"type": "reply", "id": msg.get("id")}
-            try:
-                if self.handler is None:
-                    raise ValueError("requests are not accepted")
-                response["value"] = self.handler(msg["method"], *msg.get("args", []),
-                                                 **msg.get("kwargs", {}))
-            except Exception as exc:
-                response["error"] = {"kind": type(exc).__name__, "message": str(exc)[:1000]}
-            try:
-                self.send(response)
-            except (PeerClosed, ValueError, TypeError):
-                self.close()
+            # Only these two optional GETs may leave the serialized handler.
+            # Room mutations, chat, ownership and lifecycle calls keep their
+            # existing single serve thread. No unbounded task pool or read queue.
+            if self._background_profiles and msg.get('method') in ('api.user', 'api.user_top_scores'):
+                if not self._profile_slot.acquire(blocking=False):
+                    self._reply(msg, {'error': {'kind': 'BackgroundReadDeferred',
+                                              'message': 'optional profile lane busy'}})
+                    continue
+                try:
+                    thread = threading.Thread(target=self._serve_profile, args=(msg,),
+                                              name='rpc-optional-profile', daemon=True)
+                    thread.start()
+                except Exception:
+                    self._profile_slot.release()
+                    self._reply(msg, {'error': {'kind': 'BackgroundReadDeferred',
+                                              'message': 'optional profile lane unavailable'}})
+                continue
+            self._serve_one(msg)
+
+    def _serve_profile(self, msg):
+        try:
+            response = self._invoke(msg)
+        finally:
+            self._profile_slot.release()
+        self._reply(msg, response)
+
+    def _serve_one(self, msg):
+        self._reply(msg, self._invoke(msg))
+
+    def _invoke(self, msg):
+        response = {}
+        try:
+            if self.handler is None:
+                raise ValueError("requests are not accepted")
+            response['value'] = self.handler(msg['method'], *msg.get('args', []), **msg.get('kwargs', {}))
+        except Exception as exc:
+            response['error'] = {'kind': type(exc).__name__, 'message': str(exc)[:1000]}
+        return response
+
+    def _reply(self, msg, response):
+        response = {'type': 'reply', 'id': msg.get('id'), **response}
+        try:
+            self.send(response)
+        except (PeerClosed, ValueError, TypeError):
+            self.close()
 
     def close(self):
         self.closed.set()
