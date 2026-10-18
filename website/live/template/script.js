@@ -33,11 +33,11 @@
     const elapsed=running?Math.max(0,Math.min(duration,now-start)):0,ratio=running?elapsed/duration:0;
     const bar=card.querySelector('.pr-np-progress');if(!bar)return;
     bar.hidden=!running;bar.firstElementChild.style.transform='scaleX('+ratio+')';bar.setAttribute('aria-valuenow',String(Math.round(ratio*100)));bar.setAttribute('aria-valuetext',running?'Estimated '+clock(elapsed)+' of '+clock(duration):'Timing unavailable');
-    card.dataset.timed=String(running);card.dataset.finished=String(ratio>=1);put(card,'.pr-np-clock',running?'Estimated '+clock(elapsed)+' / '+clock(duration):'');
+    card.dataset.timed=String(running);card.dataset.finished=String(ratio>=1);put(card,'.pr-np-clock',running?(card.dataset.nominalSpeed==='true'?'Estimated at 1× ':'Estimated ')+clock(elapsed)+' / '+clock(duration):'');
   }
   function update(card,room,fresh,now){
     room=room||{};const state=fresh&&states[room.state]?room.state:'STALE',map=fresh?(room.current_map||{}):{},p=timing(room,fresh,now),community=room.ownership==='community';
-    card.dataset.state=state;card.dataset.start=p?p.started_at:0;card.dataset.duration=p?p.duration_seconds:0;card.dataset.map=String(Boolean(map.title||map.label));
+    card.dataset.state=state;card.dataset.nominalSpeed=String(Boolean(p&&p.nominal_speed));card.dataset.start=p?p.started_at:0;card.dataset.duration=p?p.duration_seconds:0;card.dataset.map=String(Boolean(map.title||map.label));
     put(card,'.pr-np-people',fresh&&Number.isInteger(room.players)&&room.players>=0&&room.players<=128?room.players+' in room':'—');
     const title=String(map.title||map.label||(state==='OFFLINE'?'Room is offline':state==='STALE'?'Status temporarily unavailable':'Waiting for the next map')).slice(0,160),link=card.querySelector('.pr-np-title');
     link.textContent=title;link.title=title;if(validId(map.beatmap_id))link.href='https://osu.ppy.sh/beatmaps/'+map.beatmap_id;else link.removeAttribute('href');
@@ -62,7 +62,7 @@
     content.append(bar);if(!compact){const actions=node('div',undefined,'pr-np-bottom');actions.append(join);if(fresh&&validId(room.room_id)){const view=node('a','View room ↗','pr-community-view');view.href='https://osu.ppy.sh/multiplayer/rooms/'+room.room_id;view.target='_blank';view.rel='noopener noreferrer';actions.append(view);}content.append(actions);}
     el.append(image,node('div',undefined,'pr-np-shade'),content);update(el,room,fresh,now);return el;
   }
-  const labels={ruleset_id:'Ruleset',keys:'Keys',auto_difficulty:'Automatic difficulty',selection_style:'Selection style',freestyle:'Freestyle',countdown_seconds:'Countdown · seconds',required_mods:'Required mods',allowed_mods:'Allowed mods'};
+  const labels={ruleset_id:'Ruleset',keys:'Keys',auto_difficulty:'Automatic difficulty',selection_style:'Selection style',freestyle:'Freemod',countdown_seconds:'Countdown · seconds',required_mods:'Required mods',allowed_mods:'Allowed mods'};
   function settings(value,fresh){if(!fresh||!value||typeof value!=='object')return null;const details=node('details',undefined,'pr-room-settings'),summary=node('summary','Room settings ⌄'),dl=node('dl');for(const [key,label]of Object.entries(labels)){let v=value[key];if(v==null)continue;if(key==='ruleset_id')v=({0:'osu!standard',1:'osu!taiko',2:'osu!catch',3:'osu!mania'})[v]||'Unknown';else if(typeof v==='boolean')v=v?'Enabled':'Disabled';else if(Array.isArray(v))v=v.filter(n=>typeof n==='string'&&n.length<=16).slice(0,32).join(', ')||'None';else if(!['string','number'].includes(typeof v))continue;dl.append(node('dt',label),node('dd',String(v).slice(0,160)));}if(!dl.children.length)return null;details.append(summary,dl,node('p','Public settings reported by this host. Other controls remain local to the host.','pr-settings-note'));return details;}
   global.prLivePresentation={card,update,tick,timing,settings,clock};
 }(typeof window!=='undefined'?window:globalThis));
@@ -583,8 +583,9 @@ jQuery(function(){
             expire(stats, expiredStats);
             var period = statsForm.elements.pr_period.value;
             var timeOption = statsForm.elements.pr_sort.querySelector('[value=seconds]');
-            timeOption.disabled = period !== 'all';
-            if (period !== 'all' && statsForm.elements.pr_sort.value === 'seconds') statsForm.elements.pr_sort.value = 'pp';
+            var ownerOnly = !statsForm.elements.pr_host || statsForm.elements.pr_host.value === 'owner';
+            timeOption.disabled = period !== 'all' && ownerOnly;
+            if (timeOption.disabled && statsForm.elements.pr_sort.value === 'seconds') statsForm.elements.pr_sort.value = 'pp';
             if (statsRequest) statsRequest.abort();
             statsRequest = new AbortController();
             var request = statsRequest; var serial = ++statsSerial;
@@ -597,6 +598,12 @@ jQuery(function(){
                 var doc = new DOMParser().parseFromString(await response.text(), 'text/html');
                 var incoming = doc.querySelector('[data-statistics]');
                 if (!incoming || serial !== statsSerial) return;
+                var incomingForm = incoming.querySelector('form');
+                if (incomingForm && incomingForm.elements.pr_sort) {
+                    var incomingSort = incomingForm.elements.pr_sort;
+                    timeOption.disabled = incomingSort.querySelector('[value=seconds]').disabled;
+                    statsForm.elements.pr_sort.value = incomingSort.value;
+                }
                 var open = Array.from(stats.querySelectorAll('.pr-player-detail[open]')).map(function (d) { return d.dataset.playerId; });
                 var body = incoming.querySelector('.pr-stats-body');
                 if (!body) throw new Error('Unavailable');

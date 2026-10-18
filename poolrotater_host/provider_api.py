@@ -25,6 +25,10 @@ class ProviderChatReadUnavailable(AuthError):
     """Known transient read failure; no cursor advancement or inline retry."""
 
 
+class ProviderProfileReadUnavailable(AuthError):
+    """Only optional profile/top-score reads may defer after a transient failure."""
+
+
 class ProviderScoreReadUnavailable(AuthError):
     """A match-score GET timed out or received a temporary server refusal.
 
@@ -99,7 +103,19 @@ class ProviderApiClient:
                 if name == 'configure_profile_cache':
                     return self.configure_profile_cache(*args, **kwargs)
                 if check is not None and not check(): raise AuthError('room_api_authority_changed')
-                return getattr(OsuApi, name).__get__(self, type(self))(*args, **kwargs)
+                try:
+                    return getattr(OsuApi, name).__get__(self, type(self))(*args, **kwargs)
+                except AuthError as error:
+                    # Includes admission failures before a permit is yielded.
+                    # These exact optional GETs never authorize room mutations.
+                    if name in ('user', 'user_top_scores') and (
+                            error.code in ('provider_deadline_exceeded', 'provider_transport_uncertain',
+                                           'provider_api_rate_limited')
+                            or error.code == 'provider_api_unavailable'
+                            and error.http_status is not None and 500 <= error.http_status < 600):
+                        raise ProviderProfileReadUnavailable('provider_profile_read_unavailable',
+                                                             http_status=error.http_status) from None
+                    raise
             finally: self._context.check = previous
 
     def _boundary(self, *, mutation):

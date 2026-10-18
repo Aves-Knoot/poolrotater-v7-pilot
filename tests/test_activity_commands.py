@@ -25,19 +25,19 @@ class ActivityCommandTests(unittest.TestCase):
 
     def test_self_lookup_uses_local_history_immediately_and_queues_background_fetch(self):
         self.bot.handle_command(7,'.stats')
-        self.assertIn('Local totals; shared stats are syncing or unavailable',self.bot.say.call_args.args[0])
+        self.assertNotIn('shared stats',self.bot.say.call_args.args[0])
         self.assertIn('0:01',self.bot.say.call_args.args[0])
         self.assertEqual(self.reader.status()['pending_queries'],1)
 
     def test_unknown_remote_username_returns_useful_syncing_reply_not_worker_exception(self):
         self.bot.handle_command(8,'.stats Remote User')
-        self.assertIn('shared stats for Remote User are syncing',self.bot.say.call_args.args[0])
+        self.assertIn('fetching stats for Remote User',self.bot.say.call_args.args[0])
         self.assertEqual(self.reader.status()['pending_queries'],1)
 
     def test_other_user_unknown_network_privacy_fails_closed(self):
         self.bot.handle_command(8,'.stats Local')
         message=self.bot.say.call_args.args[0]
-        self.assertIn('checking Local',message);self.assertNotIn('Playtime:',message)
+        self.assertIn('fetching stats for Local',message);self.assertNotIn('Playtime:',message)
 
     def test_completed_miss_does_not_keep_claiming_stats_are_syncing(self):
         self.bot.handle_command(8,'.stats Remote User')

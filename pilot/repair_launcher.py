@@ -14,8 +14,8 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-URL = 'https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/download/v7.1.11/poolrotater-7.1.11-live-pilot.zip'
-SHA256 = '95b88ba3c1a6ca4e54481e7c2b4ae90a0d7aa440d3c7e00c206aef02bcdbbf3f'
+URL = 'https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/download/v7.1.12/poolrotater-7.1.12-live-pilot.zip'
+SHA256 = 'ebb1d0e75f9f51fd86cdf27f74c5c5bfc66fc183b918497ac19b14add7aaa097'
 LIMIT = 128 * 1024**2
 HOSTS = frozenset(('github.com','release-assets.githubusercontent.com','objects.githubusercontent.com'))
 

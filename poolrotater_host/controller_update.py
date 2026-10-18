@@ -99,6 +99,84 @@ def _rows(target, parent, *, now, after=None):
     return rooms
 
 
+def _closed_failed_rows(target, parent, job, *, now, after=None):
+    """A running controller with only confirmed-closed failed slots can upgrade.
+
+    Normal operator close/maintenance, a stopped service, stale observations or
+    any ownership uncertainty do not grant this path. Never read log text as
+    lifecycle authority. The staged, signed successor executes this admission.
+    """
+    value = _control(target['root'] / 'state/rolling/status.json', parent['service_uid'])
+    generated = value.get('generated_at')
+    if (type(generated) not in (int, float) or not math.isfinite(generated)
+            or not 0 <= now-generated <= 8 or after is not None and generated <= after
+            or value.get('configuration_error') or set(value.get('rooms', {})) != set(job['rooms'])):
+        return None
+    rows = value['rooms']
+    from .reconciliation import _journal
+    journal = _journal(_control(target['root'] / 'state/rolling/ownership.json',
+                               parent['service_uid'], private=True), set(job['rooms']))
+    if set(journal['rooms']) != set(job['rooms']):
+        return None
+    for alias, row in rows.items():
+        stored = journal['rooms'][alias]
+        for evidence in (row, stored):
+            if (evidence.get('phase') != 'parked' or evidence.get('operation') != 'closed'
+                    or evidence.get('room_id') is not None or evidence.get('pid') is not None
+                    or evidence.get('ownership_unknown') is not False or evidence.get('error')
+                    or evidence.get('target') or evidence.get('creation_candidate')):
+                return None
+        status = row.get('status')
+        if (not isinstance(status, dict) or status.get('reopenable') is not False
+                or status.get('paused') is not False
+                or status.get('maintenance', {}).get('locked')
+                or status.get('maintenance', {}).get('uncertain')
+                or identity({alias: row}) != identity({alias: stored})):
+            return None
+    return rows
+
+
+def _step_closed_failed(instance, target, parent, job, save, *, now):
+    rows = _closed_failed_rows(target, parent, job, now=now)
+    if rows is None:
+        return False
+    if (job.get('empty_since') is None or not _same_rooms(rows, job)
+            or now < job['empty_since']):
+        save(empty_since=now, room_ids={a: None for a in rows}, worker_identity=identity(rows),
+             reason='observing_confirmed_closed_failed_rooms')
+        return True
+    if now-job['empty_since'] < EMPTY_SECONDS:
+        return True
+    validate_runtime(parent, target['prefix']); validate_runtime(job['after'], target['prefix'])
+    # Require a new controller observation after cryptographic validation, then
+    # recheck the independent ownership journal immediately before shutdown.
+    barrier = time.time(); deadline = time.monotonic()+12
+    latest = None
+    while time.monotonic() < deadline:
+        latest = _closed_failed_rows(target, parent, job, now=time.time(), after=barrier)
+        if _same_rooms(latest, job):
+            break
+        time.sleep(.25)
+    if not _same_rooms(latest, job):
+        save(empty_since=None, reason='closed_room_evidence_changed')
+        return True
+    if not _same_rooms(_closed_failed_rows(target, parent, job, now=time.time()), job):
+        save(empty_since=None, reason='closed_room_evidence_changed')
+        return True
+    save(phase='committing', commit_started_at=time.time(), stage='approval', stage_at=time.time(),
+         reason='configured_failed_rooms_already_closed',
+         admission_kind='confirmed_closed_failed_rooms',
+         automatic_recovery=job.get('automatic_recovery', {'format': 1, 'attempts': 0}))
+    try:
+        _commit(instance, target, parent, job, save)
+    except Exception as error:
+        from .update_lifecycle import failed
+        failed(save, job, error)
+        if job['phase'] == 'held':
+            disarm(instance)
+    return True
+
+
 def _uncertain_maintenance(target,parent,job,*,now):
     """Fresh worker uncertainty can refuse admission, never authorize a mutation.
 
@@ -301,6 +379,8 @@ def step(instance):
             disarm(instance)
             return {'ok':False,'phase':'held','reason':job['reason'],
                 'failure_stage':job['failure_stage'],'failure_code':job['failure_code']}
+        if job['phase'] == 'waiting_empty' and _step_closed_failed(instance, target, parent, job, save, now=now):
+            return {'ok': job['phase'] != 'held', 'phase': job['phase'], 'reason': job.get('reason')}
         rows=_rows(target,parent,now=now)
         if rows is not None and set(rows) != set(job['rooms']): rows=None
         if job['phase']=='waiting_empty':

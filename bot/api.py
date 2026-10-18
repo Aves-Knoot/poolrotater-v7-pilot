@@ -38,6 +38,10 @@ class ApiChatReadUnavailable(RuntimeError):
     """Transient read failure; retain the chat cursor and retry maintenance later."""
 
 
+class ApiProfileReadUnavailable(RuntimeError):
+    """Optional profile GET failed transiently; keep the roster and retry later."""
+
+
 class ApiScoreReadUnavailable(RuntimeError):
     """Transient match-score read failure; retry within the scoring window."""
 

@@ -111,6 +111,9 @@ class Api:
                 if name == 'chat_messages' and exc.kind == 'ProviderChatReadUnavailable':
                     from bot.api import ApiChatReadUnavailable
                     raise ApiChatReadUnavailable(str(exc)) from exc
+                if name in ('user', 'user_top_scores') and exc.kind == 'ProviderProfileReadUnavailable':
+                    from bot.api import ApiProfileReadUnavailable
+                    raise ApiProfileReadUnavailable(str(exc)) from exc
                 if name == 'room_item_scores' and exc.kind == 'ProviderScoreReadUnavailable':
                     from bot.api import ApiScoreReadUnavailable
                     raise ApiScoreReadUnavailable(str(exc)) from exc

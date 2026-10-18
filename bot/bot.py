@@ -52,7 +52,7 @@ from .custom_greetings import JOIN_GREETING_COOLDOWN, configured_greeting
 from .community import DEFAULT_DISCORD_INVITE
 from .api import (ApiAdmissionDeferred, ApiKeepaliveUnavailable,
                   ApiChatReadUnavailable, ApiChatDeliveryUncertain,
-                  ApiScoreReadUnavailable)
+                  ApiScoreReadUnavailable, ApiProfileReadUnavailable)
 
 log = logging.getLogger("bot")
 _UNIVERSAL_CONFIG_WRITE_LOCK = threading.Lock()
@@ -5047,151 +5047,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 )
 
         elif cmd == "stats":
-            requester_name = str(
-                (self.players.get(user_id) or {}).get("name")
-                or self.pp_stats.username_for_user_id(user_id)
-                or user_id
-            )
-
-            target_user_id = int(user_id)
-            target_name = requester_name
-
-            # Anyone may look up another player's AutoHost stats by username.
-            # Players are public by default, but a target can opt out with
-            # `.hidden`; a player can always see their own stats. Everything
-            # after `.stats` is treated as the username so names with spaces
-            # remain supported.
-            if len(parts) > 1:
-                requested_name = " ".join(parts[1:]).strip()
-                resolved = None
-                wanted = requested_name.casefold()
-
-                # Prefer the live lobby so a newly joined player is queryable
-                # before their first completed DB write.
-                for uid, info in self.players.items():
-                    live_name = str(info.get("name") or uid)
-                    if live_name.casefold() == wanted:
-                        resolved = (int(uid), live_name)
-                        break
-
-                if resolved is None:
-                    try:
-                        resolved = self.pp_stats.find_user_by_username(
-                            requested_name
-                        )
-                    except Exception:
-                        log.exception(
-                            "could not resolve AutoHost stats username %r",
-                            requested_name,
-                        )
-
-                if resolved is None and getattr(self.pp_stats, "reader", None) is not None:
-                    try:
-                        resolved = self.pp_stats.shared_username(requested_name)
-                    except Exception:
-                        log.warning("shared statistics username cache unavailable")
-                    if resolved is None:
-                        try:
-                            lookup_status = self.pp_stats.reader.lookup_status(
-                                requested_name, ruleset_id=self.pp_stats.ruleset_id)
-                        except Exception:
-                            lookup_status = None
-                        if lookup_status == 'not_found':
-                            self.say(f"{requester_name} — no shared AutoHost stats are available for {requested_name} yet.")
-                        else:
-                            self.say(f"{requester_name} — shared stats for {requested_name} are syncing; try again shortly.")
-                        return
-
-                if resolved is None:
-                    self.say(
-                        f"{requester_name} — no AutoHost stats found for "
-                        f"{requested_name}."
-                    )
-                    return
-
-                target_user_id, target_name = resolved
-
-            if target_user_id != int(user_id):
-                try:
-                    target_hidden = self.pp_stats.stats_hidden(target_user_id)
-                except Exception:
-                    log.exception(
-                        "could not read AutoHost stats visibility for user %s",
-                        target_user_id,
-                    )
-                    self.say(
-                        f"{requester_name} — I couldn't check {target_name}'s "
-                        "stats visibility right now."
-                    )
-                    return
-
-                if not target_hidden and getattr(self.pp_stats, "reader", None) is not None:
-                    try:
-                        network_hidden = self.pp_stats.shared_stats_hidden(target_user_id)
-                    except Exception:
-                        network_hidden = None
-                    if network_hidden is None:
-                        self.say(f"{requester_name} — checking {target_name}'s shared stats visibility; try again shortly.")
-                        return
-                    target_hidden = network_hidden
-
-                if target_hidden:
-                    self.say(
-                        f"{requester_name} — {target_name} has hidden their "
-                        "AutoHost stats."
-                    )
-                    return
-
-            # Personal improvement is persistent across room/process restarts.
-            # PP totals are based on positive profile gains detected from top-100
-            # scores made in this AutoHost. Lobby time is also persistent; if
-            # the target is currently present, include the live unflushed slice.
-            try:
-                personal = self.pp_stats.user_stats(target_user_id)
-            except Exception:
-                log.exception(
-                    "could not read AutoHost PP stats for user %s",
-                    target_user_id,
-                )
-                personal = {
-                    "total_gain": 0.0,
-                    "achievement_count": 0,
-                    "best_gain": 0.0,
-                    "total_lobby_seconds": 0.0,
-                }
-
-            total_gain = float(personal.get("total_gain") or 0.0)
-            achievement_count = int(personal.get("achievement_count") or 0)
-            best_gain = float(personal.get("best_gain") or 0.0)
-            total_lobby_seconds = float(
-                personal.get("total_lobby_seconds") or 0.0
-            )
-
-            live_info = self.players.get(target_user_id)
-            if live_info is not None:
-                checkpoint = live_info.get("lobby_time_checkpoint_at")
-                if checkpoint is not None:
-                    live_slice = max(0.0, time.time() - float(checkpoint))
-                    if personal.get("network_statistics"):
-                        personal["local_tracked_lobby_seconds"] = personal.get("local_tracked_lobby_seconds", 0) + live_slice
-                        personal["local_unreconciled_lobby_seconds"] = personal.get("local_unreconciled_lobby_seconds", 0) + live_slice
-                    else:
-                        total_lobby_seconds += live_slice
-
-            playtime = self._format_lobby_time(total_lobby_seconds)
-            coverage_note = ""
-            if achievement_count:
-                self.say(
-                    f"{target_name} — {'Mania' if mania else 'AutoHost'} gains: +{total_gain:.1f}pp "
-                    f"across {achievement_count} gain"
-                    f"{'s' if achievement_count != 1 else ''} "
-                    f"(best +{best_gain:.1f}pp) | Playtime: {playtime}.{coverage_note}"
-                )
-            else:
-                self.say(
-                    f"{target_name} — {'Mania' if mania else 'AutoHost'} gains: +0.0pp tracked so far "
-                    f"| Playtime: {playtime}.{coverage_note}"
-                )
+            self._show_player_stats(user_id, parts)
 
         elif cmd == "lobby":
             active = self.gameplay_player_ids()
@@ -10873,6 +10729,202 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         else:
             self.say(f'{name} '+('unbanned' if changed else 'is not banned')+'.')
 
+    def _queue_stats_reply(self, user_id, parts, target_name, *, announce):
+        """Remember a bounded request; the room thread posts its answer once ready."""
+        requests = getattr(self, '_pending_stats_replies', None)
+        if requests is None:
+            requests = self._pending_stats_replies = {}
+        key = (int(user_id), tuple(parts[1:]))
+        if key not in requests:
+            if len(requests) >= 32:
+                if announce:
+                    self.say('Statistics are busy right now; please try again shortly.')
+                return
+            now = time.monotonic()
+            requests[key] = {'parts': list(parts), 'player': self.players.get(int(user_id)),
+                             'room_id': getattr(self, 'room_id', None),
+                             'channel_id': getattr(self, 'channel_id', None),
+                             'expires_at': now + 90, 'retry_at': now + 1,
+                             'target_name': str(target_name)}
+            if announce:
+                requester = str((self.players.get(int(user_id)) or {}).get('name') or user_id)
+                self.say(f"{requester} — fetching stats for {target_name}; I'll post them here when ready.")
+
+    def _flush_stats_replies(self):
+        requests = getattr(self, '_pending_stats_replies', None)
+        if not requests:
+            return
+        now = time.monotonic()
+        for key, work in list(requests.items()):
+            uid = key[0]
+            if (uid not in self.players or self.players[uid] is not work['player']
+                    or getattr(self, 'room_id', None) != work['room_id']
+                    or getattr(self, 'channel_id', None) != work['channel_id']
+                    or self._is_project_banned(uid)):
+                requests.pop(key, None)
+                continue
+            if now >= work['expires_at']:
+                requests.pop(key, None)
+                self.say(f"Stats for {work['target_name']} are unavailable right now; please try later.")
+                continue
+            if now < work['retry_at']:
+                continue
+            work['retry_at'] = now + 1
+            if self._show_player_stats(uid, work['parts'], pending=True) is not False:
+                requests.pop(key, None)
+            return  # one bounded, local-cache lookup per room tick
+
+    def _show_player_stats(self, user_id, parts, *, pending=False):
+        mania = self.cfg.get('ruleset_id', 0) == 3
+        requester_name = str(
+            (self.players.get(user_id) or {}).get("name")
+            or self.pp_stats.username_for_user_id(user_id)
+            or user_id
+        )
+
+        target_user_id = int(user_id)
+        target_name = requester_name
+
+        # Anyone may look up another player's AutoHost stats by username.
+        # Players are public by default, but a target can opt out with
+        # `.hidden`; a player can always see their own stats. Everything
+        # after `.stats` is treated as the username so names with spaces
+        # remain supported.
+        if len(parts) > 1:
+            requested_name = " ".join(parts[1:]).strip()
+            resolved = None
+            wanted = requested_name.casefold()
+
+            # Prefer the live lobby so a newly joined player is queryable
+            # before their first completed DB write.
+            for uid, info in self.players.items():
+                live_name = str(info.get("name") or uid)
+                if live_name.casefold() == wanted:
+                    resolved = (int(uid), live_name)
+                    break
+
+            if resolved is None:
+                try:
+                    resolved = self.pp_stats.find_user_by_username(
+                        requested_name
+                    )
+                except Exception:
+                    log.exception(
+                        "could not resolve AutoHost stats username %r",
+                        requested_name,
+                    )
+
+            if resolved is None and getattr(self.pp_stats, "reader", None) is not None:
+                try:
+                    resolved = self.pp_stats.shared_username(requested_name)
+                except Exception:
+                    log.warning("shared statistics username cache unavailable")
+                if resolved is None:
+                    try:
+                        lookup_status = self.pp_stats.reader.lookup_status(
+                            requested_name, ruleset_id=self.pp_stats.ruleset_id)
+                    except Exception:
+                        lookup_status = None
+                    if lookup_status == 'not_found':
+                        self.say(f"{requester_name} — no shared AutoHost stats are available for {requested_name} yet.")
+                    else:
+                        self._queue_stats_reply(user_id, parts, requested_name, announce=not pending)
+                        return False
+                    return True
+
+            if resolved is None:
+                self.say(
+                    f"{requester_name} — no AutoHost stats found for "
+                    f"{requested_name}."
+                )
+                return True
+
+            target_user_id, target_name = resolved
+
+        if target_user_id != int(user_id):
+            try:
+                target_hidden = self.pp_stats.stats_hidden(target_user_id)
+            except Exception:
+                log.exception(
+                    "could not read AutoHost stats visibility for user %s",
+                    target_user_id,
+                )
+                self.say(
+                    f"{requester_name} — I couldn't check {target_name}'s "
+                    "stats visibility right now."
+                )
+                return True
+
+            if not target_hidden and getattr(self.pp_stats, "reader", None) is not None:
+                try:
+                    network_hidden = self.pp_stats.shared_stats_hidden(target_user_id)
+                except Exception:
+                    network_hidden = None
+                if network_hidden is None:
+                    self._queue_stats_reply(user_id, parts, target_name, announce=not pending)
+                    return False
+                target_hidden = network_hidden
+
+            if target_hidden:
+                self.say(
+                    f"{requester_name} — {target_name} has hidden their "
+                    "AutoHost stats."
+                )
+                return True
+
+        # Personal improvement is persistent across room/process restarts.
+        # PP totals are based on positive profile gains detected from top-100
+        # scores made in this AutoHost. Lobby time is also persistent; if
+        # the target is currently present, include the live unflushed slice.
+        try:
+            personal = self.pp_stats.user_stats(target_user_id)
+        except Exception:
+            log.exception(
+                "could not read AutoHost PP stats for user %s",
+                target_user_id,
+            )
+            personal = {
+                "total_gain": 0.0,
+                "achievement_count": 0,
+                "best_gain": 0.0,
+                "total_lobby_seconds": 0.0,
+            }
+
+        total_gain = float(personal.get("total_gain") or 0.0)
+        achievement_count = int(personal.get("achievement_count") or 0)
+        best_gain = float(personal.get("best_gain") or 0.0)
+        total_lobby_seconds = float(
+            personal.get("total_lobby_seconds") or 0.0
+        )
+
+        live_info = self.players.get(target_user_id)
+        if live_info is not None:
+            checkpoint = live_info.get("lobby_time_checkpoint_at")
+            if checkpoint is not None:
+                live_slice = max(0.0, time.time() - float(checkpoint))
+                if personal.get("network_statistics"):
+                    personal["local_tracked_lobby_seconds"] = personal.get("local_tracked_lobby_seconds", 0) + live_slice
+                    personal["local_unreconciled_lobby_seconds"] = personal.get("local_unreconciled_lobby_seconds", 0) + live_slice
+                else:
+                    total_lobby_seconds += live_slice
+
+        playtime = self._format_lobby_time(total_lobby_seconds)
+        coverage_note = ""
+        if achievement_count:
+            self.say(
+                f"{target_name} — {'Mania' if mania else 'AutoHost'} gains: +{total_gain:.1f}pp "
+                f"across {achievement_count} gain"
+                f"{'s' if achievement_count != 1 else ''} "
+                f"(best +{best_gain:.1f}pp) | Playtime: {playtime}.{coverage_note}"
+            )
+        else:
+            self.say(
+                f"{target_name} — {'Mania' if mania else 'AutoHost'} gains: +0.0pp tracked so far "
+                f"| Playtime: {playtime}.{coverage_note}"
+            )
+
+        return True
+
     def on_user_joined(self, user_id: int) -> None:
         user_id = int(user_id)
         if self.cfg.get('moderation_bans_file'):
@@ -10902,7 +10954,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         mode_kwargs = {"mode": "mania"} if self.cfg.get("ruleset_id", 0) == 3 else {}
         try:
             u = self.api.user(user_id, **mode_kwargs)
-        except ApiAdmissionDeferred:
+        except (ApiAdmissionDeferred, ApiProfileReadUnavailable):
             self._defer_player_profile(user_id)
             return
         if not u:
@@ -10918,7 +10970,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         # map would blow the request budget instantly.
         try:
             raw = self.api.user_top_scores(user_id, limit=100, **mode_kwargs)
-        except ApiAdmissionDeferred:
+        except (ApiAdmissionDeferred, ApiProfileReadUnavailable):
             self._defer_player_profile(user_id, profile=u)
             return
         top = sorted(
@@ -11015,8 +11067,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                             self.mark_auto_retune_pending()
                         pending.pop(uid, None)
                         return
-            except ApiAdmissionDeferred:
-                pass  # proven pre-dispatch refusal; generic/auth/uncertain errors propagate
+            except (ApiAdmissionDeferred, ApiProfileReadUnavailable):
+                pass  # Optional GET only; authority/child-cleanup/RPC failures still propagate.
             if fields is not None:
                 self.players[uid].update(fields)
                 if fields["pp"] is not None:
@@ -12768,6 +12820,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             self._drain_ai_results()
             self._drain_discord_control_commands()
             self._flush_room_chat()
+            self._flush_stats_replies()
             self._flush_player_profiles()
 
             # This is snapshot-driven, so the inexpensive call below only
