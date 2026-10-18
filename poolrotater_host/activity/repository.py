@@ -74,7 +74,6 @@ class Repository:
             with connection(self.path) as db:
                 policy=db.execute('SELECT * FROM consents WHERE host_id=?',(host['id'],)).fetchone()
                 require(policy is not None and policy['enabled'],'statistics_sharing_disabled',403)
-                daily=db.execute('SELECT COUNT(*) FROM events WHERE host_id=? AND received>=?',(host['id'],now-86400)).fetchone()[0]
                 for item in value['events']:
                     require(all(item[k]==host[k] for k in ('installation_id','generation')),'activity_host_identity_mismatch',403)
                     require(item['consent_id']==policy['consent_id'],'activity_consent_mismatch',409)
@@ -83,7 +82,6 @@ class Repository:
                     if previous:
                         require(previous['host_id']==host['id'] and previous['payload_hash']==digest,'activity_event_id_conflict',409)
                         outcomes.append({'event_id':item['event_id'],'phase':'already_accepted'});continue
-                    require(daily<200000,'activity_host_quota',429)
                     timestamp=p['updated_at'] if kind=='privacy' else p['cutoff'] if kind=='baseline' else p['created_at'] if kind=='achievement' else p['occurred_at'] if kind in ('join','leave') else p['started_at']
                     if kind not in ('privacy','baseline') and not(kind=='achievement' and p['historical']):require(timestamp>=policy['consent_at'],'activity_before_consent',403)
                     require(timestamp<=now+300 and p.get('ended_at',timestamp)<=now+300,'activity_event_future')
@@ -119,7 +117,7 @@ class Repository:
                     else:
                         db.execute('INSERT INTO records VALUES(?,?,?,?,?,?,?)',(host['id'],key,item['event_id'],canonical(p).decode(),kind,p['user_id'],room))
                     self._name(db,host['id'],p)
-                    daily+=1;outcomes.append({'event_id':item['event_id'],'phase':'accepted'})
+                    outcomes.append({'event_id':item['event_id'],'phase':'accepted'})
             self.store._audit(auth,'activity_batch',host['id'])
         return {'ok':True,'protocol_version':1,'outcomes':outcomes,'received_at':now}
 

@@ -57,7 +57,8 @@ KillSignal=SIGTERM
 SendSIGKILL=yes
 TimeoutStopSec=20
 UMask=0077
-Nice=15
+Slice=poolrotater-v7-transfer.slice
+Nice=17
 CPUQuota=50%
 MemoryMax=512M
 MemorySwapMax=128M
@@ -153,6 +154,8 @@ def prepare(destination, *, bind='127.0.0.1', port=9444):
         (runtime/'inventory.json').chmod(0o644)
         atomic_json(destination/'hub.json',config)
         unit=destination/UNIT;unit.write_text(unit_text());unit.chmod(0o600)
+        from .resources import NAME,TEXT
+        (destination/NAME).write_text(TEXT)
         return {'ok':True,'runtime_files':len(inventory),'service_installed':False,
                 'hub_started':False,'provider_access':False,
                 'inventory_sha256':hashlib.sha256((runtime/'inventory.json').read_bytes()).hexdigest()}

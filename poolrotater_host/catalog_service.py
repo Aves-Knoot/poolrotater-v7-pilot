@@ -76,7 +76,8 @@ def units(*,prefix=PREFIX,state=STATE,user=USER,custody=Path('/var/lib/poolrotat
     for value in (prefix,state,custody,served):path_word(value)
     require(re.fullmatch('[a-z][a-z0-9-]{0,31}',user) is not None,'catalog_identity_refused')
     common='''UMask=0077
-Nice=15
+Slice=poolrotater-v7-transfer.slice
+Nice=17
 CPUQuota=50%
 MemoryMax=512M
 MemorySwapMax=128M
@@ -211,6 +212,8 @@ def prepare(destination,*,wheel_cache):
         inventory={p.relative_to(runtime).as_posix():sha256(p) for p in sorted(runtime.rglob('*')) if p.is_file()}
         atomic_json(runtime/'inventory.json',{'format':1,'files':inventory});(runtime/'inventory.json').chmod(0o644)
         for name,data in units().items():(destination/name).write_text(data)
+        from .network.resources import NAME,TEXT
+        (destination/NAME).write_text(TEXT)
         return {'ok':True,'inventory_sha256':sha256(runtime/'inventory.json'),'runtime_files':len(inventory),
                 'dependencies':{k:v['version'] for k,v in pins.items()},'service_installed':False,'listener_started':False}
     except BaseException:shutil.rmtree(destination);raise

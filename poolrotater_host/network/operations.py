@@ -50,7 +50,9 @@ KillSignal=SIGTERM
 SendSIGKILL=yes
 TimeoutStopSec=15
 UMask=0077
-Nice=15
+Slice=poolrotater-v7-transfer.slice
+Nice=17
+CPUQuota=50%
 MemoryMax=512M
 MemorySwapMax=128M
 TasksMax=16
@@ -81,7 +83,8 @@ def _checked_unit(instance,optional=False):
     if optional and not os.path.lexists(path):return None
     protected(path);info=path.lstat()
     if (not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or info.st_size>16384
-            or path.read_bytes()!=unit_text(instance).encode()):
+            or path.read_bytes() not in (unit_text(instance).encode(),
+                unit_text(instance).replace('Slice=poolrotater-v7-transfer.slice\n','').replace('Nice=17\nCPUQuota=50%','Nice=15').encode())):
         raise ConfigError('network agent unit differs from the reviewed instance unit')
     return path
 
@@ -104,6 +107,9 @@ def unit(instance,action):
     pilot._service_command(target,record,['--pilot-check'])
     # This lease does not overlap supervisor/account/ownership/catalog leases.
     with file_lease(target['prefix']/'network-admin.lock'):
+        if action in ('unit','start'):
+            from .resources import ensure
+            if ensure(pilot.UNIT_BASE):pilot._systemctl('daemon-reload')
         path=_checked_unit(instance,optional=action in ('unit','remove'))
         state=_state(instance)
         if state['UnitFileState'] not in ('','disabled','not-found'):
@@ -129,6 +135,15 @@ def unit(instance,action):
             if path is not None:path.unlink();pilot._systemctl('daemon-reload')
         else:
             if action=='start':
+                # A known predecessor unit is upgraded only while stopped.
+                if path.read_bytes()!=unit_text(instance).encode():
+                    require(state['MainPID']==0 and state['ActiveState'] in ('inactive','failed'),'network_policy_upgrade_requires_stopped')
+                    with tempfile.NamedTemporaryFile(dir=pilot.UNIT_BASE,prefix='.prv7-network-policy-',delete=False) as f:
+                        from pathlib import Path
+                        temporary=Path(f.name);os.fchmod(f.fileno(),0o644);f.write(unit_text(instance).encode());f.flush();os.fsync(f.fileno())
+                    try:os.replace(temporary,path)
+                    finally:temporary.unlink(missing_ok=True)
+                    pilot._systemctl('daemon-reload')
                 status=pilot._service_command(target,record,['--network-action','status'])
                 require(status.get('enrolled') is True and status.get('pending_operation') is None,'network_enrollment_required')
             pilot._systemctl(action,name(instance),timeout=25);state=_state(instance)

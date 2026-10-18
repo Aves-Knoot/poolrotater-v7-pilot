@@ -232,9 +232,24 @@ class Synchronizer:
         finally:
             conn.close()
 
+    def has_pending_feedback(self):
+        if not self.uncapped_transfers():return False
+        conn=self._conn()
+        try:return conn.execute("SELECT 1 FROM rating_outbox WHERE phase IN ('pending','retryable') LIMIT 1").fetchone() is not None
+        finally:conn.close()
+
+    def uncapped_transfers(self):
+        from ..network.transfer_policy import enabled
+        return enabled(self.network)
+
     def scheduled_step(self, now):
-        from .delivery import DeliveryBudget
-        return self.step(delivery=DeliveryBudget(self.root, self.marker, now))
+        from ..network.transfer_policy import enabled
+        if not enabled(self.network,refresh=True):
+            from .delivery import DeliveryBudget
+            return self.step(delivery=DeliveryBudget(self.root,self.marker,now))
+        # Preserve the predecessor's budget file for downgrade; no byte or
+        # event/time token bucket limits authenticated hub catch-up any more.
+        return self.step()
 
     def step(self, *, delivery=None):
         if not self.ensure_defaults():return {'ok':True,'phase':'not-configured','uploaded':0}

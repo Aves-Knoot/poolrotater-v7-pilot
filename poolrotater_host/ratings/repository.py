@@ -217,11 +217,9 @@ class Repository:
         if item['kind']=='historical_seed' and not policy['seed_allowed']:
             return self._record(db,host,item,digest,'quarantined','historical_seed_not_authorized',revision)
         now = self.store.clock()
-        minute = db.execute('SELECT COUNT(*) FROM ratings_events WHERE host_id=? AND received>=?', (host['id'],now-60)).fetchone()[0]
-        day = db.execute('SELECT COUNT(*) FROM ratings_events WHERE host_id=? AND received>=?', (host['id'],now-86400)).fetchone()[0]
         player = db.execute('SELECT COUNT(*) FROM ratings_events WHERE user_id=? AND received>=?', (item['user_id'],now-86400)).fetchone()[0]
-        if minute >= 500 or day >= 5000:
-            return self._record(db, host, item, digest, 'quarantined','host_quota',revision)
+        # Host transport throughput is CPU-bounded, not a voting quarantine.
+        # Per-player abuse limits and signed contribution policy still apply.
         if player >= 200:
             return self._record(db, host, item, digest, 'quarantined','player_quota',revision)
         predecessor = None

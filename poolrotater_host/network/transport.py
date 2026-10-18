@@ -14,9 +14,10 @@ from ..provider_transport import TrustSnapshot
 from .contracts import NetworkError, require, canonical, decode, number
 
 RATING_ROUTES={'/v1/events/batches','/v1/ratings/state-query','/v1/ratings/snapshots/current','/v1/ratings/snapshot-page'}
+STATISTICS_ROUTES={'/v1/activity/replica/current','/v1/activity/replica/page'}
 UPDATE_ROUTES={'/v1/hosts/self/updates'}
 REPORTING_ROUTES={'/v1/activity/consent','/v1/activity/events','/v1/activity/query','/v1/logs/consent','/v1/logs/chunks'}
-ROUTES={'/v2/capabilities','/v2/rooms','/v2/hosts/self/heartbeat','/v1/capabilities','/v1/enrollments','/v1/rooms','/v1/hosts/self','/v1/hosts/self/heartbeat','/v1/hosts/self/token-rotation','/v1/hosts/self/leave','/v1/ratings/stream-state'}|RATING_ROUTES
+ROUTES={'/v1/transfers/capabilities','/v2/capabilities','/v2/rooms','/v2/hosts/self/heartbeat','/v1/capabilities','/v1/enrollments','/v1/rooms','/v1/hosts/self','/v1/hosts/self/heartbeat','/v1/hosts/self/token-rotation','/v1/hosts/self/leave','/v1/ratings/stream-state'}|RATING_ROUTES|STATISTICS_ROUTES
 # Diagnostics never repeat arbitrary strings supplied by a remote endpoint.
 REMOTE_ERRORS=frozenset(('credential_required','credential_refused','credential_expired',
     'credential_retired','host_revoked','scope_refused','invitation_refused',
@@ -31,7 +32,7 @@ REMOTE_ERRORS=frozenset(('credential_required','credential_refused','credential_
     'ratings_lineage_refused','ratings_lineage_requires_review','ratings_policy_recovery_required',
     'ratings_policy_requires_review','rating_snapshot_not_found','rating_snapshot_capacity_required',
     'invalid_rating_snapshot','incompatible_rating_snapshot','activity_consent_required','activity_consent_changed',
-    'activity_batch_limit','activity_capacity_required','invalid_activity_query','log_consent_required',
+    'activity_batch_limit','activity_capacity_required','invalid_activity_query','statistics_replica_policy_changed','statistics_replica_not_found','statistics_replica_capacity_required','log_consent_required',
     'log_chat_consent_required','log_identity_mismatch','log_chunk_conflict','log_capacity_required'))
 
 
@@ -57,7 +58,7 @@ class Transport:
         if token is not None:
             from .contracts import verifier
             verifier(token)
-        maximum=512*1024 if path.split('?',1)[0] in RATING_ROUTES else 65536
+        maximum=512*1024 if path.split('?',1)[0] in RATING_ROUTES|STATISTICS_ROUTES else 65536
         require(body is None or len(canonical(body))<=maximum,'request_too_large',413)
         payload=canonical({'origin':self.origin,'ca_pem':self.trust.pem.decode('ascii'),'timeout':self.timeout,'method':method,'path':path,'body':body,'token':token})
         require(len(payload)<=(786432 if maximum>65536 else 262144),'trust_or_request_too_large')

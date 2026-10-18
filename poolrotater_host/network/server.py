@@ -22,6 +22,9 @@ class HubServer(ThreadingHTTPServer):
         require_settled(store)
         self.store=store;self.capacity=threading.BoundedSemaphore(8)
         self.requests=deque();self.quota_lock=threading.Lock()
+        from ..activity.repository import Repository as Activity
+        from ..activity.replica import Publisher as Statistics
+        self.statistics=Statistics(Activity(store))
         super().__init__(address,Handler)
         require(isinstance(tls_context,ssl.SSLContext),'https_required')
         self.socket=tls_context.wrap_socket(self.socket,server_side=True)
@@ -73,12 +76,22 @@ class Handler(BaseHTTPRequestHandler):
         raw=self.rfile.read(length);require(len(raw)==length,'incomplete_request');return decode(raw, maximum=maximum)
 
     def dispatch(self,method):
-        html=None
+        html=None;target=None
         try:
-            self.server.admission();require(len(self.path)<=256,'invalid_route')
+            require(len(self.path)<=256,'invalid_route')
             target=urlsplit(self.path);require(not target.scheme and not target.netloc and not target.fragment,'invalid_route')
             path=target.path;store=self.server.store
-            if method=='GET' and path=='/v2/capabilities':
+            # Enrolled data transfers have no requests/minute or bandwidth cap.
+            # Public/control routes retain admission protection and all requests
+            # retain bounded size, concurrency, deadlines and authentication.
+            bulk=path.startswith(('/v1/activity/','/v1/logs/','/v1/ratings/')) or path in ('/v1/events/batches','/v1/transfers/capabilities')
+            if bulk:
+                with store.transaction() as db:store._authenticate(db,verifier(self.token()),'heartbeat')
+            else:self.server.admission()
+            if method=='GET' and path=='/v1/transfers/capabilities':
+                from .transfer_policy import CAPABILITY
+                require(not target.query,'unexpected_query');result=dict(CAPABILITY)
+            elif method=='GET' and path=='/v2/capabilities':
                 from .display import CAPABILITIES
                 require(not target.query,'unexpected_query');result=dict(CAPABILITIES)
             elif method=='GET' and path=='/v1/capabilities':
@@ -90,6 +103,13 @@ class Handler(BaseHTTPRequestHandler):
                 if path=='/directory':
                     from .directory import render
                     html=render(result)
+            elif method=='GET' and path=='/v1/activity/replica/current':
+                require(not target.query,'unexpected_query');result=self.server.statistics.current(self.token())
+            elif method=='GET' and path=='/v1/activity/replica/page':
+                params=parse_qs(target.query,keep_blank_values=True,strict_parsing=True)
+                require(set(params)=={'content_id','index'} and all(len(v)==1 for v in params.values())
+                        and params['index'][0].isdigit() and len(params['index'][0])<=4,'invalid_snapshot_query')
+                result=self.server.statistics.read_page(self.token(),params['content_id'][0],int(params['index'][0]))
             elif method=='GET' and path=='/v1/hosts/self':
                 require(not target.query,'unexpected_query');result=store.status(self.token())
             elif method=='GET' and path in ('/v1/ratings/snapshots/current','/v1/ratings/snapshot-page'):
@@ -139,8 +159,13 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError,socket.timeout):status=400;result={'ok':False,'error':'invalid_request'}
         except Exception:status=503;result={'ok':False,'error':'hub_unavailable'}
         raw=html if status==200 and html is not None else canonical(result)
+        compressed=False
+        if status==200 and target is not None and target.path.startswith('/v1/activity/replica/') and self.headers.get('Accept-Encoding')=='gzip':
+            import gzip
+            raw=gzip.compress(raw,compresslevel=1,mtime=0);compressed=True
         try:
             self.send_response(status);self.send_header('Content-Type','text/html; charset=utf-8' if status==200 and html is not None else 'application/json');self.send_header('Content-Length',str(len(raw)))
+            if compressed:self.send_header('Content-Encoding','gzip')
             self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.send_header('X-Request-ID',str(uuid.uuid4()))
             self.send_header('Content-Security-Policy',"default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
             if status==429:self.send_header('Retry-After','5')

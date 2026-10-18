@@ -1,12 +1,8 @@
-# PoolRotater v7.1.10
+# PoolRotater v7.1.11
 
-Use the [installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.10), [operator guide](docs/V7_1_10_OPERATOR_GUIDE.md) and [release notes](docs/V7_1_10_RELEASE_NOTES.md). Download the installer asset, not GitHub’s source ZIP.
+Use the [installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.11), [operator guide](docs/V7_1_11_OPERATOR_GUIDE.md) and [release notes](docs/V7_1_11_RELEASE_NOTES.md). Download the installer asset, not the source ZIP.
 
-This controller release hardens cleanup/recovery and unblocks reviewed historical statistics. Existing settings, credentials, catalogs, enrollment, histories and privacy/update choices remain. Healthy opted-in hosts wait for every configured room to empty naturally. A held or deliberately stopped host requires its supported local checks; publishing does not start it.
-
-## Existing hosts
-
-Keep your current instance and state. Use your existing signed updater and saved policy. Inspect status/support/update status if a transaction is held; do not reinstall, delete journals, clear unknown ownership or retry uncertain room creation. See the current operator guide for bounded automatic recovery and reporting health. Older repair launchers retain their original pins.
+Complete local player statistics, familiar `.stats` replies, negotiated uncapped hub transfers and a shared nice-17 half-core background CPU budget. Existing settings, credentials, catalogs, history, enrollment and privacy/update choices are preserved. Controller activation waits for all configured rooms on each host to empty naturally. Deliberately stopped or held hosts are not started by publishing.
 
 ## Fresh install
 
@@ -16,7 +12,7 @@ two-room Standard Auto + Mania4K configuration:
 ```bash
 sudo /usr/bin/python3.12 -I -S -B install.py --instance two \
   --preset standard-auto --preset mania-4k --bundle runtime.zip \
-  --sha256 4dac79a77705494df51a34a0e25e8cd9c6e9bba2c6e61a02ef2292bd156be2e9 --live-pilot
+  --sha256 9750a3ee044db4aa852c4d3dfecb48838281ad237cad2e96d112983ea4ad8149 --live-pilot
 ```
 
 Follow NETWORK_OPERATOR_GUIDE.md, LIVE_AUTHORIZATION.md and the current operator
@@ -26,7 +22,7 @@ is needed. Do not run a second controller for the same hosting account.
 
 ## Enabled defaults and opting out
 
-Before starting, review docs/V7_1_10_OPERATOR_GUIDE.md. Missing profiles enable public
+Before starting, review docs/V7_1_11_OPERATOR_GUIDE.md. Missing profiles enable public
 statistics sharing/consumption, sanitized operational/public-chat diagnostics,
 enrolled rating contribution and verified shared rating selection. New directory
 configuration defaults to public listing when omitted. Existing explicit false

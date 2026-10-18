@@ -40,9 +40,12 @@ class Scheduler:
                 # Backward wall-clock movement is bounded to one normal interval.
                 if previous['attempted_at']<=now<previous['next_attempt_at']:
                     fresh = getattr(self.sync, 'has_fresh_feedback', None)
-                    if not (previous['phase'] == 'synchronized'
+                    pending=getattr(self.sync,'has_pending_feedback',None)
+                    draining=(previous['phase']=='synchronized' and previous['uploaded']>0
+                              and pending is not None and pending())
+                    if not (draining or (previous['phase'] == 'synchronized'
                             and now >= previous['attempted_at'] + 5
-                            and fresh is not None and fresh(previous['attempted_at'], now)):
+                            and fresh is not None and fresh(previous['attempted_at'], now))):
                         return previous
             phase='synchronized';error=None;delay=1800;failures=0;uploaded=queried=0
             try:
@@ -101,9 +104,9 @@ class FetchScheduler:
             if os.path.lexists(self.path):
                 previous=validate_fetch_receipt(read_json(self.path),self.sync.marker)
                 if previous['attempted_at']<=now<previous['next_attempt_at']:
-                    if not (uploaded_at is not None and previous['phase'] == 'activated'
+                    if not ((previous['phase']=='downloading' and getattr(self.sync,'uncapped_transfers',lambda:False)()) or (uploaded_at is not None and previous['phase'] == 'activated'
                             and previous['attempted_at'] < uploaded_at <= now
-                            and now >= previous['attempted_at'] + 5):
+                            and now >= previous['attempted_at'] + 5)):
                         return previous
             phase='independent';error=None;delay=60;failures=downloaded=pending=0
             try:
@@ -146,15 +149,19 @@ def run_combined(heartbeat,ratings,stop,*,snapshots=None):
                 # Retain corrupt receipts for review, and keep the independent
                 # heartbeat alive. No upload occurs when scheduling validation fails.
                 receipt={'next_attempt_at':heartbeat.clock()+300}
-            snapshot_due=heartbeat.clock()+60
+            snapshot_due=heartbeat.clock()+60;fetch_draining=False
             if snapshots is not None and not stop.is_set():
                 try:
                     uploaded_at = (receipt.get('attempted_at') if receipt.get('uploaded', 0) > 0
                                    and receipt.get('phase') == 'synchronized' else None)
-                    snapshot_due=snapshots.tick(uploaded_at=uploaded_at)['next_attempt_at']
+                    fetched=snapshots.tick(uploaded_at=uploaded_at);snapshot_due=fetched['next_attempt_at']
+                    fetch_draining=(fetched['phase']=='downloading' and getattr(snapshots.sync,'uncapped_transfers',lambda:False)())
                 except (NetworkError,ConfigError,OSError,ValueError,KeyError,TypeError,sqlite3.Error):
                     snapshot_due=heartbeat.clock()+300
             now=heartbeat.clock()
             # Lightweight local wake-up checks, not new HTTP polls. Persisted
             # idle/retry/authority deadlines still decide actual dispatches.
-            stop.wait(max(1,min(5,heartbeat_due-now,receipt['next_attempt_at']-now,snapshot_due-now)))
+            pending=getattr(getattr(ratings,'sync',None),'has_pending_feedback',None)
+            upload_draining=(receipt.get('phase')=='synchronized' and receipt.get('uploaded',0)>0
+                             and pending is not None and pending())
+            stop.wait(0 if fetch_draining or upload_draining else max(1,min(5,heartbeat_due-now,receipt['next_attempt_at']-now,snapshot_due-now)))

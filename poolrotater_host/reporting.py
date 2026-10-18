@@ -173,7 +173,7 @@ def support(root):
 
 class Reporter:
     def __init__(self,client,*,clock=time.time):
-        self.client=client;self.root=Path(client.root);self.clock=clock;self.turn=0
+        self.client=client;self.root=Path(client.root);self.clock=clock;self.turn=0;self.backlog=False;self.stop=None
 
     def step(self):
         from .activity.collector import Collector
@@ -229,16 +229,30 @@ class Reporter:
                     else:require(all(reply.get(k)==body[k] for k in ('operational','public_chat')),'reporting_consent_reply_mismatch')
                     receipts[kind]=digest;atomic_json(receipt_path,receipts)
                     return self._receipt('consent-pending')
+            from .activity.replica import Replica
+            from .network.transfer_policy import enabled as uncapped_transfers
+            try:uncapped=uncapped_transfers(self.client,clock=self.clock,refresh=True)
+            except Exception:uncapped=False
+            if p['consume_statistics']:
+                try:Replica(root,clock=self.clock).tick(self.client,stop=self.stop)
+                except Exception:
+                    # Existing uploads remain independent of replica availability.
+                    pass
             self.turn=(self.turn+1)%3
             # One bounded transfer per tick; independent heartbeat scheduling is
             # never stalled by a whole reporting backlog.
             activity=collector.batch() if p['share_statistics'] and activity_ready else None
             chunk=local.batch() if p['operational_logs'] else None
-            if self.turn==0 and p['consume_statistics']:Reader(root).refresh(self.client)
+            try:replica_ready=Replica(root,clock=self.clock).status()['phase'] not in ('cold','legacy')
+            except Exception:replica_ready=True
+            legacy_lookup=p['consume_statistics'] and not replica_ready
+            self.backlog=False
+            if self.turn==0 and legacy_lookup:Reader(root).refresh(self.client)
             elif activity is not None and (self.turn==1 or chunk is None):
-                collector.acknowledge(request('POST','/v1/activity/events',token=token,body=activity))
-            elif chunk is not None:local.acknowledge(request('POST','/v1/logs/chunks',token=token,body=chunk))
-            elif p['consume_statistics']:Reader(root).refresh(self.client)
+                collector.acknowledge(request('POST','/v1/activity/events',token=token,body=activity));self.backlog=uncapped
+            elif chunk is not None:
+                local.acknowledge(request('POST','/v1/logs/chunks',token=token,body=chunk));self.backlog=uncapped
+            elif legacy_lookup:Reader(root).refresh(self.client)
             return self._receipt('partial' if capture_errors else 'synchronized' if any(p[k] for k in CHOICES) else 'disabled',capture_errors=capture_errors)
 
     def _receipt(self,phase,*,capture_errors=()):
@@ -246,7 +260,7 @@ class Reporter:
         atomic_json(self.root/'state/reporting-agent.json',value);return {'ok':True,**value}
 
     def run(self,stop):
-        failures=0
+        failures=0;self.stop=stop
         while not stop.is_set():
             try:self.step();failures=0
             except Exception:
@@ -255,7 +269,9 @@ class Reporter:
                 failures+=1
                 try:self._receipt('retrying')
                 except Exception:pass
-            stop.wait(min(120,2**min(failures,6)) if failures else 2)
+            # No inter-batch sleep while an authenticated backlog is draining.
+            # The dedicated service cgroup supplies the50%-of-one-core CPU budget.
+            stop.wait(min(120,2**min(failures,6)) if failures else 0 if self.backlog else 2)
 
 
 def start(client,stop):

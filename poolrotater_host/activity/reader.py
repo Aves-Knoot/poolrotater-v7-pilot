@@ -7,6 +7,25 @@ from .storage import connection
 from .query import contract
 
 
+def validate_player(item):
+    require(type(item) is dict and type(item.get('hidden')) is bool,'invalid_activity_query_reply');integer(item.get('user_id'))
+    if item['hidden']:fields(item,('user_id','hidden'))
+    else:
+        fields(item,('user_id','username','hidden','total_gain','achievement_count','best_gain','total_lobby_seconds','visit_count','map_plays','first_gain_at','last_gain_at','first_join_at','last_join_at','last_leave_at','coverage','host_ids','requester_host_totals'))
+        text(item['username'],80)
+        for key in ('total_gain','best_gain','total_lobby_seconds'):number(item[key])
+        for key in ('achievement_count','visit_count','map_plays'):integer(item[key],0)
+        for key in ('first_gain_at','last_gain_at','first_join_at','last_join_at','last_leave_at'):
+            if item[key] is not None:number(item[key])
+        require(type(item['coverage']) is dict and type(item['host_ids']) is list and len(item['host_ids'])<=100,'invalid_activity_query_reply')
+        for host_id in item['host_ids']:identifier(host_id)
+        own=item['requester_host_totals']
+        fields(own,('total_gain','achievement_count','best_gain','total_lobby_seconds','visit_count','map_plays'))
+        for key in ('total_gain','best_gain','total_lobby_seconds'):number(own[key])
+        for key in ('achievement_count','visit_count','map_plays'):integer(own[key],0)
+    return item
+
+
 class Reader:
     def __init__(self, root, *, clock=time.time, max_age=120):
         self.root=Path(root);self.clock=clock;self.max_age=max_age
@@ -34,6 +53,9 @@ class Reader:
 
     def user_stats(self,user_id,*,ruleset_id=0):
         integer(user_id)
+        from .replica import Replica
+        handled,value=Replica(self.root,clock=self.clock).stats(user_id,ruleset_id)
+        if handled:return value
         with connection(self.path) as db:
             row=db.execute('SELECT payload,fetched FROM cache WHERE user_id=? AND ruleset_id=?',(user_id,ruleset_id)).fetchone()
             privacy=db.execute('SELECT hidden FROM privacy WHERE user_id=?',(user_id,)).fetchone()
@@ -46,7 +68,11 @@ class Reader:
         return {**value,'network_statistics':True,'network_statistics_fetched_at':row['fetched']}
 
     def lookup(self,username,*,ruleset_id=0):
-        text(username,80);self.request(username=username,ruleset_id=ruleset_id)
+        text(username,80)
+        from .replica import Replica
+        handled,value=Replica(self.root,clock=self.clock).lookup(username,ruleset_id)
+        if handled:return value
+        self.request(username=username,ruleset_id=ruleset_id)
         with connection(self.path) as db:
             row=db.execute('SELECT user_id FROM names WHERE username=? AND ruleset_id=?',(username.casefold(),ruleset_id)).fetchone()
         if row is None:return None
@@ -60,6 +86,10 @@ class Reader:
         short negative cache expires so a later history import can be found.
         """
         text(username,80)
+        from .replica import Replica
+        state=Replica(self.root,clock=self.clock).status()
+        if state['phase']=='ready':return 'not_found'
+        if state['phase'] not in ('cold','legacy'):return 'pending'
         require(type(ruleset_id) is int and ruleset_id in (0,3),'invalid_activity_ruleset')
         with connection(self.path) as db:
             row=db.execute('SELECT fetched FROM lookups WHERE username=? AND ruleset_id=?',(username.casefold(),ruleset_id)).fetchone()
@@ -88,21 +118,7 @@ class Reader:
         number(reply['generated_at']);require(type(reply['players']) is list and len(reply['players'])<=30,'invalid_activity_query_reply')
         validated=[]
         for item in reply['players']:
-            require(type(item) is dict and type(item.get('hidden')) is bool,'invalid_activity_query_reply');integer(item.get('user_id'))
-            if item['hidden']:fields(item,('user_id','hidden'))
-            else:
-                fields(item,('user_id','username','hidden','total_gain','achievement_count','best_gain','total_lobby_seconds','visit_count','map_plays','first_gain_at','last_gain_at','first_join_at','last_join_at','last_leave_at','coverage','host_ids','requester_host_totals'))
-                text(item['username'],80)
-                for key in ('total_gain','best_gain','total_lobby_seconds'):number(item[key])
-                for key in ('achievement_count','visit_count','map_plays'):integer(item[key],0)
-                for key in ('first_gain_at','last_gain_at','first_join_at','last_join_at','last_leave_at'):
-                    if item[key] is not None:number(item[key])
-                require(type(item['coverage']) is dict and type(item['host_ids']) is list and len(item['host_ids'])<=100,'invalid_activity_query_reply')
-                for host_id in item['host_ids']:identifier(host_id)
-                own=item['requester_host_totals']
-                fields(own,('total_gain','achievement_count','best_gain','total_lobby_seconds','visit_count','map_plays'))
-                for key in ('total_gain','best_gain','total_lobby_seconds'):number(own[key])
-                for key in ('achievement_count','visit_count','map_plays'):integer(own[key],0)
+            validate_player(item)
             validated.append(item)
         with connection(self.path) as db:
             returned_names={item['username'].casefold() for item in validated if not item['hidden']}
@@ -133,9 +149,11 @@ class Reader:
         return {'ok':True,'queries':len(selected),'players':len(validated),'provider_dispatch':False}
 
     def status(self):
+        from .replica import Replica
+        state=Replica(self.root,clock=self.clock).status()
         with connection(self.path) as db:
             return {'ok':True,'pending_queries':db.execute('SELECT COUNT(*) FROM queries').fetchone()[0],
-                    'cached_players':db.execute('SELECT COUNT(*) FROM cache').fetchone()[0],'provider_dispatch':False}
+                    'cached_players':db.execute('SELECT COUNT(*) FROM cache').fetchone()[0],'replica':state,'provider_dispatch':False}
 
 
 def for_settings(settings):

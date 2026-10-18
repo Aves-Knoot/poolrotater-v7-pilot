@@ -5180,19 +5180,6 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
             playtime = self._format_lobby_time(total_lobby_seconds)
             coverage_note = ""
-            if personal.get("network_statistics"):
-                coverage_note = " Shared confirmed activity (opt-in coverage)."
-                if (personal.get("local_unreconciled_gain", 0) > 0.001
-                        or personal.get("local_unreconciled_lobby_seconds", 0) > 1):
-                    local_time = self._format_lobby_time(personal.get("local_tracked_lobby_seconds", 0))
-                    local_gain = float(personal.get("local_tracked_gain", 0))
-                    coverage_note += f" Local tracked separately: +{local_gain:.1f}pp / {local_time}; not fully synced, may overlap."
-                if personal.get("network_coverage", {}).get("historical_time_overlaps_unknown"):
-                    coverage_note += " Older cross-host time may overlap."
-            elif personal.get("network_statistics_pending"):
-                coverage_note = " Local totals; shared stats are syncing or unavailable."
-            elif personal.get("network_statistics_hidden"):
-                coverage_note = " Local totals; shared stats are hidden."
             if achievement_count:
                 self.say(
                     f"{target_name} — {'Mania' if mania else 'AutoHost'} gains: +{total_gain:.1f}pp "
