@@ -112,7 +112,8 @@ def main(argv=None):
     parser.add_argument('--root',required=True,type=Path)
     parser.add_argument('action',choices=('initialize','invite','revoke','inspect','backup','restore','serve',
                                        'ratings-prepare','ratings-grant','ratings-inspect','ratings-link-replacement','ratings-grant-seed',
-                                       'ratings-policy','ratings-policy-recover','updates-inspect','activity-export','logs-search'))
+                                       'ratings-policy','ratings-policy-recover','updates-inspect','activity-export','logs-search',
+                                       'recovery-inspect','recovery-request'))
     parser.add_argument('--cert',type=Path);parser.add_argument('--key',type=Path)
     parser.add_argument('--bind',default='127.0.0.1');parser.add_argument('--port',type=int,default=9444)
     args=parser.parse_args(argv)
@@ -164,6 +165,14 @@ def main(argv=None):
             elif args.action=='updates-inspect':
                 from ..updates.telemetry import Reports
                 value=input_body();fields(value,('host_id',));result=Reports(store).local(value['host_id'])
+            elif args.action in ('recovery-inspect','recovery-request'):
+                from ..rescue.repository import Repository
+                repository=Repository(store);value=input_body()
+                if args.action=='recovery-inspect':
+                    fields(value,('host_id',));result=repository.local(value['host_id'])
+                else:
+                    fields(value,('host_id','action','expected_job_sha256'))
+                    result={'ok':True,'request':repository.queue(**value)}
             elif args.action=='inspect':result=inspect(store)
             elif args.action=='invite':
                 value=input_body();fields(value,('binding','label','expires_seconds'))

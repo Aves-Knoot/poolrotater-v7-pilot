@@ -46,6 +46,12 @@ def records(target,parent):
 def references(target,parent,*,catalog=None):
     catalog=records(target,parent)if catalog is None else catalog
     prefix=target['prefix'];result={parent['bundle_sha256']};paths={parent['release']}
+    rescue=_control(prefix/'recovery/configuration.json',private=True,optional=True)
+    if rescue:
+        record=rescue.get('record',{})
+        require(all(record.get(k)==parent[k] for k in (
+            'installation_id','generation','host_root','service_uid','prefix')), 'update_retention_foreign_record')
+        result.add(digest(record['bundle_sha256']));paths.add(record['release'])
     for name in('pilot-upgrade.json','controller-update.json'):
         value=_control(prefix/name,optional=True)
         if value:

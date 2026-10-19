@@ -230,6 +230,8 @@ WantedBy=timers.target
         policy(read(configured.root/'policy.json'),configured.binding)
         _systemctl('enable','--now',name+'.timer')
     else:
+        from ..rescue.operations import pause
+        pause(instance)
         # Disable future ticks. An already committing update must settle or use
         # explicit native recovery; killing it here could strand ownership.
         _systemctl('disable','--now',name+'.timer')

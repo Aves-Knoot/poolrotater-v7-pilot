@@ -15,7 +15,7 @@ from .contracts import NetworkError, require, canonical, decode, number
 
 RATING_ROUTES={'/v1/events/batches','/v1/ratings/state-query','/v1/ratings/snapshots/current','/v1/ratings/snapshot-page'}
 STATISTICS_ROUTES={'/v1/activity/replica/current','/v1/activity/replica/page'}
-UPDATE_ROUTES={'/v1/hosts/self/updates'}
+UPDATE_ROUTES={'/v1/hosts/self/updates','/v1/hosts/self/recovery'}
 REPORTING_ROUTES={'/v1/activity/consent','/v1/activity/events','/v1/activity/query','/v1/logs/consent','/v1/logs/chunks'}
 ROUTES={'/v1/transfers/capabilities','/v2/capabilities','/v2/rooms','/v2/hosts/self/heartbeat','/v1/capabilities','/v1/enrollments','/v1/rooms','/v1/hosts/self','/v1/hosts/self/heartbeat','/v1/hosts/self/token-rotation','/v1/hosts/self/leave','/v1/ratings/stream-state'}|RATING_ROUTES|STATISTICS_ROUTES
 # Diagnostics never repeat arbitrary strings supplied by a remote endpoint.

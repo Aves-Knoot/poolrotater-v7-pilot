@@ -501,6 +501,11 @@ def lifecycle(instance, action):
     if action not in ('start', 'stop'): raise ConfigError('invalid pilot service action')
     target, _, record = administrative_binding(instance)
     _unit(instance)
+    if action == 'stop':
+        # Explicit operator shutdown wins over a queued remote continuation.
+        # Native update shutdown uses its separate admitted systemd path.
+        from .rescue.operations import pause
+        pause(instance)
     if action == 'start':
         from .provider_contract import require_live_provider
         from .live_release import policy_bytes, POLICY_NAME

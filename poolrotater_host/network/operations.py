@@ -155,5 +155,7 @@ def unit(instance,action):
     if action=='start':
         from ..updates.defaults import initialize as initialize_updates
         initialize_updates(instance)
+        from ..rescue.operations import ensure
+        ensure(instance,record)
     return {'ok':True,'network_service_installed':action!='remove','network_service_state':state['ActiveState'],
             'network_service_enabled':False,'live_rooms_affected':False,'production_deployed':False}

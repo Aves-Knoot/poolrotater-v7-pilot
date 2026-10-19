@@ -136,6 +136,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=='/v1/hosts/self/updates':
                     from ..updates.telemetry import Reports
                     result=Reports(store).accept(self.token(),self.body())
+                elif path=='/v1/hosts/self/recovery':
+                    from ..rescue.repository import Repository
+                    result=Repository(store).accept(self.token(),self.body())
                 elif path in ('/v1/activity/consent','/v1/activity/events','/v1/activity/query'):
                     from ..activity.repository import Repository as Activity
                     repository=Activity(store);token=self.token();body=self.body()

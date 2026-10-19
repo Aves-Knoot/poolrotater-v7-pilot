@@ -284,6 +284,11 @@ def backup_package(root, destination):
                 private_digest(updates)
                 snapshot_ledger(updates,stage/'updates.sqlite3',deadline_seconds=10)
                 files['updates.sqlite3']=private_digest(stage/'updates.sqlite3')
+            recovery=hub_root/'recovery.sqlite3'
+            if os.path.lexists(recovery):
+                private_digest(recovery)
+                snapshot_ledger(recovery,stage/'recovery.sqlite3',deadline_seconds=10)
+                files['recovery.sqlite3']=private_digest(stage/'recovery.sqlite3')
             for name in ('activity.sqlite3','diagnostic-logs.sqlite3'):
                 incoming=hub_root/name
                 if os.path.lexists(incoming):
@@ -327,7 +332,7 @@ def restore_package(source, destination, *, latest_ratings_policy=None):
     from .contracts import identifier
     identifier(manifest['hub_id'])
     require(type(manifest['format']) is int and manifest['format']==1 and type(manifest['files']) is dict
-            and 'network.sqlite3'in manifest['files'] and set(manifest['files'])<= {'network.sqlite3','ratings-policy.json','updates.sqlite3','activity.sqlite3','diagnostic-logs.sqlite3'},
+            and 'network.sqlite3'in manifest['files'] and set(manifest['files'])<= {'network.sqlite3','ratings-policy.json','updates.sqlite3','recovery.sqlite3','activity.sqlite3','diagnostic-logs.sqlite3'},
             'hub_backup_manifest_refused')
     require({p.name for p in source.iterdir()}=={'manifest.json',*manifest['files']},'hub_backup_manifest_refused')
     for name,digest in manifest['files'].items():
@@ -350,6 +355,12 @@ def restore_package(source, destination, *, latest_ratings_policy=None):
             # the new epoch whose old credentials have all been revoked.
             target=restored/'retained-update-reports.sqlite3'
             shutil.copyfile(source/'updates.sqlite3',target);target.chmod(0o600)
+            with target.open('rb')as stream:os.fsync(stream.fileno())
+        if 'recovery.sqlite3'in manifest['files']:
+            # Recovery requests are historical audit evidence after restore;
+            # never resume an old host's commands in the new credential epoch.
+            target=restored/'retained-recovery.sqlite3'
+            shutil.copyfile(source/'recovery.sqlite3',target);target.chmod(0o600)
             with target.open('rb')as stream:os.fsync(stream.fileno())
         import sqlite3
         from contextlib import closing
@@ -410,7 +421,8 @@ def main(argv=None):
     parser.add_argument('action',choices=('serve','check','backup','restore','admin'))
     parser.add_argument('admin_action',nargs='?',choices=('invite','revoke','inspect','ratings-grant',
                         'ratings-inspect','ratings-link-replacement','ratings-grant-seed',
-                        'ratings-policy','ratings-policy-recover','updates-inspect','activity-export','logs-search'))
+                        'ratings-policy','ratings-policy-recover','updates-inspect','activity-export','logs-search',
+                        'recovery-inspect','recovery-request'))
     parser.add_argument('--destination',type=Path)
     parser.add_argument('--source',type=Path)
     parser.add_argument('--latest-ratings-policy',type=Path)

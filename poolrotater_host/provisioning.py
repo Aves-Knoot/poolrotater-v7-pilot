@@ -172,7 +172,9 @@ def provision(root, prefix, bundle, expected_sha256, *, uid=1000):
 
 
 def _provision(root, prefix, bundle, expected_sha256, *, uid, execution, reserve,
-               stage_bootstrap=False):
+               stage_bootstrap=False, recovery_only=False):
+    if type(recovery_only) is not bool or recovery_only and not stage_bootstrap:
+        raise ConfigError('independent recovery requires stage-only provisioning')
     from .pilot_identity import installation_execution
     installation_execution(execution)
     protected(prefix.parent)
@@ -189,9 +191,19 @@ def _provision(root, prefix, bundle, expected_sha256, *, uid, execution, reserve
         path.chmod(0o755)
     with file_lease(prefix / '.provision.lock'):
         from .runtime_lifecycle import install_bootstrap, require_no_pending, store_candidate
-        require_no_pending(prefix, marker['installation_id'])
+        # Installing the independent recovery code may be necessary precisely
+        # because the registered transition is unfinished. This path cannot
+        # publish a controller registration, service bootstrap or host pointer.
+        # Ordinary staging/installation retains the original settled guard.
+        if not recovery_only:
+            require_no_pending(prefix, marker['installation_id'])
         installation_path = prefix / 'installations' / (marker['installation_id'] + '.json')
         current = _control(installation_path, optional=True)
+        if recovery_only:
+            from .runtime_lifecycle import validate_runtime
+            if current is None or current.get('bundle_sha256') == expected_sha256:
+                raise ConfigError('independent recovery requires a distinct existing controller')
+            validate_runtime(current,prefix)
         if current and any(current.get(k) != v for k,v in {**expected_pointer,'service_uid':uid,'host_root':str(root), 'execution': execution}.items()):
             raise ConfigError('protected installation belongs to another root/generation/operator')
         with tempfile.TemporaryDirectory(prefix='package-',dir=prefix / '.staging') as directory:
@@ -255,6 +267,9 @@ def _provision(root, prefix, bundle, expected_sha256, *, uid, execution, reserve
             elif current is None:
                 raise ConfigError('coordinated upgrade staging requires an existing installation')
             store_candidate(prefix, proposal)
+            if recovery_only:
+                return {'status':'recovery_candidate_staged','release':str(release),
+                        'environment':str(environment),'live_ready':False,'registration_changed':False}
             if current and current['bundle_sha256'] != expected_sha256:
                 return {'status':'candidate_staged','release':str(release),'environment':str(environment),'live_ready':False}
             if current and current != proposal: raise ConfigError('protected release binding changed')

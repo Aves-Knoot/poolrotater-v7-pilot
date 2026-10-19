@@ -46,7 +46,7 @@ def register_worker(root,alias,generation,version):
 
 def read_journal(units,*,cursor,since):
     """Read a bounded forward page; stop/reap only our pidfd-owned journalctl."""
-    require(bool(units) and len(units)<=4 and all(re.fullmatch(r'poolrotater-v7-(?:pilot|network|updates)-[a-z][a-z0-9-]{0,15}\.service',u) for u in units), 'invalid_journal_units')
+    require(bool(units) and len(units)<=6 and all(re.fullmatch(r'poolrotater-v7-(?:pilot|network|updates|controller-update|recovery)-[a-z][a-z0-9-]{0,15}\.service',u) for u in units), 'invalid_journal_units')
     require(cursor is None or bool(_CURSOR.fullmatch(cursor)), 'invalid_journal_cursor')
     from .process_target import OwnedChild
     args=['/usr/bin/journalctl','--quiet','--no-pager','--output=json','--all','--no-tail',
@@ -145,13 +145,14 @@ def collect_workers(root,local,*,limit=16):
     return {'sources':collected,'bytes':consumed,'unavailable':bool(errors)}
 
 
-def collect(instance):
+def collect(instance, *, binding=None):
     """Called by root update ticks even when update installation is paused."""
     from .pilot_installation import administrative_binding
     from .ratings.operations import _identity
     from .reporting import logs,profile,CachedSecrets
     require(os.geteuid()==0,'journal_collector_requires_administrator')
-    target,_,record=administrative_binding(instance);root=target['root'];uid=record['service_uid']
+    target,_,record=binding if binding is not None else administrative_binding(instance)
+    root=target['root'];uid=record['service_uid']
     with file_lease(target['prefix']/'diagnostics-collection.lock'):
         with _identity(uid):
             choice=profile(root);local=logs(root)
@@ -162,7 +163,8 @@ def collect(instance):
             resume_since=max(since,local.external_since()-1)
             try:workers=collect_workers(root,local)
             except Exception:workers={'sources':0,'bytes':0,'unavailable':True}
-        units=(target['unit'],'poolrotater-v7-network-'+instance+'.service','poolrotater-v7-updates-'+instance+'.service')
+        units=(target['unit'],'poolrotater-v7-network-'+instance+'.service','poolrotater-v7-updates-'+instance+'.service',
+               'poolrotater-v7-controller-update-'+instance+'.service','poolrotater-v7-recovery-'+instance+'.service')
         resumed=False
         try:entries,last=read_journal(units,cursor=cursor,since=resume_since)
         except Exception as error:

@@ -139,6 +139,11 @@ class Backend:
             from ..worker_operations import command
             return command(self.instance,'queue',sha256=item['artifact']['sha256'],deployment_id=operation_id)
         from ..controller_update import queue
+        # Install independent diagnostics before any admitted bot/network stop.
+        # Existing opt-outs and pins are preserved; a damaged coordinator is
+        # a preflight refusal, never an excuse to stop the old rooms first.
+        from ..rescue.operations import ensure
+        ensure(self.instance,parent)
         return queue(self.instance,path,item['artifact']['sha256'],from_sha256=parent['bundle_sha256'],
                      deployment_id=operation_id,release_approval_required=True)
 
@@ -258,8 +263,16 @@ class Backend:
 
     def advance(self,operation):
         if operation['release']['kind']=='controller':
-            from ..controller_update import step
-            return step(self.instance)
+            # Dispatch the staged successor's checked entry, not this installed
+            # predecessor's admission/commit implementation. The fixed entry
+            # validates its complete source/environment before every import.
+            target,_,parent=self.binding()
+            job=_control(target['prefix']/'controller-update.json')
+            require(job.get('id')==operation['id']
+                    and job.get('after',{}).get('bundle_sha256')==operation['release']['artifact']['sha256'],
+                    'update_recovery_operation_changed')
+            from .executor import controller
+            return controller(self.instance,target,job)
 
     def references(self):
         from .installed_retention import references

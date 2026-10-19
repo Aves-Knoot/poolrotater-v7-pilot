@@ -1,0 +1,66 @@
+#!/usr/bin/python3
+"""Root/service-user fixture identities in a disposable, network-free mount view.
+
+Unlike scripts/offline, this fixture preserves real UID numbers to test root-owned
+code with UID 1000. Only CHOWN/DAC_OVERRIDE/SETUID/SETGID survive for provisioning;
+no mount/network/admin capability reaches the child. Nothing under /opt, /srv,
+/root or /run is mounted. The checkout is read-only; all writes are tmpfs.
+This is not an installer and does not create a user or service on the VPS.
+"""
+import os
+from pathlib import Path
+import resource
+import shutil
+import subprocess
+import sys
+from test_isolation import anchor_fd
+
+root = Path(__file__).resolve().parents[1]
+if os.geteuid() != 0 or not sys.argv[1:]:
+    raise SystemExit('usage as fixture administrator: scripts/offline-provisioning COMMAND [ARG ...]')
+calculator = sys.argv[1] == '--calculator-check'
+command = sys.argv[2:] if calculator else sys.argv[1:]
+if calculator and command != ['python', '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'native_calculator_fixture.py', '-q']:
+    raise SystemExit('calculator exception is restricted to the native calculator qualification fixture')
+if not Path('/usr/bin/bwrap').is_file() or shutil.disk_usage(root).free < 5 * 1024**3:
+    raise SystemExit('bubblewrap and five GiB free reserve required')
+current_nice = os.getpriority(os.PRIO_PROCESS, 0)
+if current_nice < 15:
+    os.nice(15 - current_nice)
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+address_space = (4 if calculator else 1) * 1024**3
+resource.setrlimit(resource.RLIMIT_AS, (address_space, address_space))
+boundary = anchor_fd('provisioning')
+args = ['/usr/bin/bwrap', '--unshare-pid', '--unshare-net', '--unshare-ipc',
+        '--unshare-uts', '--unshare-cgroup-try', '--die-with-parent', '--new-session',
+        '--cap-drop', 'ALL']
+for capability in ('CAP_CHOWN', 'CAP_DAC_OVERRIDE', 'CAP_SETUID', 'CAP_SETGID'):
+    args += ['--cap-add', capability]
+args += ['--ro-bind', '/usr', '/usr', '--tmpfs', '/usr/local', '--remount-ro', '/usr/local',
+         '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
+         '--proc', '/proc', '--dev', '/dev', '--dir', '/etc',
+         '--ro-bind', '/etc/ld.so.cache', '/etc/ld.so.cache',
+         '--perms', '0444', '--ro-bind-data', str(boundary), '/etc/poolrotater-test-boundary.json',
+         '--ro-bind', str(root / 'scripts/sandbox-passwd'), '/etc/passwd',
+         '--ro-bind', str(root / 'scripts/sandbox-group'), '/etc/group',
+         '--ro-bind', str(root), '/source', '--chdir', '/source',
+         '--size', str(256 * 1024**2), '--tmpfs', '/tmp', '--chmod', '1777', '/tmp',
+         '--size', str(512 * 1024**2), '--tmpfs', '/runtime',
+         '--dir', '/opt', '--dir', '/opt/poolrotater-v7-pilot',
+         '--size', str(512 * 1024**2), '--tmpfs', '/opt/poolrotater-v7-pilot',
+         '--dir', '/var', '--dir', '/var/lib', '--dir', '/var/lib/poolrotater-v7-pilot',
+         '--size', str(256 * 1024**2), '--tmpfs', '/var/lib/poolrotater-v7-pilot',
+         '--size', str(64 * 1024**2), '--tmpfs', '/state',
+         '--clearenv', '--setenv', 'PATH', '/source/.venv/bin:/usr/bin:/bin',
+         '--setenv', 'HOME', '/tmp', '--setenv', 'TMPDIR', '/tmp', '--setenv', 'LANG', 'C.UTF-8',
+         '--setenv', 'PYTHONPATH', '/source', '--setenv', 'PYTHONDONTWRITEBYTECODE', '1',
+         '--setenv', 'MALLOC_ARENA_MAX', '2', '--setenv', 'POOLROTATER_OFFLINE_SANDBOX', '1',
+         '--setenv', 'POOLROTATER_PROVISIONING_SANDBOX', '1']
+if calculator:
+    args += ['--setenv', 'POOLROTATER_CALCULATOR_QUALIFICATION', '1']
+    command = ['/usr/bin/time', '-v', *command]
+args += ['--', *command]
+try:
+    raise SystemExit(subprocess.call(args, env={'PATH': '/usr/bin:/bin'}, pass_fds=(boundary,)))
+finally:
+    os.close(boundary)

@@ -1,3 +1,7 @@
+# PoolRotater recovery preview
+
+The [v7.1.14 recovery preview](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.14) adds an independent diagnostic/recovery channel. Read [the setup and local controls](docs/INDEPENDENT_RECOVERY.md). It is not on the automatic release feed.
+
 # PoolRotater v7.1.13
 
 Use the [installer release](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.13), [operator guide](docs/V7_1_13_OPERATOR_GUIDE.md) and [release notes](docs/V7_1_13_RELEASE_NOTES.md). Download the installer asset, not the source ZIP.
