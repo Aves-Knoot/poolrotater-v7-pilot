@@ -332,6 +332,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         self._activity_match_key: str | None = None
 
         self.players: dict[int, dict] = {}      # gameplay/spectator users only
+        self._last_referee_roster_barrier = 0
+        self._required_referee_roster_barrier = 0
         # Referees are visible in lazer rooms, but they are not gameplay
         # participants for auto-start / ready-count purposes.
         self.referee_ids: set[int] = set()
@@ -6447,6 +6449,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         self.queued.clear()
 
         self.players.clear()
+        self._last_referee_roster_barrier = 0
+        self._required_referee_roster_barrier = 0
         getattr(self, "_pending_player_profiles", {}).clear()
         getattr(self, "_unready_start_grace_users", set()).clear()
         self._recalled_window = None
@@ -12003,6 +12007,124 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         )
         return reason
 
+    def _finish_roster_departure(self, uid: int, info: dict | None, *, kicked=False) -> None:
+        """Finish a proven departure after the current roster has been updated."""
+        getattr(self, "_pending_player_profiles", {}).pop(uid, None)
+        self._on_difficulty_voter_left(uid)
+        player_name = str((info or {}).get("name") or uid)
+        action = "was kicked" if kicked else "left"
+        self._notify_discord_lobby_event(
+            "LEAVE", f"{player_name} {action}"
+        )
+        self._flush_player_lobby_time(uid, info)
+        if self.room_id is not None:
+            try:
+                self.ratings.record_room_player_leave(room_id=int(self.room_id),user_id=uid,username=player_name)
+            except Exception:
+                log.exception('could not record activity leave')
+        self.ready.discard(uid)
+        getattr(self, "_unready_start_grace_users", set()).discard(uid)
+        self._refresh_skip_vote_quorum()
+        self._refresh_replay_vote_quorum()
+        if uid == self._single_player_start_hold_uid:
+            log.info(
+                "single-player start hold cleared because user %s left",
+                uid,
+            )
+            self._single_player_start_hold_uid = None
+        if uid == self._first_player_download_wait_uid:
+            log.info(
+                "first-player download wait cleared because user %s left",
+                uid,
+            )
+            self._first_player_download_wait_uid = None
+        self.mark_auto_retune_pending()
+        self._track_empty_room()
+        self._close_if_armed_and_empty()
+
+    def _sync_referee_roster(self, snapshot: dict) -> bool:
+        """Adopt a complete ordered referee roster, never a public room summary.
+
+        Missing/malformed evidence retains the existing roster. All membership
+        changes land before any vote quorum is recalculated, so a partial
+        replacement cannot pass a vote or falsely declare the room empty.
+        """
+        if (type(snapshot) is not dict or snapshot.get("room_id") != self.room_id
+                or snapshot.get("chat_channel_id") != self.channel_id):
+            return False
+        players, referees = snapshot.get("players"), snapshot.get("referees")
+        if (type(players) is not list or type(referees) is not list
+                or any(type(p) is not dict or type(p.get("user_id")) is not int
+                       or p["user_id"] <= 0 or type(p.get("status")) is not str
+                       for p in players)
+                or any(type(r) is not dict or type(r.get("user_id")) is not int
+                       or r["user_id"] <= 0 for r in referees)
+                or len({p["user_id"] for p in players}) != len(players)):
+            log.warning("referee roster snapshot incomplete; retaining local presence")
+            return False
+        old = self.players
+        self.referee_ids = {r["user_id"] for r in referees}
+        excluded = self.non_gameplay_user_ids()
+        current = {p["user_id"]: p for p in players if p["user_id"] not in excluded}
+        departed = {uid: info for uid, info in old.items() if uid not in current}
+        for uid in departed:
+            self._save_departing_preference(uid, kicked=False)
+        # Keep survivor identity/profile/lobby checkpoints. A late profile job
+        # for a departed player cannot match a replacement presence object.
+        self.players = {uid: old.get(uid, {"pp": None, "name": str(uid)})
+                        for uid in current}
+        for uid, player in current.items():
+            self.players[uid]["status"] = player["status"]
+        self.ready = {uid for uid, player in current.items() if player["status"] == "ready"}
+        for attribute in ("_single_player_start_hold_uid", "_first_player_download_wait_uid"):
+            uid = getattr(self, attribute, None)
+            if uid in self.ready:
+                setattr(self, attribute, None)
+        for uid, info in departed.items():
+            self._finish_roster_departure(uid, info)
+        for uid in current.keys() - old.keys():
+            # Queue optional enrichment; recovery must not block on HTTP or
+            # replay join welcomes/download gates for an existing occupant.
+            self._defer_player_profile(uid)
+        self._refresh_difficulty_vote_quorum()
+        self._refresh_skip_vote_quorum()
+        self._refresh_replay_vote_quorum()
+        self.mark_auto_retune_pending()
+        self._track_empty_room()
+        self.cancel_start_if_too_few_players()
+        barrier = snapshot.get("_worker_roster_barrier")
+        if type(barrier) is int and barrier > 0:
+            self._last_referee_roster_barrier = barrier
+        log.info("referee roster reconciled: previous=%d current=%d departed=%d added=%d",
+                 len(old), len(self.players), len(departed), len(current.keys() - old.keys()))
+        return True
+
+    def _drain_hub_events(self) -> None:
+        while True:
+            try:
+                name, payload = self.events.get_nowait()
+            except queue.Empty:
+                return
+            self.handle_event(name, payload)
+
+    def _await_referee_roster(self, joined, deadline: float) -> None:
+        barrier = joined.get("_worker_roster_barrier") if type(joined) is dict else None
+        if type(barrier) is int and barrier > 0:
+            self._required_referee_roster_barrier = barrier
+        required = getattr(self, "_required_referee_roster_barrier", 0)
+        deadline = min(deadline, time.monotonic() + 5.0)
+        self._drain_hub_events()
+        while getattr(self, "_last_referee_roster_barrier", 0) < required:
+            if not self.running or time.monotonic() >= deadline:
+                raise HubDisconnected("waiting for ordered referee roster delivery")
+            try:
+                event = self.events.get(timeout=min(0.1, max(0.001, deadline - time.monotonic())))
+            except queue.Empty:
+                continue
+            self.handle_event(*event)
+        # Consume already-queued deltas following the baseline as well.
+        self._drain_hub_events()
+
     def handle_event(self, name: str, payload: dict) -> None:
         if name in ("HubDisconnected", "HubReconnected"):
             # SignalRCore reconnects the websocket, but referee room membership
@@ -12028,6 +12150,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 "ignoring stale %s event for old room %s (current room %s)",
                 name, event_room_id, self.room_id,
             )
+            return
+
+        if name == "RoomRosterSnapshot":
+            self._sync_referee_roster(payload)
             return
 
         if name == "CountdownStarted":
@@ -12388,38 +12514,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             if uid and uid not in self.non_gameplay_user_ids():
                 self._save_departing_preference(uid, kicked=name == "UserKicked")
                 info = self.players.pop(uid, None)
-                getattr(self, "_pending_player_profiles", {}).pop(uid, None)
-                self._on_difficulty_voter_left(uid)
-                player_name = str((info or {}).get("name") or uid)
-                action = "was kicked" if name == "UserKicked" else "left"
-                self._notify_discord_lobby_event(
-                    "LEAVE", f"{player_name} {action}"
-                )
-                self._flush_player_lobby_time(uid, info)
-                if self.room_id is not None:
-                    try:
-                        self.ratings.record_room_player_leave(room_id=int(self.room_id),user_id=uid,username=player_name)
-                    except Exception:
-                        log.exception('could not record activity leave')
-                self.ready.discard(uid)
-                getattr(self, "_unready_start_grace_users", set()).discard(uid)
-                self._refresh_skip_vote_quorum()
-                self._refresh_replay_vote_quorum()
-                if uid == self._single_player_start_hold_uid:
-                    log.info(
-                        "single-player start hold cleared because user %s left",
-                        uid,
-                    )
-                    self._single_player_start_hold_uid = None
-                if uid == self._first_player_download_wait_uid:
-                    log.info(
-                        "first-player download wait cleared because user %s left",
-                        uid,
-                    )
-                    self._first_player_download_wait_uid = None
-                self.mark_auto_retune_pending()
-                self._track_empty_room()
-                self._close_if_armed_and_empty()
+                self._finish_roster_departure(uid, info, kicked=name == "UserKicked")
 
             # Safety only: if the countdown no longer has the configured
             # minimum number of players, cancel it so the lobby can recover.
@@ -12581,6 +12676,35 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             f"3 rejoin attempts failed: {last_error}{detail}"
         )
 
+    def _retry_roster_admission(self, call):
+        """Retry only the broker's explicit pre-dispatch roster refusal.
+
+        A queued lifecycle event can briefly invalidate membership just after
+        MakeRoom. It is not a failed map mutation or an uncertain provider write.
+        Fresh JoinRoom plus ordered snapshot delivery restores admission; every
+        other transport error escapes without replaying the operation.
+        """
+        deadline = time.monotonic() + 5.0
+        retryable = {
+            "room roster requires a fresh authoritative JoinRoom",
+            "JoinRoom overlapped undelivered roster events",
+        }
+        while self.running and time.monotonic() < deadline:
+            self._drain_hub_events()
+            invalidate = getattr(self.hub, "invalidate_membership", None)
+            if callable(invalidate): invalidate(int(self.room_id))
+            try:
+                joined = self.hub.join_room(int(self.room_id))
+                self._await_referee_roster(joined, deadline)
+                result = call()
+            except HubDisconnected as error:
+                if str(error) not in retryable: raise
+                time.sleep(min(.05, max(0., deadline - time.monotonic())))
+                continue
+            self._hub_rejoin_pending = False
+            return result
+        raise HubDisconnected("waiting for ordered referee roster delivery")
+
     def _referee_operation_with_rejoin(self, operation: str, call):
         """Run a referee operation and recover a definite Error 2 in place.
 
@@ -12593,6 +12717,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         """
         try:
             return call()
+        except HubDisconnected as error:
+            if str(error) == "room roster requires a fresh authoritative JoinRoom":
+                return self._retry_roster_admission(call)
+            raise
         except HubTransportError:
             raise
         except Exception as first_error:
@@ -12785,12 +12913,13 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 continue
 
             self._room_missing_confirmations = 0
+            joined = None
             try:
                 join = getattr(self.hub, "join_room", None)
                 if callable(join):
-                    join(rid)
+                    joined = join(rid)
                 else:
-                    self.hub.invoke("JoinRoom", [rid])
+                    joined = self.hub.invoke("JoinRoom", [rid])
             except HubTransportError as e:
                 last_error = e
                 time.sleep(2.0)
@@ -12806,6 +12935,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     continue
 
             try:
+                # A fresh supervisor JoinRoom enqueues a roster barrier in
+                # event order. Consume it before recovery can use player counts
+                # for commands, countdowns or between-map reconciliation.
+                self._await_referee_roster(joined, deadline)
                 if room:
                     self._sync_from_room_snapshot(room, "hub recovery")
                     self._last_playlist_audit = time.time()
@@ -12891,12 +13024,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 self._recover_hub_transport("referee transport watchdog")
                 if not self.running:
                     break
-            try:
-                while True:
-                    name, payload = self.events.get_nowait()
-                    self.handle_event(name, payload)
-            except queue.Empty:
-                pass
+            self._drain_hub_events()
 
             if self._hub_rejoin_pending and self.room_id:
                 self._recover_hub_transport("SignalR reconnect/disconnect event")

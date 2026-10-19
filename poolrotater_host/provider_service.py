@@ -82,7 +82,10 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                 worker = supervisor.prepare(alias, supervisor.start_release_for(alias))
                 workers.append(worker)
                 supervisor.activate(worker)
-            if not stop.is_set(): observer('running', supervisor, workers)
+            if not stop.is_set():
+                supervisor.prepare_startup_status()
+                if not stop.is_set() and not supervisor.stopping.is_set():
+                    observer('running', supervisor, workers)
             while not stop.wait(.5) and not supervisor.stopping.is_set():
                 if time.monotonic() - last_usage_log >= 60:
                     last_usage_log = time.monotonic()

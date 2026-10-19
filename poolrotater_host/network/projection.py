@@ -52,7 +52,8 @@ def project(snapshot, config, *, now, code_version, catalog_version='unavailable
         public = status.get('public'); details = status.get('network')
         if type(public) is not dict or type(details) is not dict:
             continue
-        state = {'IDLE': 'idle', 'STARTING': 'starting', 'PLAYING': 'playing'}.get(status.get('state'))
+        state = {'IDLE': 'idle', 'STARTING': 'starting', 'PLAYING': 'playing',
+                 'SCORING': 'idle'}.get(status.get('state'))
         if state is None:continue
         if status.get('paused') is True:state = 'draining'
         current = public.get('current_map')

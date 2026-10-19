@@ -142,18 +142,32 @@ class Publisher:
                 'channels':value['channels'],'publication_pending':value['pending']is not None,
                 'approved_releases':len(value['releases']),'signing_keys_exposed':False}
 
-    def publish(self, bundle, sha256, *, before_bundle, before_sha256, channel='pilot', execution='pilot-live'):
+    def publish(self, bundle, sha256, *, before_bundle, before_sha256, channel='pilot', execution='pilot-live', additional_baselines=()):
         require(channel in CHANNELS, 'update_channel_refused'); digest(sha256); digest(before_sha256)
         with file_lease(self.custody/'publish.lock'):
             now = self._load(); require(self.state['pending'] is None, 'update_publication_requires_resume')
             before = inspect_runtime(before_bundle, before_sha256, execution=execution)
             after = inspect_runtime(bundle, sha256, execution=execution)
             kind = classify(before, after)
+            # One immutable artifact may serve hosts on different reviewed
+            # predecessors. Admit every exact archive BEFORE signing/copying,
+            # in one metadata transaction; no later descriptor rewrite needed.
+            require(type(additional_baselines) in (tuple, list) and len(additional_baselines) <= 15,
+                    'update_baseline_refused')
+            baselines = [before_sha256]
+            for baseline in additional_baselines:
+                require(type(baseline) in (tuple, list) and len(baseline) == 2, 'update_baseline_refused')
+                path, pin = baseline
+                digest(pin)
+                require(pin not in baselines, 'update_baseline_refused')
+                previous = inspect_runtime(path, pin, execution=execution)
+                require(classify(previous, after) == kind, 'update_baseline_kind_changed')
+                baselines.append(pin)
             require(all(r['artifact']['sha256'] != sha256 for r in self.state['releases']),
                     'update_artifact_already_published_use_promotion')
             item = {'sequence': self.state['release_sequence']+1, 'version': after['version'],
                 'kind': kind, 'artifact': {'sha256': sha256, 'bytes': Path(bundle).stat().st_size},
-                'from_sha256': [before_sha256], 'manifest_sha256': fingerprint(after),
+                'from_sha256': sorted(baselines), 'manifest_sha256': fingerprint(after),
                 'execution': execution, 'rollback_safe': kind == 'worker'}
             _copy_target(self.served/'targets'/(sha256+'.runtime.zip'), bundle,
                          item['artifact'], mode=0o644)

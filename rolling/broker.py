@@ -343,6 +343,21 @@ class Broker:
                         self.enqueue("hub", ("HubDisconnected", {}))
                         raise HubDisconnected("JoinRoom overlapped undelivered roster events")
                     self.hub.roster_fenced = False
+                    # Local ordered barrier, never an upstream event. Earlier
+                    # queued deltas precede this fresh JoinRoom snapshot; later
+                    # deltas follow it under the same shared routing lock.
+                    # Cached JoinRoom replies MUST NOT emit a stale baseline.
+                    self.enqueue("hub", ("RoomRosterSnapshot", {
+                        "room_id": result["room_id"],
+                        "chat_channel_id": result["chat_channel_id"],
+                        "players": result.get("players"),
+                        "referees": result.get("referees"),
+                        "_worker_roster_barrier": self.epoch,
+                    }))
+                    # The RPC reply can overtake the outbox delivery thread.
+                    # Tell a new worker which ordered barrier to await before
+                    # completing recovery. Keep the cached provider reply clean.
+                    result = dict(result, _worker_roster_barrier=self.epoch)
                 if operation == "ChangeRoomSettings" and "password" in values[1]:
                     self.password = values[1]["password"]
                     self.reporting_visibility(public=self.password=="" and not self.private,room_id=int(values[0]))

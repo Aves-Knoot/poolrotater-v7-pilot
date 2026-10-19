@@ -712,6 +712,20 @@ class RollingSupervisor:
                 self.rollout_thread = threading.Thread(target=reopen, daemon=True, name="reopen-" + alias)
                 self.rollout_thread.start()
 
+    def prepare_startup_status(self):
+        """Finish initial schema observation before advertising service readiness.
+
+        The first full managed-catalog verification can exceed the installed
+        predecessor's worker-observation window. It is read-only and must finish
+        before that window begins. Initial workers keep their existing prepare
+        policy; subsequent rollouts still require their normal schema/ownership
+        and fresh-heartbeat admission. A private subset never pins a full-host
+        baseline on behalf of rooms it did not activate.
+        """
+        if self.schema_baseline is None and len(self.workers) == len(self.configs):
+            self.schema_baseline = schemas(list(self.configs.values()))
+        self.write_status(force=True)
+
     def write_status(self, force=False):
         from poolrotater_host.network.projection import verified_visibility
         if not force and time.monotonic() - self.last_status_write < 5:

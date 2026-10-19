@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 
 from .oauth import AuthError
+from .provider_pacing import ProviderAdmissionDeferred
 from .referee_contract import negotiation
 from .referee_protocol import MAX_COMMAND, encoded
 from .referee_wire import ChildSession
@@ -26,12 +27,13 @@ _FAILURE_LOG_CODES = frozenset((
     'referee_receive_deadline', 'referee_socket_closed', 'referee_stopped',
     'referee_message_refused', 'referee_message_too_large', 'referee_record_flood',
     'referee_record_deadline', 'referee_frame_refused', 'referee_frame_deadline',
+    'provider_pacing_deferred', 'provider_deadline_exceeded',
     'verified_owner_required', 'provider_trust_refused', 'qualified_provider_transport_required',
 ))
 
 
 def _log_failure(error, generation, session=None):
-    code = error.code if type(error) is AuthError and error.code in _FAILURE_LOG_CODES else 'referee_transport_uncertain'
+    code = error.code if isinstance(error, AuthError) and error.code in _FAILURE_LOG_CODES else 'referee_transport_uncertain'
     # Generation is receiver-owned, not an upstream identity or payload.
     number = generation if type(generation) is int and 0 <= generation < 10**19 else 0
     log.warning('shared referee transport interrupted: code=%s generation=%d', code, number)
@@ -124,6 +126,10 @@ class ProviderRefereeClient:
             preflight()
         with gate.admission(deadline):
             self._boundary()
+            # Admission/cooldown must not consume the wire exchange budget.
+            # Otherwise a retry near the end of a 60s cooldown opens a child
+            # with milliseconds left, times out, and renews that cooldown.
+            deadline = time.monotonic()+5
             gate.exchange_started(kind='referee')
             try:
                 if command is None:
@@ -233,6 +239,8 @@ class ProviderRefereeClient:
 
     def _run(self):
         established = False
+        outage_announced = False
+        backoff = .2
         while not self._stop.is_set():
             generation = self._connect_generation
             try:
@@ -240,13 +248,15 @@ class ProviderRefereeClient:
                 generation = self._connect_generation
                 if established: self._event('HubReconnected', {'generation':generation}, generation)
                 established = True
+                outage_announced = False
+                backoff = .2
                 self._attempt.set()
                 while not self._stop.is_set():
                     value = self._session.receive(time.monotonic()+65, self._stop)
                     if value.get('kind') != 'message': raise AuthError('referee_reply_refused')
                     self._message(value['value'], generation)
             except Exception as error:
-                self._failure = error if type(error) is AuthError else AuthError('referee_transport_uncertain')
+                self._failure = error if isinstance(error, AuthError) else AuthError('referee_transport_uncertain')
                 _log_failure(error, generation, self._session)
             finally:
                 try: self._retire()
@@ -255,9 +265,13 @@ class ProviderRefereeClient:
                     _log_failure(self._failure, generation, self._session)
                 self._attempt.set()
             if not established: break
-            try: self._event('HubDisconnected', {'generation':generation}, generation)
-            except AuthError: self._stop.set()
-            if self._stop.wait(.2): break
+            # One lifecycle transition per outage, not one per admission retry.
+            if not outage_announced:
+                try: self._event('HubDisconnected', {'generation':generation}, generation)
+                except AuthError: self._stop.set()
+                outage_announced = True
+            if self._stop.wait(backoff): break
+            backoff = min(5., backoff*2)
 
     def connect(self, timeout=30):
         from .provider_rooms import _bearer
