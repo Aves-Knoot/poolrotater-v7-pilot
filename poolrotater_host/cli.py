@@ -75,7 +75,7 @@ def main(argv=None):
                 command.add_argument('--sha256',required=True);command.add_argument('--channel',required=True,choices=('pilot','stable'))
         if action=='update-recover':
             command.add_argument('--operation-id')
-            command.add_argument('--decision',choices=('review','retry','cancel','complete','rollback'))
+            command.add_argument('--decision',choices=('review','retry','cancel','complete','rollback','supersede'))
         if action == 'update-configure':
             command.add_argument('--updates-stdin', required=True, action='store_true')
         if action == 'private-test-configure':

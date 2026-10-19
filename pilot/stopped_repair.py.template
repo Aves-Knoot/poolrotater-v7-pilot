@@ -1,0 +1,136 @@
+#!/usr/bin/python3.12
+"""Repair an existing stopped v7.1.13 installation without replacing operator state."""
+import sys
+sys.dont_write_bytecode = True
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import stat
+import tempfile
+import time
+import urllib.request
+import zipfile
+
+PIN = '__RUNTIME_SHA256__'
+URL = 'https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/download/v7.1.16/poolrotater-v7.1.16-runtime.zip'
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--instance', required=True)
+    parser.add_argument('--bundle', type=Path, help='optional already-downloaded exact runtime')
+    parser.add_argument('--start', action='store_true')
+    parser.add_argument('--resume-agents', action='store_true')
+    args = parser.parse_args()
+    if (os.geteuid() != 0 or not re.fullmatch('[a-z][a-z0-9-]{0,15}', args.instance)
+            or args.instance=='owner' or not args.start
+            or not re.fullmatch('[a-f0-9]{64}', PIN)):
+        raise ValueError('root, explicit instance and pinned runtime required')
+    if os.getpriority(os.PRIO_PROCESS,0) < 17:
+        os.nice(17-os.getpriority(os.PRIO_PROCESS,0))
+    os.umask(0o077);os.chdir('/tmp')
+    with tempfile.TemporaryDirectory(prefix='poolrotater-repair-') as temporary:
+        stage = Path(temporary)
+        archive_path = stage/'runtime.zip'
+        if args.bundle is None:
+            source = urllib.request.urlopen(URL, timeout=30)
+        else:
+            fd = os.open(args.bundle, os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+            source = os.fdopen(fd,'rb')
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                source.close()
+                raise ValueError('bounded regular runtime required')
+        digest = hashlib.sha256()
+        total = 0
+        deadline = time.monotonic()+180
+        with source, archive_path.open('xb') as output:
+            while chunk := source.read(1024**2):
+                total += len(chunk)
+                if total > 128*1024**2 or time.monotonic() > deadline:
+                    raise ValueError('runtime transfer bound exceeded')
+                digest.update(chunk)
+                output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        if digest.hexdigest() != PIN:
+            raise ValueError('runtime checksum differs')
+        with zipfile.ZipFile(archive_path) as archive:
+            entries = archive.infolist()
+            if len(entries) > 2048 or len({v.filename for v in entries}) != len(entries) \
+                    or sum(v.file_size for v in entries) > 128*1024**2:
+                raise ValueError('invalid runtime archive')
+            for entry in entries:
+                name = entry.filename
+                path = PurePosixPath(name)
+                if (path.is_absolute() or str(path) != name or any(p in ('','.','..') for p in name.split('/'))
+                        or not stat.S_ISREG(entry.external_attr>>16) or entry.flag_bits&1):
+                    raise ValueError('unsafe runtime member')
+                if not name.startswith('payload/'):
+                    continue
+                destination = stage/name
+                destination.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+                destination.write_bytes(archive.read(entry))
+        sys.path.insert(0,str(stage/'payload'))
+        from poolrotater_host.pilot_installation import paths, RESERVE
+        from poolrotater_host.provisioning import _control, protected, _provision
+        from poolrotater_host.runtime_lifecycle import validate_runtime
+        target=paths(args.instance)
+        intent=_control(protected(target['prefix']/'pilot-install.json'))
+        registered=_control(protected(target['prefix']/'installations'/(intent['installation_id']+'.json')))
+        if registered['bundle_sha256'] not in (
+                '98bc2e7a9a127062d7bbff451dbef743395dfe3dfb3c8453a4b53e268fa3010c',PIN):
+            raise ValueError('repair predecessor differs')
+        if registered['bundle_sha256'] != PIN:
+            _provision(target['root'],target['prefix'],archive_path,PIN,
+                uid=registered['service_uid'],execution=registered['execution'],reserve=RESERVE,
+                stage_bootstrap=True,recovery_only=True)
+        record=_control(protected(target['prefix']/'candidates'/registered['installation_id']/(PIN+'.json')))
+        runtime=validate_runtime(record,target['prefix'])
+        import uuid,subprocess
+        report_base=Path('/var/lib/poolrotater-v7-repair-reports')
+        for directory in (report_base,report_base/args.instance):
+            directory.mkdir(mode=0o700,exist_ok=True)
+            protected(directory)
+            info=directory.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_mode&0o077:
+                raise ValueError('repair reports directory refused')
+        report=report_base/args.instance/str(uuid.uuid4());report.mkdir(mode=0o700)
+        command=['/usr/bin/python3.12','-I','-S','-B',
+            str(runtime['release']/'poolrotater_host/stopped_repair_entry.py'),
+            '--instance',args.instance,'--bundle',str(archive_path),'--sha256',PIN,
+            '--report',str(report),'--start']
+        if args.resume_agents:command.append('--resume-agents')
+        result=subprocess.run(command,cwd='/tmp',env={'PATH':'/usr/sbin:/usr/bin:/bin',
+            'LANG':'C.UTF-8','PYTHONDONTWRITEBYTECODE':'1','MALLOC_ARENA_MAX':'2'})
+        raise SystemExit(result.returncode)
+
+
+def failure_code(error):
+    codes = {
+        'runtime checksum differs': 'recovery_artifact_checksum_mismatch',
+        'runtime transfer bound exceeded': 'recovery_artifact_size_or_deadline_refused',
+        'unsafe runtime member': 'recovery_artifact_member_refused',
+        'invalid runtime archive': 'recovery_artifact_member_refused',
+        'insufficient fixture runtime space': 'recovery_five_gib_reserve_required',
+        'existing recovery pin requires explicit review': 'recovery_existing_pin_requires_review',
+        'rescue_policy_disabled': 'recovery_policy_disabled',
+        'rescue_binding_changed': 'recovery_binding_changed',
+    }
+    if str(error) in codes:
+        return codes[str(error)]
+    if isinstance(error, OSError):
+        return 'recovery_local_io_or_transport_failed'
+    return 'repair_install_requires_review'
+
+
+if __name__=='__main__':
+    try:
+        main()
+    except Exception as error:
+        print(json.dumps({'ok':False,'failure_code':failure_code(error),
+                          'next_action':'retain_state; do_not_repeat_room_start'}))
+        raise SystemExit(2)

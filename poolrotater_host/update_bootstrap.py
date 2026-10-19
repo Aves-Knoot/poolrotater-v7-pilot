@@ -47,7 +47,7 @@ def action_arguments(action,*,operation_id=None,decision=None,updates_stdin=Fals
     if updates_stdin:result.append('--updates-stdin')
     if decision is not None:
         import uuid
-        if str(uuid.UUID(operation_id))!=operation_id or decision not in('review','retry','cancel','complete','rollback'):
+        if str(uuid.UUID(operation_id))!=operation_id or decision not in('review','retry','cancel','complete','rollback','supersede'):
             raise ValueError('update recovery decision refused')
         result+=['--operation-id',operation_id,'--decision',decision]
     return result

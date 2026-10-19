@@ -55,7 +55,7 @@ def require_repair_compatible(before, after):
     independently before this check.
     """
     v71 = after.get('version')=='v7.1.0' and before.get('version') in ('v7.0.6','v7.0.7','v7.0.8')
-    if not v71 and (before.get('version'), after.get('version')) not in (
+    if not v71 and (before.get('version'), after.get('version')) not in (('v7.1.13','v7.1.16'),
             ('v7.0.1','v7.0.1'), ('v7.0.1','v7.0.2'), ('v7.0.2','v7.0.2'),
             ('v7.0.2','v7.0.5'), ('v7.0.5','v7.0.5'), ('v7.0.1','v7.0.6'),
             ('v7.0.5','v7.0.6'), ('v7.0.6','v7.0.6'), ('v7.1.0','v7.1.1'),
@@ -97,7 +97,7 @@ def require_repair_compatible(before, after):
             ('v7.1.6', 'v7.1.10'),
             ('v7.1.7', 'v7.1.10'),
             ('v7.1.8', 'v7.1.10'),
-            ('v7.1.9', 'v7.1.10'), ('v7.1.10','v7.1.11'), ('v7.1.11','v7.1.12'), ('v7.1.12','v7.1.13'), ('v7.1.13','v7.1.14')):
+            ('v7.1.9', 'v7.1.10'), ('v7.1.10','v7.1.11'), ('v7.1.11','v7.1.12'), ('v7.1.12','v7.1.13'), ('v7.1.13','v7.1.14'), ('v7.1.14','v7.1.15'), ('v7.1.11','v7.1.15')):
         raise ConfigError('pilot repair requires its reviewed runtime family')
     for key in ('protocol', 'storage_epoch', 'requirements', 'python_hash', 'environment_hash'):
         if key not in before or before[key] != after.get(key):

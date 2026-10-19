@@ -1,3 +1,7 @@
+# PoolRotater stopped-update repair
+
+[v7.1.16](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.16) repairs the retained committed v7.1.13 failed-start state. See [the one-command instructions](docs/STOPPED_UPDATE_REPAIR.md) and [release notes](docs/V7_1_16_RELEASE_NOTES.md). It preserves the operator installation and is not a fresh installer.
+
 # PoolRotater recovery preview
 
 The [v7.1.14 recovery preview](https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.1.14) adds an independent diagnostic/recovery channel. Read [the setup and local controls](docs/INDEPENDENT_RECOVERY.md). It is not on the automatic release feed.

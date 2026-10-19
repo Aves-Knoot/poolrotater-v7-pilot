@@ -263,8 +263,21 @@ class RuntimeConfigBridge:
                     raise ConfigError('refusing unrecognized existing runtime room configuration')
                 data = read_json(path) if path.exists() else copy.deepcopy(base)
                 if old is not None:
+                    # v7.1.13 added this managed execution setting. A retained
+                    # v7.1.11/12 base legitimately lacks it. Admit only this
+                    # boolean addition; never discard an operator's conflicting
+                    # preexisting value or loosen the rest of the schema fence.
+                    profile_addition = (isinstance(old, dict)
+                        and 'background_player_profiles' not in old
+                        and type(base.get('background_player_profiles')) is bool)
+                    if profile_addition and 'background_player_profiles' in data:
+                        value = data['background_player_profiles']
+                        if type(value) is not bool or value != base['background_player_profiles']:
+                            raise ConfigError('new managed profile setting conflicts with retained preference')
                     additions = {'standard_dt_db', 'standard_catalog_binding',
                                  'mania_convert_validation_db'} if current['catalog_set'] else set()
+                    if profile_addition:
+                        additions.add('background_player_profiles')
                     if room['alias'] in load_overrides(self.root, *load(self.root)):
                         additions.update(GAMEPLAY_KEYS)
                     if owner_integrations.load(self.root, *load(self.root)) is not None:

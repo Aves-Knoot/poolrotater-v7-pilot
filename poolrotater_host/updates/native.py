@@ -229,6 +229,9 @@ class Backend:
     def recover(self,operation,decision):
         from .contracts import identifier
         identifier(operation['id'])
+        if decision == 'supersede':
+            from .superseded import review
+            return review(self.instance, operation)
         if operation['release']['kind']=='controller':
             from .recovery import controller
             return controller(self.instance,operation['id'],decision)

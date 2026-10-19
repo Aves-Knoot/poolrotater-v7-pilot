@@ -43,8 +43,17 @@ def _configuration_matches(target,job,*,before_version=None,after_version=None):
         matched=False
         for old in(before_version,before_version.removeprefix('v')):
             restored={**value,'version':old}
-            raw=(json.dumps(restored,indent=2,allow_nan=False)+'\n').encode()
-            if hashlib.sha256(raw).hexdigest()==sha:matched=True;break
+            variants=[restored]
+            # v7.1.13 introduced this pinned live-only boolean. The old
+            # queued digest must prove its original absence: other settings,
+            # preexisting values and unrelated schema changes remain fenced.
+            if restored.get('background_player_profiles') is True:
+                variants.append({k:v for k,v in restored.items()
+                                 if k!='background_player_profiles'})
+            for candidate in variants:
+                raw=(json.dumps(candidate,indent=2,allow_nan=False)+'\n').encode()
+                if hashlib.sha256(raw).hexdigest()==sha:matched=True;break
+            if matched:break
         if not matched:return False
     return True
 
@@ -253,8 +262,12 @@ def _controller(instance,operation_id,decision='review',*,automatic=False):
             return {'ok':True,'phase':'cancelled','services_restarted':False,'service_start_is_explicit':not bool(service['MainPID'])}
         before_manifest=validate_runtime(job['before'],target['prefix'])['manifest']
         after_manifest=validate_runtime(job['after'],target['prefix'])['manifest']
+        configuration_before_version=before_manifest.get('version')
+        if job.get('repair_predecessor_operation_id'):
+            from ..stopped_update_repair import configuration_version
+            configuration_before_version=configuration_version(target,job)
         def configuration_matches():
-            return _configuration_matches(target,job,before_version=before_manifest.get('version'),
+            return _configuration_matches(target,job,before_version=configuration_before_version,
                 after_version=after_manifest.get('version')if current==job['after']and phase=='committed'else None)
         require(configuration_matches(),'update_recovery_configuration_changed')
         _archive(target,job)
@@ -314,7 +327,7 @@ def _controller(instance,operation_id,decision='review',*,automatic=False):
         # interrupted start or the start just observed above. Prove every old
         # queued byte again, rather than treating that expected stamp as a user
         # edit or accepting unrelated configuration changes.
-        require(_configuration_matches(target,job,before_version=before_manifest.get('version'),
+        require(_configuration_matches(target,job,before_version=configuration_before_version,
             after_version=after_manifest.get('version')),'update_recovery_configuration_changed')
         _write(target['prefix']/native.NAME,{**job,'phase':'complete','completed_at':time.time(),
                                            'stage':'completion','reason':'automatic_recovered_controller_commit' if automatic else 'operator_recovered_controller_commit'})

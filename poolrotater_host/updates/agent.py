@@ -224,12 +224,12 @@ class Agent:
                 self._save(state,phase='held',error='update_installation_requires_review')
             return self.summary(state,consent)
 
-    def _reviewed(self,state,operation,now,consent):
+    def _reviewed(self,state,operation,now,consent,*,decision=None):
         # Keep operation history and suppress automatic retry of this release or
         # an older intermediate. A newer signed release remains eligible. The
         # operator can explicitly apply the same release again after review.
         history=self.client.root/'history'/(operation['id']+'.review.json')
-        receipt={'operation':operation,'decision':state['resolution']['decision'],'reviewed_at':now}
+        receipt={'operation':operation,'decision':decision or state['resolution']['decision'],'reviewed_at':now}
         previous=read(history,optional=True)
         if previous is None:atomic_json(history,receipt)
         else:require(previous['operation']==operation and previous['decision']==receipt['decision'],
@@ -240,7 +240,7 @@ class Agent:
 
     def resolve(self,operation_id,decision):
         identifier(operation_id)
-        require(decision in('review','retry','cancel','complete','rollback'),'update_recovery_decision_refused')
+        require(decision in('review','retry','cancel','complete','rollback','supersede'),'update_recovery_decision_refused')
         with file_lease(self.client.root/'agent.lock'):
             state=self.state();operation=state['operation'];now=timestamp(self.clock())
             require(now>=state['clock_high_water'],'update_clock_rollback')
@@ -256,6 +256,23 @@ class Agent:
             require(operation is not None and operation['id']==operation_id,'update_recovery_operation_changed')
             if decision=='review':
                 return {**self.summary(state,consent),'recovery':self.backend.recover(operation,'review')}
+            if decision=='supersede':
+                # No native mutation is dispatched. Do not persist a new
+                # resolution enum an older installed scheduler cannot read.
+                try:
+                    result=self.backend.recover(operation,decision)
+                    require(result['phase']=='superseded','update_superseded_receipt_required')
+                    history=self.client.root/'history'/(operation_id+'.superseded.json')
+                    evidence={'operation':operation,'result':result}
+                    previous=read(history,optional=True)
+                    if previous is None:atomic_json(history,evidence)
+                    else:require(previous==evidence,'update_superseded_evidence_changed')
+                    state['installed_version']=result['installed_version']
+                    state['clock_high_water']=now
+                    self._reviewed(state,operation,now,consent,decision=decision)
+                except Exception:
+                    self._save(state,phase='held',error='update_installation_requires_review')
+                return self.summary(state,consent)
             self._save(state,clock_high_water=now,resolution={'operation_id':operation_id,'decision':decision})
             try:
                 if decision=='retry':
