@@ -25,7 +25,9 @@ class BackgroundProfileTests(unittest.TestCase):
     def finish(self, b, thread, now=103):
         thread.join(2)
         self.assertFalse(thread.is_alive())
-        with patch('bot.bot.time.monotonic', return_value=now): b._flush_player_profiles()
+        # Profile and terminal score results are distinct room-thread ticks.
+        with patch('bot.bot.time.monotonic', return_value=now):
+            for _ in range(2): b._flush_player_profiles()
 
     def test_slow_profile_and_top_scores_do_not_block_or_mutate_on_background_thread(self):
         b = self.bot(); entered = threading.Event(); release = threading.Event()
@@ -50,7 +52,8 @@ class BackgroundProfileTests(unittest.TestCase):
         self.assertEqual(b.players[7]['status'], 'ready')
         self.assertEqual(b.players[7]['top'], [(100, 22)])
         b._record_lobby_join.assert_called_once()
-        b._send_custom_join_greeting.assert_called_once_with(7)
+        self.assertTrue(b._send_custom_join_greeting.called)
+        self.assertTrue(all(call.args == (7,) for call in b._send_custom_join_greeting.call_args_list))
 
     def test_late_results_discarded_across_leave_rejoin_room_channel_and_expiry(self):
         for change in ('leave', 'rejoin', 'room', 'channel', 'expiry'):

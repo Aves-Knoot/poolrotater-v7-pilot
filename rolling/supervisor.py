@@ -33,6 +33,14 @@ from .supervisor_settings import deployment_seconds, read_settings
 log = logging.getLogger("rolling.supervisor")
 
 
+class HandoffDeferred(RuntimeError):
+    """A definite local eligibility refusal before any room mutation."""
+
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(reason)
+
+
 @dataclass
 class Worker:
     alias: str
@@ -49,6 +57,8 @@ class Worker:
     healthy_since: float | None = None
     empty_since: float | None = None
     empty_epoch: int = -1
+    handoff_retry_at: float = 0.0
+    handoff_deferrals: int = 0
     exited: bool = False
     started_at: float = field(default_factory=time.time)
 
@@ -340,6 +350,8 @@ class RollingSupervisor:
         worker.peer.call(command, request_id, timeout=10)
         self.wait_for(lambda: (worker.status.get("control") or {}).get("id") == request_id, seconds, worker)
         if not worker.status["control"]["ok"]:
+            if command == "prepare":
+                raise HandoffDeferred("worker_not_quiescent")
             raise RuntimeError("room no longer eligible for " + command)
 
     def dispose(self, worker):
@@ -392,7 +404,8 @@ class RollingSupervisor:
             if self.workers[alias].release == Path(release).resolve():
                 continue
             self.record(alias, phase="waiting_empty", target=str(Path(release).resolve()),
-                        target_version=candidate["version"], error=None)
+                        target_version=candidate["version"], error=None,
+                        handoff_deferred_reason=None, handoff_deferred_attempts=0)
             self.targets[alias] = Path(release).resolve()
 
     def request_catalogs(self, aliases):
@@ -433,11 +446,13 @@ class RollingSupervisor:
             candidate = self.prepare(alias, release)
             # Preparation can take time. All liveness/occupancy checks repeat.
             if not old.idle_empty():
-                raise RuntimeError("a player arrived or room state changed during preparation")
+                raise HandoffDeferred("room_changed_during_preparation")
             self.control(old, "prepare")
             broker = old.broker
             with self.shared.lock:
-                if not old.idle_empty() or broker.password != "":
+                if not old.idle_empty():
+                    raise HandoffDeferred("room_changed_before_lock")
+                if broker.password != "":
                     raise RuntimeError("room is occupied, uncertain, or already private")
                 broker.quiesced = True
                 rid, = broker.hub.owned
@@ -470,9 +485,38 @@ class RollingSupervisor:
             self.activate(candidate)
             self.targets.pop(alias, None)
             self.record(alias, target=None, target_version=None, target_catalog_set=None,
-                        catalog_set=candidate.broker.cfg.get("_host_catalog_set"), previous=str(old.release), phase="running")
+                        catalog_set=candidate.broker.cfg.get("_host_catalog_set"), previous=str(old.release), phase="running",
+                        handoff_deferred_reason=None)
         except Exception as exc:
-            log.exception("room rollout failed for %s", alias)
+            if (isinstance(exc, HandoffDeferred) and not locked and not old_closed
+                    and old.fresh() and not old.broker.uncertain and not old.broker.fenced):
+                # No provider mutation has been submitted. Only a definite
+                # worker NACK/changed local eligibility may retain this target.
+                # Unknown RPC outcomes and cleanup failures still fail closed.
+                try:
+                    if candidate:
+                        self.dispose(candidate)
+                        candidate = None
+                    if old.status.get("paused"):
+                        self.control(old, "resume")
+                except Exception as cleanup_error:
+                    exc = cleanup_error
+                else:
+                    old.empty_since = None
+                    old.empty_epoch = -1
+                    old.handoff_deferrals = getattr(old, "handoff_deferrals", 0) + 1
+                    delay = min(30.0, 2.0 ** min(old.handoff_deferrals, 5))
+                    old.handoff_retry_at = time.monotonic() + delay
+                    # Do not re-add a target: protected cancellation still owns
+                    # that intent and is consumed before the next admission.
+                    waiting = alias in self.targets
+                    self.record(alias, phase="waiting_empty" if waiting else "running", error=None,
+                                handoff_deferred_reason=exc.reason,
+                                handoff_deferred_attempts=old.handoff_deferrals)
+                    log.info("room %s handoff deferred before mutation: %s; retry after %.1fs and fresh empty interval",
+                             alias, exc.reason, delay)
+                    return
+            log.error("room rollout failed for %s", alias, exc_info=(type(exc), exc, exc.__traceback__))
             self.targets.pop(alias, None)
             self.record(alias, error=str(exc)[:800], target=None, target_version=None)
             if not old_closed:
@@ -672,7 +716,8 @@ class RollingSupervisor:
                                   alias, getattr(worker.process, 'returncode', None),
                                   detail['failure_code'])
             if (alias in self.targets and self.rollout_alias is None and worker.empty_since is not None
-                    and now - worker.empty_since >= self.empty_seconds):
+                    and now - worker.empty_since >= self.empty_seconds
+                    and now >= getattr(worker, "handoff_retry_at", 0.0)):
                 self.rollout_alias = alias
                 self.rollout_thread = threading.Thread(target=self.roll, args=(alias, self.targets[alias]),
                                                        daemon=True, name="rollout-" + alias)

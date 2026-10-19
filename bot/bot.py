@@ -1097,13 +1097,13 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return str(external["name"])
         info = self.players.get(int(user_id)) or {}
         live = str(info.get("name") or "").strip()
-        if live:
+        if live and (live != str(user_id) or info.get("username_resolved")):
             return live
         try:
             stored = self.pp_stats.username_for_user_id(int(user_id))
         except Exception:
             stored = None
-        return str(stored).strip() if stored else None
+        return str(stored).strip() if isinstance(stored, str) and stored.strip() and stored.strip() != str(user_id) else None
 
     def _discord_lobby_role(self, user_id: int) -> str:
         if self._is_admin(user_id):
@@ -10525,7 +10525,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         player = self.players.get(uid) or {}
         if not player or uid in self.non_gameplay_user_ids():
             return False
-        username = str(player.get("name") or uid)
+        username = self._known_username(uid)
+        if not username:
+            player["_pending_mid_match_intro"] = True
+            return False
+        player.pop("_pending_mid_match_intro", None)
         remaining = self._match_remaining_seconds()
         if remaining:
             timing = self._format_match_remaining(remaining)
@@ -10971,7 +10975,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return
         # The referee has already proved occupancy; profile data must never
         # determine whether this real player exists in the roster.
-        self.players[user_id] = {"pp": None, "name": str(user_id), "status": "idle"}
+        self.players[user_id] = {"pp": None, "name": self._known_username(user_id) or str(user_id), "status": "idle"}
         if self.cfg.get('background_player_profiles', False):
             # Presence is already authoritative. Optional profile/top-score
             # network I/O must not hold commands or READY processing behind it.
@@ -11005,7 +11009,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             reverse=True)
         threshold = top[-1][0] if len(top) >= 100 else 0.0
 
-        self.players[user_id].update({"pp": pp, "name": name,
+        self.players[user_id].update({"pp": pp, "name": name, "username_resolved": True,
                                       "country_code": u.get("country_code"),
                                       "threshold": threshold, "top": top})
         self._record_lobby_join(user_id, self.players[user_id])
@@ -11025,7 +11029,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         pp = stats.get("pp") if type(stats) is dict else None
         if pp is not None and (type(pp) not in (int, float) or not math.isfinite(pp) or pp < 0):
             return None
-        return {"name": name, "country_code": profile.get("country_code"), "pp": pp}
+        return {"name": name, "username_resolved": True, "country_code": profile.get("country_code"), "pp": pp}
 
     def _defer_player_profile(self, user_id, *, profile=None):
         """Record the join once, then queue enrichment independently of READY."""
@@ -11074,6 +11078,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 fields = self._profile_fields(uid, profile)
                 if fields is not None:
                     work["profile"] = profile
+                    self.players[uid].update(fields)
+                    self._send_resolved_join_greetings(uid)
                     raw = self.api.user_top_scores(uid, limit=100, **mode_kwargs)
                     if type(raw) is list:
                         top = []
@@ -11128,10 +11134,13 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         active = getattr(self, '_background_profile_job', None)
         if active is not None:
             try:
-                profile, raw, error = active['result'].get_nowait()
+                message = active['result'].get_nowait()
+                partial = len(message) == 4 and message[0] == 'profile'
+                profile, raw, error = message[1:] if partial else message
             except queue.Empty:
                 return
-            self._background_profile_job = None
+            if not partial:
+                self._background_profile_job = None
             uid, work = active['uid'], active['work']
             if pending.get(uid) is not work:
                 return
@@ -11140,6 +11149,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             fields = self._profile_fields(uid, profile)
             if fields is not None:
                 work['profile'] = profile
+                self.players[uid].update(fields)
+                self._send_resolved_join_greetings(uid)
+                if partial:
+                    return
                 if error is None and type(raw) is list:
                     top = []
                     for score in raw:
@@ -11168,7 +11181,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         for uid, work in pending.items():
             if now < work['retry_at']:
                 continue
-            result = queue.Queue(maxsize=1)
+            result = queue.Queue(maxsize=2)
             api, profile = self.api, work['profile']
             mode = {'mode': 'mania'} if self.cfg.get('ruleset_id', 0) == 3 else {}
             def fetch(api=api, uid=uid, profile=profile, mode=mode, result=result):
@@ -11179,6 +11192,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     # Validate without reading/mutating any instance state.
                     if (type(profile) is dict and profile.get('username')
                             and profile.get('id', uid) == uid):
+                        result.put_nowait(('profile', profile, None, None))
                         raw = api.user_top_scores(uid, limit=100, **mode)
                     result.put_nowait((profile, raw, None))
                 except Exception as error:
@@ -11197,10 +11211,31 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if self.cfg.get("auto_difficulty", True) and not self.manual_range:
             self._auto_retune_pending = True
 
+    def _send_resolved_join_greetings(self, user_id: int) -> None:
+        """Deliver delayed welcomes only for this still-present player object."""
+        player = self.players.get(user_id)
+        username = self._known_username(user_id)
+        if not player or not username:
+            return
+        custom_sent = player.get("_custom_join_greeting_sent", False) or self._send_custom_join_greeting(user_id)
+        if "_pending_join_welcome" in player:
+            recalled = player.pop("_pending_join_welcome")
+            if not custom_sent and self.state != PLAYING:
+                self.say(self._first_player_welcome(user_id, username, recalled), automatic=True)
+        if player.get("_pending_mid_match_intro"):
+            if self.state == PLAYING:
+                self._send_mid_match_join_intro(user_id)
+            else:
+                player.pop("_pending_mid_match_intro", None)
+
     def _send_custom_join_greeting(self, user_id: int) -> bool:
         """Send a configured per-player greeting at most once per process-wide cooldown."""
         player = self.players.get(int(user_id)) or {}
-        username = str(player.get("name") or user_id)
+        if player.get("_custom_join_greeting_sent"):
+            return False
+        username = self._known_username(user_id)
+        if not username:
+            return False
         template = configured_greeting(self.cfg, int(user_id), username)
         if not template:
             return False
@@ -11227,6 +11262,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if not JOIN_GREETING_COOLDOWN.claim(int(user_id), cooldown):
             return False
         self.say(message, automatic=True)
+        player["_custom_join_greeting_sent"] = True
         log.info("sent custom join greeting for %s in %s", username, self.cfg.get("_instance_name", "lobby"))
         return True
 
@@ -12486,10 +12522,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     )
                     recalled = self._restore_solo_difficulty(uid) if was_truly_empty else None
                     if not custom_greeting_sent and not was_playing:
-                        self.say(
-                            self._first_player_welcome(uid, player_name, recalled),
-                            automatic=True,
-                        )
+                        resolved_name = self._known_username(uid)
+                        if resolved_name:
+                            self.say(self._first_player_welcome(uid, resolved_name, recalled), automatic=True)
+                        else:
+                            self.players[uid]["_pending_join_welcome"] = recalled
                     log.info(
                         "first gameplay player joined an empty room: user %s; "
                         "waiting for READY before auto-start so the current "
