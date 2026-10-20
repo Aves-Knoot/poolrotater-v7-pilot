@@ -26,7 +26,7 @@ READER = 'poolrotater-selection-v1'
 MAX_FILE = 512 * 1024**2
 MAX_ROWS = 500_000
 MAX_TEXT = 4096
-MODES = {'standard': (0, None), 'mania4': (3, 4), 'mania7': (3, 7), 'catch': (2, None)}
+MODES = {'standard': (0, None), 'mania4': (3, 4), 'mania7': (3, 7), 'catch': (2, None), 'loved': (0, None)}
 CORE_MODES = ('standard', 'mania4', 'mania7')
 
 def complete_modes(value):
@@ -68,6 +68,9 @@ def canonical(value):
 
 
 def schemas(mode, role):
+    if mode == 'loved' and role == 'catalog':
+        from .catalog_loved import COLUMNS
+        return {'beatmaps': COLUMNS}
     if role == 'converts' and mode in ('mania4', 'mania7'):
         return {'convert_maps': CONVERT, 'verified_converts': CONVERT_VALIDATION, 'metadata': META}
     if role == 'dt' and mode == 'standard':
@@ -313,7 +316,7 @@ def _pack(folder, files):
 
 def export_bundle(catalog, destination, mode, *, dt=None, farm=None, converts=None, convert_validation=None):
     """Build a new local export directory; never overwrite an installed package."""
-    if (mode == 'catch' or mode not in MODES or (dt is not None and mode != 'standard')
+    if (mode in ('catch','loved') or mode not in MODES or (dt is not None and mode != 'standard')
             or (farm is not None and mode == 'standard')
             or ((converts is None)!=(convert_validation is None))
             or (converts is not None and mode=='standard')):
@@ -430,6 +433,9 @@ def validate_manifest(manifest):
     """Closed application contract, not an authenticity assertion."""
     _closed(manifest, {'format', 'export_schema', 'reader', 'mode', 'ruleset', 'keys', 'files', 'sources', 'analysis', 'capabilities', 'exclusions', 'archive', 'content_id'})
     mode = manifest['mode']
+    if mode == 'loved':
+        from .catalog_loved import validate_manifest as validate_loved
+        return validate_loved(manifest)
     if mode == 'catch':
         from .catalog_catch import validate_manifest as validate_catch
         return validate_catch(manifest)
@@ -548,6 +554,9 @@ def inspect_bundle(folder):
         path = folder / item['name']
         if path.is_symlink() or not path.is_file() or path.stat().st_size != item['bytes'] or sha256(path) != item['sha256']:
             raise ConfigError('catalog export content mismatch')
+    if manifest['mode'] == 'loved':
+        from .catalog_loved import inspect as inspect_loved
+        return inspect_loved(folder, manifest)
     if manifest['mode'] == 'catch':
         from .catalog_catch import inspect as inspect_catch
         return inspect_catch(folder, manifest)
@@ -614,6 +623,9 @@ def pool_from_bundle(folder, *, sr_min=0, sr_max=20, source_mode='variety', limi
         raise ConfigError('source capability is unavailable in this catalog')
     options = dict(sr_min=sr_min, sr_max=sr_max, min_passcount=0, max_length=3600,
                    max_map_age_years=0, limit=limit, ratings_db=None)
+    if manifest['mode'] == 'loved':
+        from bot.pool import MapPool
+        return MapPool(str(folder/'catalog.db'), loved_mode=True, **options)
     if manifest['mode'] == 'catch':
         from bot.catch_pool import ProductionCatchPool
         return ProductionCatchPool(folder/'catalog.db', purpose='production', **options)
@@ -652,8 +664,14 @@ def main(argv=None):
     parser.add_argument('--convert-validation',type=Path)
     args = parser.parse_args(argv)
     try:
-        manifest = export_bundle(args.catalog, args.destination, args.mode, dt=args.dt, farm=args.farm,
-                                 converts=args.converts,convert_validation=args.convert_validation)
+        if args.mode == 'loved':
+            if any(x is not None for x in (args.dt,args.farm,args.converts,args.convert_validation)):
+                raise ConfigError('Loved has no qualified companions')
+            from .catalog_loved import export as export_loved
+            manifest=export_loved(args.catalog,args.destination)
+        else:
+            manifest = export_bundle(args.catalog, args.destination, args.mode, dt=args.dt, farm=args.farm,
+                                     converts=args.converts,convert_validation=args.convert_validation)
     except (ConfigError, OSError, sqlite3.Error, ValueError) as exc:
         parser.exit(2, (str(exc) if isinstance(exc, ConfigError) else type(exc).__name__) + '\n')
     print(json.dumps(manifest, sort_keys=True, indent=2, allow_nan=False))

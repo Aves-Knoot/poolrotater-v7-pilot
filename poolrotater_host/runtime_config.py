@@ -27,6 +27,12 @@ STATE_FILE = 'state/runtime-config.json'
 ROOM_DIRECTORY = 'config/rooms'
 
 
+def default_room_title(preset):
+    return {'standard-auto':'AutoHost|Type .help|', 'standard-fixed':'AutoHost|Type .help|',
+            'mania-4k':'AutoHost 4K|Type .help|', 'mania-7k':'AutoHost 7K|Type .help|',
+            'catch-fixed':'PoolRotater | Catch', 'standard-loved':'AutoHost Loved|Type .help|'}[preset]
+
+
 def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=None) -> dict:
     root = checked_root(root)
     marker, config = load(root)
@@ -56,7 +62,7 @@ def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=No
         catalog = str(contained(root, room['catalog']))
         settings = {
             'version': __version__ if live else 'v7.0.0',
-            'room_name': f'PoolRotater {"pilot" if live else "offline"} | {alias}',
+            'room_name': default_room_title(room['preset']) if live else f'PoolRotater offline | {alias}',
             'room_count': len(config['rooms']), 'discord_control_room_alias': alias,
             'ruleset_id': spec['ruleset'], 'mania_keys': spec['keys'] or 4,
             'auto_difficulty': spec['auto_difficulty'],
@@ -65,9 +71,9 @@ def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=No
             'farm_db': catalog if spec['ruleset'] == 0 else '',
             'mania_db': catalog if spec['ruleset'] == 3 else '',
             **({'catch_catalog': catalog} if spec['ruleset'] == 2 else {}),
-            'loved_db': '', 'loved_mode': False, 'mania_farm_db': '',
+            'loved_db': catalog if room['preset']=='standard-loved' else '', 'loved_mode': room['preset']=='standard-loved', 'mania_farm_db': '',
             'mania_farm_enabled': False, 'mania_convert_db': '',
-            'max_length': 240, 'min_passcount': 1000, 'pool_limit': 200,
+            'max_length': 240, 'min_passcount': 0 if room['preset']=='standard-loved' else 1000, 'pool_limit': 200,
             'max_map_age_years': 0,
             'ratings_db': str(contained(root, 'state/controller-ratings.db')),
             'ratings_schema_prepared': prepared_ratings,
@@ -174,10 +180,10 @@ def validate_room_data(data: dict, base: dict):
         raise ConfigError('unsupported runtime response language')
     if 'auto_difficulty' in data and type(data['auto_difficulty']) is not bool:
         raise ConfigError('auto_difficulty must be boolean')
-    if base['ruleset_id'] in (2, 3) and data.get('auto_difficulty', False):
+    if (base['ruleset_id'] in (2, 3) or base.get('loved_mode')) and data.get('auto_difficulty', False):
         raise ConfigError('Catch and Mania require fixed difficulty')
     owner_integrations.validate_settings({k:v for k,v in data.items() if k in EDITABLE_STAFF}, set())
-    preset = ('mania-' + str(base['mania_keys']) + 'k') if base['ruleset_id'] == 3 else 'catch-fixed' if base['ruleset_id'] == 2 else 'standard-auto'
+    preset = ('mania-' + str(base['mania_keys']) + 'k') if base['ruleset_id'] == 3 else 'catch-fixed' if base['ruleset_id'] == 2 else 'standard-loved' if base.get('loved_mode') else 'standard-auto'
     validate_settings({k: v for k, v in data.items() if k in GAMEPLAY_KEYS}, preset=preset)
     if base['ruleset_id'] == 2:
         from bot.mode import validate_catch_config
@@ -202,7 +208,7 @@ class RuntimeConfigBridge:
                  f'{ROOM_DIRECTORY}/universal.json', 'state/rating-migration.json']
         names += [f'{ROOM_DIRECTORY}/{r["alias"]}.json' for r in self.initial['rooms']]
         paths = [contained(self.root, n) for n in names]
-        paths += [Path(r['settings'].get('catch_catalog') or r['settings']['farm_db'] or r['settings']['mania_db']) for r in self.initial['rooms']]
+        paths += [Path(r['settings'].get('catch_catalog') or r['settings'].get('loved_db') or r['settings']['farm_db'] or r['settings']['mania_db']) for r in self.initial['rooms']]
         pointer = contained(self.root, POINTER)
         paths.append(pointer)
         if pointer.exists():
@@ -312,7 +318,14 @@ class RuntimeConfigBridge:
                             or set(base) - set(old) - additions):
                         raise ConfigError('runtime base schema changed; coordinated reconfiguration required')
                     validate_room_data(data, old)
+                    explicit = load_overrides(self.root, *load(self.root)).get(room['alias'], {}).get('settings', {})
                     for key, value in base.items():
+                        # New-install title defaults are not a rename request for
+                        # a retained host. Preserve its saved native title unless
+                        # the operator explicitly changed the title overlay.
+                        if (key == 'room_name' and key not in explicit
+                                and value == default_room_title(room['preset'])):
+                            continue
                         if key in pinned_keys(base) or old.get(key) != value:
                             data[key] = value
                 validate_room_data(data, base)

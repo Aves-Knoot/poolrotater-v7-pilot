@@ -7596,7 +7596,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     invalid = invalid or (int(expected.beatmap_id) != beatmap_id
                                           or getattr(expected, 'is_dt', False) != dt)
                 if dt:
-                    invalid = invalid or bool(set(mods) - {'DT', 'NF'}) or item.get('freestyle', previous.get('freestyle', True))
+                    invalid = invalid or bool(set(mods) - {'DT', 'NF'})
+                    invalid = invalid or type(item.get('freestyle', previous.get('freestyle'))) is not bool
                     for mod in raw_mods:
                         if isinstance(mod, dict) and mod.get('acronym') == 'DT':
                             speed = (mod.get('settings') or {}).get('speed_change', 1.5)
@@ -8043,10 +8044,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     or not math.isfinite(m.sr) or not self.pool.sr_min <= m.sr <= self.pool.sr_max
                     or m.hit_length > self.pool.max_length):
                 raise ValueError('disabled/unverified/out-of-range DT variant')
-            # Each item owns its speed. Never change global lobby mods, and
-            # never permit difficulty/ruleset substitution on a verified DT pick.
+            # Each item owns its required speed; preserve the operator's
+            # freestyle preference just as for NM. Playlist auditing still
+            # verifies the selected chart, DT speed and calculated rating.
             rules['required_mods'] = [*rules['required_mods'], 'DT']
-            rules['freestyle'] = False
         if self.cfg.get("ruleset_id", 0) == 3:
             rules["ruleset_id"] = 3
             if getattr(m, "is_mania_convert", False):

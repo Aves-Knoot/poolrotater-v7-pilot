@@ -10,6 +10,7 @@ PRESETS = {
     'standard-fixed': {'ruleset': 0, 'keys': None, 'auto_difficulty': False, 'sr_min': 3.5, 'sr_max': 4.5},
     'mania-4k': {'ruleset': 3, 'keys': 4, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
     'mania-7k': {'ruleset': 3, 'keys': 7, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
+    'standard-loved': {'ruleset': 0, 'keys': None, 'auto_difficulty': False, 'sr_min': 4.0, 'sr_max': 6.0},
     'catch-fixed': {'ruleset': 2, 'keys': None, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
 }
 # Catch is explicit opt-in; upgrades and fresh defaults retain the original topology.
@@ -105,7 +106,7 @@ def defaults(presets: list[str] | None = None) -> dict:
         if name not in PRESETS:
             raise ConfigError('unsupported preset')
         spec = PRESETS[name]
-        filename = ('standard.db' if spec['ruleset'] == 0 else 'catch.db' if spec['ruleset'] == 2
+        filename = ('loved.db' if name == 'standard-loved' else 'standard.db' if spec['ruleset'] == 0 else 'catch.db' if spec['ruleset'] == 2
                     else f'mania_{spec["keys"]}k.db')
         rooms.append({'alias': f'room{index}', 'preset': name, 'sr_min': spec['sr_min'],
                       'sr_max': spec['sr_max'], 'language': 'en', 'catalog': f'catalogs/{filename}'})

@@ -120,6 +120,15 @@ def _legacy_feed(feed):
     return validate_feed({**feed,'events':events})
 
 
+def _scoped_feed(feed, modes):
+    events=[]
+    for event in feed['events']:
+        selected=[m for m in event['modes'] if m in modes]
+        if selected:events.append({**event,'modes':selected,'memberships':
+            {m:event['memberships'][m] for m in selected} if event['memberships'] else {}})
+    return validate_feed({**feed,'events':events})
+
+
 def _default_feed():
     return {'format':1,'revision':1,'events':[{'kind':'beatmap','id':1549496,'modes':list(CORE_MODES),
             'action':'exclude','reason':'missing_audio','memberships':{}}]}
@@ -171,8 +180,9 @@ def initialize(custody,served,*,now=None):
         atomic_json(stage/'state.json',{'format':1,'purpose':'poolrotater-catalog-signers','repository_id':str(uuid.uuid4()),
             'served_root':str(served),'bootstrap_sha256':hashlib.sha256(bootstrap).hexdigest(),'keys':key_records,
             'version':0,'reserved_version':0,'renewal':None,'clock_high_water':now.isoformat(),'content_ids':{},'exclusions':None,'pending':None})
-        served.mkdir(mode=0o755);public_created=True
-        for directory in ('metadata','targets'):(served/directory).mkdir(mode=0o755)
+        served.mkdir(mode=0o755);served.chmod(0o755);public_created=True
+        for directory in ('metadata','targets'):
+            (served/directory).mkdir(mode=0o755);(served/directory).chmod(0o755)
         _write(served/'metadata/1.root.json',bootstrap)
         os.rename(stage,custody)
         fd=os.open(parent,os.O_RDONLY|os.O_DIRECTORY)
@@ -275,6 +285,7 @@ class Publisher:
                   f'metadata/{version}.snapshot.json',f'metadata/{version}.timestamp.json','metadata/timestamp.json'}
         names={'exclusions.json'}
         if _extended(record):names.add('exclusions-v2.json')
+        if 'loved' in record['content_ids'] or any('loved' in e['modes'] for e in record['exclusions']['events']):names.add('exclusions-loved.json')
         from .catalog_export import read_manifest
         for mode in record['content_ids']:
             info=objects['targets'].signed.targets[mode+'/manifest.json']
@@ -290,7 +301,12 @@ class Publisher:
                 'pending_catalog_exclusion_identity_changed')
         if _extended(record):
             extra=objects['targets'].signed.targets['exclusions-v2.json']
-            raw=canonical(record['exclusions'])
+            raw=canonical(_scoped_feed(record['exclusions'],set(CORE_MODES)|{'catch'}))
+            require(extra.length==len(raw) and extra.hashes=={'sha256':hashlib.sha256(raw).hexdigest()},
+                    'pending_catalog_exclusion_identity_changed')
+        if 'exclusions-loved.json' in names:
+            extra=objects['targets'].signed.targets['exclusions-loved.json']
+            raw=canonical(_scoped_feed(record['exclusions'],{'loved'}))
             require(extra.length==len(raw) and extra.hashes=={'sha256':hashlib.sha256(raw).hexdigest()},
                     'pending_catalog_exclusion_identity_changed')
         for name,info in objects['targets'].signed.targets.items():
@@ -371,6 +387,10 @@ class Publisher:
         for name in sorted(record['files']):
             if name=='metadata/timestamp.json':continue
             path=self.served/name;path.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
+            # Administrator umask077 must not make a new public mode unreadable
+            # by the independent unprivileged HTTPS listener. Signing custody
+            # and pending directories remain private. Validate before widening.
+            _public_root(path.parent);path.parent.chmod(0o755)
             if name.startswith('targets/'):_copy_target(path,pending/name,record['files'][name],mode=0o644)
             else:_write(path,(pending/name).read_bytes())
         # An operator must not roll back the public timestamp behind custody.
@@ -667,7 +687,9 @@ class Publisher:
                     else:_copy_target(destination,source,{'bytes':info.length,'sha256':info.hashes['sha256']},mode=0o600)
             feeds={'exclusions.json':_legacy_feed(feed)}
             if 'catch' in bundles or any('catch' in e['modes'] for e in feed['events']):
-                feeds['exclusions-v2.json']=feed
+                feeds['exclusions-v2.json']=_scoped_feed(feed,set(CORE_MODES)|{'catch'})
+            if 'loved' in bundles or any('loved' in e['modes'] for e in feed['events']):
+                feeds['exclusions-loved.json']=_scoped_feed(feed,{'loved'})
             for name,body in feeds.items():
                 raw=canonical(body);info=TargetFile.from_data(name,raw,['sha256'])
                 targets.signed.targets[info.path]=info

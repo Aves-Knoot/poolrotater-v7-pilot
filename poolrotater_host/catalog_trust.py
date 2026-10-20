@@ -340,7 +340,7 @@ def verified_target(repository, cache, trust, name, *, maximum=65536):
     Exclusion targets have independent application revisions; TUF metadata replay
     protection is shared with catalogs. Returned bytes are not store authority.
     """
-    if (not isinstance(trust, BootstrapTrust) or name not in ('exclusions.json','exclusions-v2.json')
+    if (not isinstance(trust, BootstrapTrust) or name not in ('exclusions.json','exclusions-v2.json','exclusions-loved.json')
             or type(maximum) is not int or not 0 < maximum <= 65536):
         raise ConfigError('explicit trust and bounded exclusion target required')
     Updater, Config, Fetcher, errors = dependencies()

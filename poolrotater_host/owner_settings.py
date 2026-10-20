@@ -91,8 +91,10 @@ def validate_settings(value, *, preset):
     if not isinstance(value,dict) or set(value)-GAMEPLAY_KEYS:
         raise ConfigError('owner gameplay contains undeclared fields')
     if preset not in PRESETS:raise ConfigError('owner gameplay preset invalid')
-    for key in ('lazer_coordinator_enabled','lazer_chat_patrol_enabled','lazer_rejoin_on_hard_restart','loved_mode'):
+    for key in ('lazer_coordinator_enabled','lazer_chat_patrol_enabled','lazer_rejoin_on_hard_restart'):
         if value.get(key):raise ConfigError('owner gameplay unsupported active legacy transport or catalog')
+    if 'loved_mode' in value and value['loved_mode'] is not (preset=='standard-loved'):
+        raise ConfigError('Loved mode must match the installed catalog preset')
     for key,item in value.items():
         if key in BOOLEANS:
             if type(item) is not bool:raise ConfigError('owner gameplay boolean invalid')

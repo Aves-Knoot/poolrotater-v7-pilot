@@ -116,7 +116,7 @@ def membership_event(source, bundle, set_id, *, reason='missing_audio'):
     manifest = inspect_bundle(bundle); mode = manifest['mode']
     with source_snapshot(source) as (db, identity):
         if identity != manifest['sources']['catalog']: raise ConfigError('set expansion source differs from catalog provenance')
-        table = 'beatmaps' if mode == 'standard' else 'maps'
+        table = 'beatmaps' if mode in ('standard','loved') else 'maps'
         if 'beatmapset_id' not in {r[1] for r in db.execute(f'PRAGMA table_info({table})')}:
             raise ConfigError('publisher source lacks beatmapset identity')
         ids = sorted(r[0] for r in db.execute(f'SELECT beatmap_id FROM {table} WHERE beatmapset_id=?', (set_id,))
@@ -132,7 +132,7 @@ class ExclusionPolicy:
         self._stamp = None; self._target = None
 
     def refresh(self):
-        path = self.store.path/('exclusions-catch.json' if self.mode=='catch' else 'exclusions.json')
+        path = self.store.path/('exclusions-'+self.mode+'.json' if self.mode in ('catch','loved') else 'exclusions.json')
         try:
             st = path.lstat()
             if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
@@ -140,7 +140,7 @@ class ExclusionPolicy:
             stamp = (st.st_dev,st.st_ino,st.st_ctime_ns,st.st_mtime_ns,st.st_size,st.st_mode,st.st_uid)
         except FileNotFoundError: stamp = None
         if stamp == self._stamp and self.revision is not None: return False
-        state = self.store.exclusions(mode='catch') if self.mode=='catch' else self.store.exclusions()
+        state = self.store.exclusions(mode=self.mode) if self.mode in ('catch','loved') else self.store.exclusions()
         if self.revision is not None and (state['revision'] < self.revision
                 or (state['revision'] == self.revision and state['target_sha256'] != self._target)):
             raise ConfigError('installed exclusion state regressed during reader lifetime')

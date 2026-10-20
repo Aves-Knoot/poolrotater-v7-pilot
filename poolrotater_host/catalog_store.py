@@ -27,14 +27,14 @@ from .runtime_package import fixture_only, json_bytes
 POINTER = 'state/catalog-installation.json'
 RESERVE = 5 * 1024**3
 MAX_VERSIONS = 128
-CATALOG_KEYS = ('catch_catalog', 'farm_db', 'standard_dt_db', 'standard_catalog_binding', 'mania_db',
+CATALOG_KEYS = ('loved_db', 'loved_mode', 'catch_catalog', 'farm_db', 'standard_dt_db', 'standard_catalog_binding', 'mania_db',
                 'mania_farm_db', 'mania_farm_enabled', 'mania_convert_db',
                 'mania_convert_validation_db', '_host_catalog_set', '_host_catalog_reference')
 
 
 def mode_for(room):
     spec = PRESETS[room['preset']]
-    return 'standard' if spec['ruleset'] == 0 else 'catch' if spec['ruleset'] == 2 else 'mania' + str(spec['keys'])
+    return 'loved' if room['preset'] == 'standard-loved' else 'standard' if spec['ruleset'] == 0 else 'catch' if spec['ruleset'] == 2 else 'mania' + str(spec['keys'])
 
 
 def _hash(value):
@@ -342,8 +342,8 @@ class CatalogStore:
             raise ConfigError('stage requires distinct supported modes')
         with self._writer():
             before = self.current()
-            if 'catch' in modes:
-                self._accept_exclusions_locked(repository,include_catch=True)
+            if {'catch','loved'} & set(modes):
+                self._accept_exclusions_locked(repository,include_catch='catch' in modes,include_loved='loved' in modes)
             if len(list((self.path / 'versions').iterdir())) + len(modes) > MAX_VERSIONS:
                 raise ConfigError('catalog version budget exceeded; reference-aware cleanup required')
             selected = dict(before['modes'])
@@ -436,11 +436,11 @@ class CatalogStore:
     def exclusions(self, *, mode=None):
         from .catalog_exclusions import initial_state, validate_state
         self._check()
-        name='exclusions-catch.json' if mode=='catch' else 'exclusions.json'
+        name='exclusions-'+mode+'.json' if mode in ('catch','loved') else 'exclusions.json'
         state = self._read(name, optional=True)
         return validate_state(state if state is not None else initial_state(self.trust.identity), self.trust.identity)
 
-    def _accept_exclusions_locked(self, repository, *, include_catch=False):
+    def _accept_exclusions_locked(self, repository, *, include_catch=False, include_loved=False):
         from .catalog_exclusions import apply_feed, validate_feed
         from .catalog_trust import verified_target
         from .layout import unique_fields
@@ -473,12 +473,18 @@ class CatalogStore:
             # Catch state never enters the legacy file. An older runtime can
             # reactivate its previous reference without deleting newer data.
             self._write(self.path/'exclusions-catch.json',catch)
+        if include_loved:
+            loved_raw,loved_feed=target('exclusions-loved.json')
+            if loved_feed['revision']!=feed['revision'] or any(e['modes']!=['loved'] for e in loved_feed['events']):
+                raise ConfigError('Loved exclusion target scope/revision mismatch')
+            loved=apply_feed(self.exclusions(mode='loved'),loved_feed,hashlib.sha256(loved_raw).hexdigest())
+            self._write(self.path/'exclusions-loved.json',loved)
         self._write(self.path/'exclusions.json',result)
         return result
 
     def accept_exclusions(self, repository):
         with self._writer():
-            return self._accept_exclusions_locked(repository,include_catch='catch' in self.current()['modes'])
+            return self._accept_exclusions_locked(repository,include_catch='catch' in self.current()['modes'],include_loved='loved' in self.current()['modes'])
 
     def rollback(self, reference=None):
         """Explicit local verified rollback; remote metadata and exclusions unchanged."""
@@ -687,7 +693,8 @@ def settings_for(room, resolved):
     folder, manifest = resolved['bundles'][mode_for(room)]
     companions = manifest['capabilities']['companions']
     files = {f['name']: f['sha256'] for f in manifest['files']}
-    return {**({'catch_catalog': str(folder/'catalog.db')} if manifest['ruleset']==2 else {}),
+    return {**({'loved_db':str(folder/'catalog.db'),'loved_mode':True} if manifest['mode']=='loved' else {}),
+            **({'catch_catalog': str(folder/'catalog.db')} if manifest['ruleset']==2 else {}),
             'farm_db': str(folder / 'catalog.db') if manifest['ruleset'] == 0 else '',
             'mania_db': str(folder / 'catalog.db') if manifest['ruleset'] == 3 else '',
             'standard_dt_db': str(folder / 'dt.db') if 'dt' in companions else '',

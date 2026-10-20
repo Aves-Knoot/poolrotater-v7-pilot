@@ -33,7 +33,7 @@ def main(argv=None):
     download.add_argument('--ca-file', required=True, type=Path)
     download.add_argument('--ca-sha256', required=True)
     download.add_argument('--destination', required=True, type=Path)
-    download.add_argument('--mode', required=True, choices=('standard', 'mania4', 'mania7', 'catch'))
+    download.add_argument('--mode', required=True, choices=('standard', 'mania4', 'mania7', 'catch', 'loved'))
     for action in ('install', 'check', 'code-proof', 'status', 'support', 'unit', 'configure', 'authorize', 'cancel',
                    'recover', 'pacing-recover', 'catalog-import', 'catalog-recover',
                    'catalog-trust-replace', 'catalog-trust-recover', 'start', 'stop', 'remove',
@@ -122,7 +122,7 @@ def main(argv=None):
             command.add_argument('--trust-root', required=True, type=Path)
             command.add_argument('--trust-sha256', required=True)
             if action == 'catalog-import':
-                command.add_argument('--mode', required=True, action='append', choices=('standard', 'mania4', 'mania7', 'catch'))
+                command.add_argument('--mode', required=True, action='append', choices=('standard', 'mania4', 'mania7', 'catch', 'loved'))
     for name in ('setup', 'check', 'status', 'config', 'runtime-config', 'simulate'):
         command = commands.add_parser(name)
         command.add_argument('--root', type=Path, required=True, help='explicit private host directory')

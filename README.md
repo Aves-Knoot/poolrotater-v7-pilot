@@ -1,5 +1,7 @@
 # PoolRotater distributed host
 
-Current release: **v7.2.5**. Download the installer kit from the GitHub release.
-See [recovery release notes](docs/V7_2_5_RECOVERY_REPAIR.md) and the kit README for
-installation, preserved settings and the automatic controller-update policy.
+Current release: **v7.2.6**. Download the installer kit from the GitHub release.
+
+New [Standard Loved hosting](docs/LOVED_OPERATOR_GUIDE.md), full signed owner catalogs,
+owner-matching fresh room titles and DT freestyle support. Existing hosts retain
+their rooms and configuration. See [release notes](docs/V7_2_6_LOVED_HOSTING.md).

@@ -70,8 +70,9 @@ def _inventory(store, path):
 def _policy(store, repository, stage):
     """New trust must explicitly carry every existing exclusion scope."""
     include_catch='catch' in stage.current()['modes']
-    stage._accept_exclusions_locked(repository,include_catch=include_catch)
-    for mode in ((None,'catch') if include_catch else (None,)):
+    include_loved='loved' in stage.current()['modes']
+    stage._accept_exclusions_locked(repository,include_catch=include_catch,include_loved=include_loved)
+    for mode in [None]+(['catch'] if include_catch else [])+(['loved'] if include_loved else []):
         previous=store.exclusions(mode=mode)
         state=stage.exclusions(mode=mode)
         active={(m,e['kind'],e['id']) for e in state['events'] for m in e['modes']}
@@ -143,7 +144,8 @@ def replace(store, repository, trust, *, old_sha256, new_sha256, confirm_replace
         if candidate is not None and store._journal(candidate)['after'] != before:
             raise ConfigError('uncommitted catalog candidate must settle before trust replacement')
         modes = sorted(set(CORE_MODES) | set(before['modes']) |
-                       ({'catch'} if (store.path/'exclusions-catch.json').exists() else set()))
+                       ({'catch'} if (store.path/'exclusions-catch.json').exists() else set()) |
+                       ({'loved'} if (store.path/'exclusions-loved.json').exists() else set()))
         if os.statvfs(store.path).f_bavail * os.statvfs(store.path).f_frsize < RESERVE + 1024**3:
             raise ConfigError('catalog trust replacement disk reserve required')
         old_inventory = _inventory(store, store.path)

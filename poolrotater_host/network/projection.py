@@ -64,7 +64,7 @@ def project(snapshot, config, *, now, code_version, catalog_version='unavailable
             if type(current) is not dict:continue
             label = current.get('label')
             current = {'beatmap_id': current.get('beatmap_id'), 'title': label[:160] if type(label) is str else label, 'stars': current.get('stars')}
-        observation = {'alias': alias, 'osu_room_id': row.get('room_id'), 'preset': settings['preset'],
+        observation = {'alias': alias, 'osu_room_id': row.get('room_id'), 'preset': 'standard-fixed' if settings['preset']=='standard-loved' else settings['preset'],
             'state': state, 'occupants': status.get('players'), 'visibility': 'public',
             'title': details.get('title')[:160] if type(details.get('title')) is str else details.get('title'), 'min_stars': details.get('min_stars'), 'max_stars': details.get('max_stars'),
             'observed_at': generated-age, 'code_version': status.get('version'),

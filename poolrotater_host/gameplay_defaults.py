@@ -396,6 +396,10 @@ PROFILES = {'mania-4k': {'settings': {'active_chat_countdown_extension_seconds':
 
 def settings_for(preset):
     from .owner_settings import validate_settings, GAMEPLAY_KEYS
+    if preset == 'standard-loved':
+        settings=copy.deepcopy(PROFILES['standard-fixed']['settings'])
+        settings.update(loved_mode=True,stream_enabled=False,stream_share=0.,min_passcount=0)
+        return validate_settings(settings,preset=preset)
     if preset == 'catch-fixed':
         from bot.mode import CATCH_DEFAULTS
         # Operational defaults come from the engine, never from another ruleset's tuning.

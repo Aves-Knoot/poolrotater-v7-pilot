@@ -41,7 +41,7 @@ def inspect_catalog(path: Path, preset: str) -> dict:
             columns = {r[1] for r in db.execute(f'PRAGMA table_info({table})')}
             if not expected <= columns:
                 raise ConfigError('catalog schema does not match preset')
-            if spec['ruleset'] == 0 and 'farm_report' not in tables:
+            if spec['ruleset'] == 0 and preset!='standard-loved' and 'farm_report' not in tables:
                 raise ConfigError('standard catalog lacks prepared farm features')
             if spec['ruleset'] == 3:
                 invalid = db.execute('SELECT COUNT(*) FROM maps WHERE mode_int IS NULL OR mode_int!=3 '
@@ -106,7 +106,10 @@ def make_pool(root: Path, room: dict, *, ratings: Path | None = None, resolved=N
         options = dict(sr_min=room['sr_min'], sr_max=room['sr_max'], max_length=240,
                        min_passcount=1000, max_map_age_years=0, limit=200,
                        ratings_db=str(ratings) if ratings is not None else None,ratings_reader=reader)
-        if spec['ruleset'] == 3:
+        if room['preset']=='standard-loved':
+            options['min_passcount']=0
+            pool=MapPool(cfg['loved_db'],loved_mode=True,**options)
+        elif spec['ruleset'] == 3:
             pool = ManiaPool(cfg['mania_db'], mania_keys=spec['keys'],
                              mania_farm_enabled=cfg['mania_farm_enabled'], mania_farm_db=cfg['mania_farm_db'], **options)
         elif cfg['standard_dt_db']:
@@ -126,7 +129,10 @@ def make_pool(root: Path, room: dict, *, ratings: Path | None = None, resolved=N
     options = dict(sr_min=room['sr_min'], sr_max=room['sr_max'], max_length=240,
                    min_passcount=1000, max_map_age_years=0, limit=200,
                    ratings_db=str(ratings) if ratings is not None else None,ratings_reader=reader)
-    if spec['ruleset'] == 3:
+    if room['preset']=='standard-loved':
+        options['min_passcount']=0
+        pool=MapPool(str(path),loved_mode=True,**options)
+    elif spec['ruleset'] == 3:
         pool = ManiaPool(str(path), mania_keys=spec['keys'], mania_farm_enabled=False, mania_farm_db='', **options)
     else:
         pool = MapPool(str(path), **options)
