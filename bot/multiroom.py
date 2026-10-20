@@ -594,17 +594,18 @@ class DiscordRoomView(DiscordControl):
         return self.transport.react_to_map(emoji, map_key, channel_id or self._channel_id())
 
     def _public_status_channel_name(self):
-        root = self.cfg.get("_host_root", "")
-        if Path(root).name == "owner":
-            from poolrotater_host.discord_relay.model import channel_name
-            alias = self._instance_name()
-            preset = ("catch-fixed" if self.cfg.get("ruleset_id") == 2 else
-                      "mania-4k" if self.cfg.get("mania_keys") == 4 else
-                      "mania-7k" if self.cfg.get("mania_keys") == 7 else "standard-fixed")
-            return channel_name(int(alias.removeprefix("room")), preset, settings={"auto_difficulty": bool(self.cfg.get("auto_difficulty", False))})
-        return super()._public_status_channel_name()
+        from poolrotater_host.discord_relay.owner_panel import identity
+        name = identity(self.cfg)
+        return name[0] if name else super()._public_status_channel_name()
+
+    def _public_status_display_name(self):
+        from poolrotater_host.discord_relay.owner_panel import identity
+        name = identity(self.cfg)
+        return name[1] if name else super()._public_status_display_name()
 
     def update_public_status(self, **kwargs):
+        from poolrotater_host.discord_relay.owner_panel import decorate
+        kwargs = decorate(self.cfg, kwargs)
         kwargs.update(
             channel_id=self._public_status_channel_id(),
             channel_base_name=self._public_status_channel_name(),

@@ -1429,6 +1429,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             str(self.cfg.get("discord_public_status_label", "") or ""),
             str(self.cfg.get("discord_public_join_base_url", "") or ""),
             bool(rename_channel),
+            (int(time.monotonic() // (20 if self.state == PLAYING else 60))
+             if Path(str(self.cfg.get("_host_root", ""))).name == "owner" else None),
         )
         if not force and snapshot == self._last_discord_public_status:
             return False

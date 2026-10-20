@@ -1,4 +1,4 @@
-# Fresh Standard Loved host — v7.2.7
+# Fresh Standard Loved host — v7.2.8
 
 Use this guide for a NEW hosting installation. Existing hosts retain their current
 instances, rooms, OAuth, trust, configuration and state. Downloading this release
@@ -31,7 +31,7 @@ checksum file, extract into a new folder and enter `kit`. Verify internal files:
 ```sh
 sha256sum -c SHA256SUMS.txt
 sudo /usr/bin/python3.12 -I -S -B install.py --instance first \
-  --bundle runtime.zip --sha256 1111510b61271f3c87baa4fa3f7c512bafa1bd8e69ab6afe244f9b4307492aec --live-pilot --preset standard-loved
+  --bundle runtime.zip --sha256 f4691af18cd06165ff7e17d9e4eadd4ccefe13096e060be00cd9f042945b8a8f --live-pilot --preset standard-loved
 ```
 
 Keep the root-owned release directory printed by installation as `pilot_release`.
