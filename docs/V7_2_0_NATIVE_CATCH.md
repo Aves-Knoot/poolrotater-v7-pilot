@@ -84,13 +84,22 @@ this new-install example.
 
 ## Explicit owner pilot addition
 
-The protected `catch-pilot-prepare` operation accepts JSON on stdin with `alias`,
+The protected `catch-pilot-prepare --settings-stdin` operation accepts JSON on stdin with `alias`,
 `sr_min`, `sr_max`, `title` and the current `expected_host_sha256`, obtained from
 `catch-pilot-status`. It requires unused numbered capacity, verified activated
 Catch data, disabled/stopped bot and network services, no remaining service
 processes, and clean stopped ownership. It starts nothing. Existing shared
 Discord identities/greetings are reused; the unused alias must have its retained
 control channel. No credentials are supplied to this operation.
+
+Empty-only maintenance deliberately parks positively closed rooms. If catalog import reports that stopped ownership needs reconciliation, retain the state and review ownership first. For rows that are all positively closed (no room/channel ID and no ownership uncertainty), the supplemental `normalize_closed_parked.py` changes only diagnostic phase to stopped and preserves a private before-record. It refuses active, unknown or pending ownership; it does not contact osu!, clear ownership or start rooms. Verify the supplemental checksum before running it against the exact installed release:
+
+```bash
+sudo /usr/bin/python3.12 -I -S -B ./normalize_closed_parked.py \
+  --instance "$pilot_instance" --release "$pilot_release"
+```
+
+Then repeat the refused catalog import, obtain a fresh `catch-pilot-status` host digest, and submit the reviewed JSON with `pr catch-pilot-prepare --settings-stdin`. If preparation is already pending, retain state and use resume instead of submitting a second request.
 
 A root-held transaction preserves the previous configuration. Interrupted
 preparation fences startup; retain state and use `catch-pilot-resume`, rather
