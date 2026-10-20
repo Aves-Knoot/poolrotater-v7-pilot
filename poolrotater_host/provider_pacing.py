@@ -252,7 +252,10 @@ class PersistentRequestGate:
             self._held = deepcopy(value); self._count(value, 'attempted')
             self._usage_admission()
             wait = self._wait_seconds(value, now)
-            if value['halted'] or wait >= deadline - time.monotonic():
+            # Do not sleep away a request's network budget at the tail of a
+            # cooldown. The caller retries later with a fresh bounded deadline;
+            # ordinary spacing still uses the existing paced wait below.
+            if value['halted'] or value['blocked'] > now['monotonic'] or wait >= deadline - time.monotonic():
                 self._count(value, 'deferred'); self._save(value)
                 # A halted limiter requires review, rather than endless retries.
                 refused = AuthError if value['halted'] else ProviderAdmissionDeferred

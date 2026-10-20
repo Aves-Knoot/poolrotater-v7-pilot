@@ -1,3 +1,5 @@
-# PoolRotater v7.2.1
+# PoolRotater distributed host
 
-Optional native Catch and retained Standard/Mania lobbies. Use the verified release installer ZIP. See [Catch setup and rollback](docs/V7_2_0_NATIVE_CATCH.md) and [latest repair notes](docs/V7_2_1_CATCH_DISCORD_REPAIR.md). Linux x86_64/glibc, CPython 3.12 and systemd remain the qualified target. Existing hosts keep their rooms.
+Current release: **v7.2.5**. Download the installer kit from the GitHub release.
+See [recovery release notes](docs/V7_2_5_RECOVERY_REPAIR.md) and the kit README for
+installation, preserved settings and the automatic controller-update policy.

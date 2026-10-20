@@ -221,8 +221,8 @@ class Store:
                 correction = skew if skew is not None and abs(skew) <= 30 else None
                 observed = observation['observed_at'] + (correction or 0)
                 age=max(0,now-min(host['received'],observed))
-                if age>=600: continue
-                stale=age>=180
+                if age>=1800: continue
+                stale=age>=600
                 rich = None
                 display_value = payload.get('display_rooms',{}).get(stored['alias'])
                 if protocol_version == 2 and display_value is not None:
@@ -246,7 +246,7 @@ class Store:
         with self.transaction() as db:
             supported = db.execute("SELECT value FROM meta WHERE key='ratings_format'").fetchone() is not None
         return {'ok':True,'protocol_version':1,'server_time':self.clock(),'maximum_rooms':4,'maximum_body_bytes':65536,
-                'heartbeat_seconds':60,'stale_seconds':180,'hide_seconds':600,'scopes':list(SCOPES),'ratings_supported':supported,
+                'heartbeat_seconds':60,'stale_seconds':600,'hide_seconds':1800,'scopes':list(SCOPES),'ratings_supported':supported,
                 'rating_batch_limits':{'events':500,'bytes':512*1024} if supported else None}
 
     def status(self, token):

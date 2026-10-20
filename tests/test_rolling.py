@@ -882,8 +882,8 @@ from rolling.worker import run
         for index in (1, 2, 3, 4):
             keys = 7 if index == 3 else 4
             cfg = {"ruleset_id": 0 if index < 3 else 3, "mania_keys": keys,
-                   "farm_db": str(farm), "mania_db": f"catalog-data/mania_{keys}k.db",
-                   "mania_farm_db": f"farm-data/mania_{keys}k_farm.db", "pool_limit": 100,
+                   "farm_db": str(farm), "mania_db": str(Path(__file__).resolve().parents[1] / f"catalog-data/mania_{keys}k.db"),
+                   "mania_farm_db": str(Path(__file__).resolve().parents[1] / f"farm-data/mania_{keys}k_farm.db"), "pool_limit": 100,
                    "sr_min": 2, "sr_max": 5, "max_length": 300, "min_passcount": 0,
                    "max_map_age_years": 30, "auto_difficulty": index == 1, "loved_mode": False,
                    "room_name": "Offline test", "discord_control_enabled": False,

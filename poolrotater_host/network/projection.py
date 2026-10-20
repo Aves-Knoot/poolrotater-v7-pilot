@@ -2,13 +2,15 @@
 import os
 import stat
 
+DISPLAY_OBSERVATION_SECONDS = 120
+
 from ..layout import contained
 from .contracts import decode, room, versions, number, require, NetworkError
 
 
 def verified_visibility(worker, row):
-    """Only a fresh, matching room with a confirmed empty password is public."""
-    if not (worker and worker.fresh() and worker.status.get('ready') is True
+    """Display-only grace; control freshness and ownership checks stay strict."""
+    if not (worker and worker.display_fresh() and worker.status.get('ready') is True
             and worker.status.get('running') is True
             and row.get('room_id') == worker.status.get('room_id')
             and type(row.get('room_id')) is int and row['room_id'] > 0):
@@ -38,14 +40,15 @@ def project(snapshot, config, *, now, code_version, catalog_version='unavailable
     if type(snapshot) is not dict or type(snapshot.get('rooms')) is not dict:
         return result
     generated = snapshot.get('generated_at')
-    if type(generated) not in (int, float) or not 0 <= now-generated < 15:
+    if type(generated) not in (int, float) or not 0 <= now-generated < DISPLAY_OBSERVATION_SECONDS:
         return result
     for settings in config['rooms']:
         alias = settings['alias']; row = snapshot['rooms'].get(alias)
-        if type(row) is not dict or row.get('network_visibility') != 'public' or row.get('healthy') is not True:
+        if type(row) is not dict or row.get('network_visibility') != 'public':
             continue
         status = row.get('status'); age = row.get('heartbeat_age')
-        if (type(status) is not dict or type(age) not in (int, float) or not 0 <= age < 15
+        if (type(status) is not dict or type(age) not in (int, float) or not 0 <= age < DISPLAY_OBSERVATION_SECONDS
+                or age + (now-generated) >= DISPLAY_OBSERVATION_SECONDS
                 or status.get('ready') is not True or status.get('running') is not True
                 or row.get('room_id') != status.get('room_id')):
             continue

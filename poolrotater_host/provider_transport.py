@@ -1,4 +1,4 @@
-"""Whole-operation HTTPS transport; the prepared upstream entry is disabled.
+"""Bounded admission and HTTPS transport; prepared upstream entry is disabled.
 
 Spawn avoids inheriting OAuth lease descriptors or forking the threaded TLS server.
 Only the fixed worker receives request secrets, over multiprocessing's private pipe.
@@ -10,6 +10,7 @@ from email.utils import parsedate_to_datetime
 import hashlib
 import http.client
 import json
+import logging
 import math
 import multiprocessing
 import os
@@ -26,6 +27,31 @@ from .process_target import OwnedChild, require_child_platform
 
 MAX_TRUST = 2 * 1024**2
 MAX_IPC = 8 * 1024**2  # Bounded JSON re-encoding of the <=1 MiB provider reply.
+
+
+def _request_kind(request):
+    """Fixed labels only: never log a URL, account/room ID or request content."""
+    path = request.path.split('?', 1)[0]
+    if path == '/api/v2/chat/ack': return 'chat_ack'
+    if re.fullmatch(r'/api/v2/chat/channels/[0-9]+/messages', path):
+        return 'chat_read' if request.method == 'GET' else 'chat_send'
+    if path == '/api/v2/me': return 'identity'
+    if path == '/oauth/token': return 'oauth_token'
+    return 'provider_read' if request.method == 'GET' else 'provider_write'
+
+
+def _timing(request, *, phase, outcome, elapsed, budget, phase_elapsed=None, status=None):
+    """Observational logging cannot fail or alter provider authority/outcomes."""
+    try:
+        if outcome == 'complete' and elapsed < 1: return
+        logging.getLogger(__name__).log(
+            logging.INFO if outcome == 'complete' else logging.WARNING,
+            'provider request timing: operation=%s phase=%s outcome=%s elapsed=%.3fs '
+            'budget=%.3fs phase_elapsed=%.3fs http_status=%s',
+            _request_kind(request), phase, outcome, elapsed, budget,
+            elapsed if phase_elapsed is None else phase_elapsed, status)
+    except Exception:
+        pass
 
 
 def _offline():
@@ -169,10 +195,14 @@ def _worker(pipe, port, trust, request, timeout, parent_pid, execution=None):
         def status(code, headers):
             nonlocal cooldown
             if code == 429: cooldown = retry_after(headers)
+            pipe.send_bytes(json.dumps({'phase': 'response_body', 'status': code}).encode())
         host, target_port = ('osu.ppy.sh', 443) if port is None else ('127.0.0.1', port)
         connection = http.client.HTTPSConnection(host, target_port, context=trust.context(), timeout=timeout)
         exchange = exchange_upstream if port is None else exchange_fixture
         kwargs = {'execution': execution} if port is None else {}
+        # These two bounded progress frames contain no request data. They let
+        # the parent distinguish startup from waiting for headers/body on loss.
+        pipe.send_bytes(b'{"phase":"request","status":null}')
         code, data = exchange(connection, request, timeout=timeout, on_status=status, **kwargs)
         result = {'status': code, 'data': data, 'cooldown': cooldown}
     except AuthError as error: result = {'error': error.code}
@@ -194,7 +224,10 @@ def _owned_exchange(port, trust, request, deadline, *, execution=None):
     _boundary(port, execution)
     require_child_platform()
     from .process_startup import start
-    args = (port, trust, request, 5, os.getpid())
+    started = phase_started = time.monotonic()
+    budget = max(.001, deadline - started)
+    phase, outcome, status = 'startup', 'failed', None
+    args = (port, trust, request, min(5, budget), os.getpid())
     if execution is not None: args += (execution,)
     process = target = receive = None
     try:
@@ -217,13 +250,27 @@ def _owned_exchange(port, trust, request, deadline, *, execution=None):
                 if not chunk: raise AuthError('provider_transport_uncertain')
                 chunks.append(chunk); total += len(chunk)
             return b''.join(chunks)
-        length = struct.unpack('!i', read(4))[0]
-        if not 0 < length <= MAX_IPC: raise AuthError('provider_transport_uncertain')
-        value = json.loads(read(length))
-        if time.monotonic() >= deadline: raise AuthError('provider_deadline_exceeded')
+        while True:
+            length = struct.unpack('!i', read(4))[0]
+            if not 0 < length <= MAX_IPC: raise AuthError('provider_transport_uncertain')
+            value = json.loads(read(length))
+            if time.monotonic() >= deadline: raise AuthError('provider_deadline_exceeded')
+            if type(value) is not dict: raise AuthError('provider_transport_uncertain')
+            if 'phase' not in value: break
+            # At most two ordered progress frames; never renew the deadline.
+            if set(value) != {'phase', 'status'}: raise AuthError('provider_transport_uncertain')
+            proposed, code = value['phase'], value['status']
+            if not ((phase == 'startup' and proposed == 'request' and code is None)
+                    or (phase == 'request' and proposed == 'response_body'
+                        and type(code) is int and 100 <= code <= 599)):
+                raise AuthError('provider_transport_uncertain')
+            phase, phase_started, status = proposed, time.monotonic(), code
         if 'error' in value: raise AuthError(value['error'])
+        outcome = 'complete'
         return value
-    except AuthError: raise
+    except AuthError as error:
+        outcome = 'deadline' if error.code == 'provider_deadline_exceeded' else 'failed'
+        raise
     except Exception: raise AuthError('provider_transport_uncertain') from None
     finally:
         mask = signal.pthread_sigmask(signal.SIG_BLOCK, (signal.SIGINT, signal.SIGTERM))
@@ -235,9 +282,15 @@ def _owned_exchange(port, trust, request, deadline, *, execution=None):
                 process.join(timeout=1)
                 if process.exitcode is None: raise AuthError('provider_child_cleanup_uncertain')
             if process is not None: process.close()
+        except BaseException:
+            outcome = 'cleanup_failed'
+            raise
         finally:
             if target is not None: target.close()
             signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            _timing(request, phase=phase, outcome=outcome,
+                    elapsed=max(0., time.monotonic()-started), budget=budget,
+                    phase_elapsed=max(0., time.monotonic()-phase_started), status=status)
 
 
 class DeadlineFixtureTransport:
@@ -281,7 +334,7 @@ class DeadlineFixtureTransport:
         from .process_startup import preflight
         preflight()
         with self.gate.admission(deadline):
-            permit = _Permit(self.port, self.trust, self.gate, request, deadline)
+            permit = _Permit(self.port, self.trust, self.gate, request, deadline, timeout=self.timeout)
             try: yield permit
             finally: permit.active = False
 
@@ -300,15 +353,23 @@ class DeadlineFixtureTransport:
         from .process_startup import preflight
         preflight()
         with self.gate.admission(deadline):
-            permit = _Permit(self.port, self.trust, self.gate, request, deadline)
+            permit = _Permit(self.port, self.trust, self.gate, request, deadline, timeout=self.timeout)
             try: yield permit
             finally: permit.active = False
 
 
 class _Permit:
-    """One exact request, on the admitting thread and within its context/deadline."""
-    def __init__(self, port, trust, gate, request, deadline):
+    """Single-use authority permit with separate admission and wire allowances.
+
+    Both allowances are bounded by timeout (<=5s), plus the existing <=1s
+    child reap. Pacing and authority preparation cannot consume the wire budget
+    or renew an expired permission to dispatch.
+    """
+    def __init__(self, port, trust, gate, request, deadline, *, timeout):
         self.port, self.trust, self.gate, self.prepared, self.deadline = port, trust, gate, request, deadline
+        if type(timeout) not in (int, float) or not 0 < timeout <= 5:
+            raise AuthError('invalid_provider_timeout')
+        self.timeout = timeout
         self.thread, self.pid = threading.get_ident(), os.getpid()
         self.active = True; self.used = False
 
@@ -316,7 +377,13 @@ class _Permit:
         _boundary(self.port, getattr(self.gate, 'execution', None))
         if not self.active or self.used or self.thread != threading.get_ident() or self.pid != os.getpid():
             raise AuthError('provider_admission_refused')
-        if time.monotonic() >= self.deadline: raise AuthError('provider_deadline_exceeded')
+        if time.monotonic() >= self.deadline:
+            # The active, unused, same-thread permit has not dispatched. Its
+            # deadline can expire after pacing admission (e.g. while rechecking
+            # authority). Preserve that proof for routine-call deferral rather
+            # than sending a fatal generic timeout to the room worker.
+            from .provider_pacing import ProviderAdmissionDeferred
+            raise ProviderAdmissionDeferred('provider_deadline_exceeded')
 
     def request(self, method, path, *, form=None, bearer=None):
         self.check()
@@ -332,12 +399,17 @@ class _Permit:
         return self._dispatch()
 
     def _dispatch(self):
+        # Preparation and mutable-authority checks still have their original
+        # admission deadline. Only a valid unused permit gets a fresh network
+        # allowance; a slow/expired check cannot turn into an uncertain send.
+        self.check()
         self.used = True
         persistent = hasattr(self.gate, 'exchange_started')
         if persistent: self.gate.exchange_started()
         try:
             kwargs = {'execution': self.gate.execution} if self.port is None else {}
-            value = _owned_exchange(self.port, self.trust, self.prepared, self.deadline, **kwargs)
+            value = _owned_exchange(self.port, self.trust, self.prepared,
+                                    time.monotonic() + self.timeout, **kwargs)
         except BaseException:
             if persistent: self.gate.uncertain()
             raise

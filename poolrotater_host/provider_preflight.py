@@ -149,7 +149,8 @@ class FixedProviderTransport:
         from .process_startup import preflight
         preflight()
         with self.gate.admission(deadline):
-            permit = _Permit(None, self.trust, self.gate, request, deadline)
+            permit = _Permit(None, self.trust, self.gate, request, deadline,
+                             timeout=self.configuration.request_timeout_seconds)
             try: yield permit
             finally: permit.active = False
 
@@ -170,7 +171,8 @@ class FixedProviderTransport:
         from .process_startup import preflight
         preflight()
         with self.gate.admission(deadline):
-            permit = _Permit(None, self.trust, self.gate, request, deadline)
+            permit = _Permit(None, self.trust, self.gate, request, deadline,
+                             timeout=self.configuration.request_timeout_seconds)
             try: yield permit
             finally: permit.active = False
 

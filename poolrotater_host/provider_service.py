@@ -125,6 +125,15 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                     elif worker.peer.closed.is_set():
                         failure_code = 'provider_worker_connection_closed'
                     if failure_code:
+                        # Native failed-alias cleanup has its own fixed deadline.
+                        # It may be waiting for an already-dispatched close or a
+                        # verified roster refresh; do not preempt it with an older
+                        # RPC-disconnect timestamp. Unknown ownership above still
+                        # stops immediately, and this deadline is never extended.
+                        cleanup_deadline = getattr(worker, 'failure_cleanup_deadline', None)
+                        if (cleanup_deadline is not None and worker.process.poll() is not None
+                                and time.monotonic() < cleanup_deadline):
+                            continue
                         # Retirement may start AFTER the fast check above.
                         # Recheck delegation after observing the signal; also
                         # ignore a stale reference once the native engine has

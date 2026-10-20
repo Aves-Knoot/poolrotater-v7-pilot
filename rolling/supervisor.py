@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 
+from bot.hub import HubTransportError
 from bot.discord_modlog import DiscordModLog
 from bot.multiroom import SharedReferee, SharedDiscord
 from .broker import Broker
@@ -59,6 +60,7 @@ class Worker:
     empty_epoch: int = -1
     handoff_retry_at: float = 0.0
     handoff_deferrals: int = 0
+    failure_cleanup_deadline: float | None = None
     exited: bool = False
     started_at: float = field(default_factory=time.time)
 
@@ -66,6 +68,14 @@ class Worker:
         now = time.monotonic() if now is None else now
         return (self.process is not None and self.process.poll() is None
                 and not self.peer.closed.is_set() and now - self.status_at < 15)
+
+    def display_fresh(self, now=None):
+        """Grace for public telemetry only; never grants mutation/update admission."""
+        from poolrotater_host.network.projection import DISPLAY_OBSERVATION_SECONDS
+        now = time.monotonic() if now is None else now
+        return (self.process is not None and self.process.poll() is None
+                and self.peer is not None and not self.peer.closed.is_set()
+                and 0 <= now - self.status_at < DISPLAY_OBSERVATION_SECONDS)
 
     def idle_empty(self):
         return (self.fresh() and self.status.get("ready") and self.status.get("running")
@@ -632,6 +642,56 @@ class RollingSupervisor:
                 worker.empty_since = None
             log.info('hot-loaded deployment empty/idle grace: %.1fs', seconds)
 
+    def _settle_failed_worker(self, worker, now):
+        """Close only a dead worker's positively owned room after ordered refresh.
+
+        A still-running broker RPC owns the routing lock. Let it finish without
+        blocking sibling event processing or confusing close_pending with a lost
+        reply. Once the lock is free, actual uncertainty is still terminal.
+        """
+        if worker.failure_cleanup_deadline is None:
+            worker.failure_cleanup_deadline = now + 30.0
+        deadline = worker.failure_cleanup_deadline
+        if not self.shared.lock.acquire(blocking=False):
+            if now >= deadline:
+                raise RuntimeError('worker_cleanup_deadline_exceeded')
+            return False
+        try:
+            state = self.registry.snapshot()['rooms'].get(worker.alias, {})
+            broker = worker.broker
+            if (state.get('operation') == 'closed' and not state.get('room_id')
+                    and state.get('ownership_unknown') is False
+                    and not broker.uncertain and not broker.hub.owned):
+                self.dispose(worker)
+                self.record(worker.alias, phase='parked', pid=None, error=None)
+                return True
+            if (state.get('operation') != 'owned' or state.get('ownership_unknown') is not False
+                    or broker.uncertain or len(broker.hub.owned) != 1
+                    or state.get('room_id') not in broker.hub.owned):
+                raise RuntimeError('worker_ownership_requires_review')
+            rid = state['room_id']
+            try:
+                if not self.shared.hub.is_connected():
+                    raise HubTransportError('referee_disconnected')
+                progress = broker.hub.roster_progress()
+                if progress is not None and progress[2]:
+                    raise HubTransportError('waiting_for_ordered_roster')
+                if (not broker.known or broker.hub.roster_fenced
+                        or broker.snapshot_generation != broker.hub._generation()):
+                    # Refresh only this known existing room. The ordinary broker
+                    # validates owner, connection generation and ordered roster.
+                    broker.handle('hub.invoke', 'JoinRoom', [rid])
+                broker.close_room(rid, require_empty=False)
+            except HubTransportError:
+                if broker.uncertain or time.monotonic() >= deadline:
+                    raise
+                return False
+            self.dispose(worker)
+            self.record(worker.alias, phase='parked', pid=None, error=None)
+            return True
+        finally:
+            self.shared.lock.release()
+
     def tick(self):
         if self.config_loader is not None:
             try:
@@ -668,34 +728,19 @@ class RollingSupervisor:
             if worker.process.poll() is not None:
                 if state.get("phase") not in ("recovery_required", "parked"):
                     try:
-                        if ((worker.failure or not worker.exited) and not worker.broker.uncertain
-                                and state.get('operation') == 'owned'
-                                and state.get('ownership_unknown') is False
-                                and len(worker.broker.hub.owned) == 1
-                                and state.get('room_id') in worker.broker.hub.owned
-                                and worker.broker.known
-                                and worker.broker.hub.is_connected()
-                                and worker.broker.snapshot_generation == worker.broker.hub._generation()):
-                            # This process has already died. Its own positively
-                            # owned room can be closed through the still-live
-                            # scoped referee view; siblings retain their views,
-                            # processes, matches and shared connection. Uncertain
-                            # authority/cleanup remains on the recovery path.
-                            rid, = worker.broker.hub.owned
-                            worker.broker.close_room(rid, require_empty=False)
-                            self.dispose(worker)
-                            self.record(alias, phase='parked', pid=None, error=None)
+                        if worker.failure or not worker.exited:
+                            self._settle_failed_worker(worker, now)
                             continue
-                        # A failed worker's own finally block may already have
-                        # positively closed its room. That journal evidence and
-                        # empty owned set authorize parking this alias, never a
-                        # shutdown of unrelated occupied rooms or blind restart.
-                        if (state.get('operation') == 'closed' and not state.get('room_id')
-                                and state.get('ownership_unknown') is False
-                                and not worker.broker.uncertain and not worker.broker.hub.owned):
-                            self.dispose(worker)
-                            self.record(alias, phase='parked', pid=None, error=None)
-                            continue
+                        # The worker's own close may have completed since the
+                        # earlier status read. Re-read under the routing lock.
+                        with self.shared.lock:
+                            state = self.registry.snapshot()['rooms'].get(alias, {})
+                            if (state.get('operation') == 'closed' and not state.get('room_id')
+                                    and state.get('ownership_unknown') is False
+                                    and not worker.broker.uncertain and not worker.broker.hub.owned):
+                                self.dispose(worker)
+                                self.record(alias, phase='parked', pid=None, error=None)
+                                continue
                         if not worker.exited or worker.failure or worker.broker.uncertain:
                             raise RuntimeError(worker.failure or "Worker exited unexpectedly; ownership retained")
                         if worker.status.get("reopenable") and not worker.broker.empty():
