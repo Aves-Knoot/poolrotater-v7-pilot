@@ -389,6 +389,9 @@ class Broker:
             if len(args) > position:
                 channel = args[position]
             allowed = {self.discord._channel_id(), *self.discord._channel_map().values()}
+            relay = getattr(getattr(self.owner, "discord", None), "remote_relay", None)
+            if relay is not None and method == "discord.send_to_channel":
+                allowed.update(relay.channels(self.alias))
             if channel and int(channel) not in allowed:
                 raise ValueError("Discord channel ownership mismatch")
             if method == "discord.update_public_status" and any(k in kwargs for k in (

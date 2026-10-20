@@ -585,10 +585,24 @@ class DiscordRoomView(DiscordControl):
         self.transport = transport
 
     def send_to_channel(self, content, channel_id=None, **kwargs):
+        relay = getattr(self.transport, "remote_relay", None)
+        if relay and channel_id and int(channel_id) in relay.channels(self._instance_name()):
+            return relay.reply(self._instance_name(), int(channel_id), content)
         return self.transport.send_to_channel(content, channel_id or self._channel_id(), **kwargs)
 
     def react_to_map(self, emoji, map_key, channel_id=None):
         return self.transport.react_to_map(emoji, map_key, channel_id or self._channel_id())
+
+    def _public_status_channel_name(self):
+        root = self.cfg.get("_host_root", "")
+        if Path(root).name == "owner":
+            from poolrotater_host.discord_relay.model import channel_name
+            alias = self._instance_name()
+            preset = ("catch-fixed" if self.cfg.get("ruleset_id") == 2 else
+                      "mania-4k" if self.cfg.get("mania_keys") == 4 else
+                      "mania-7k" if self.cfg.get("mania_keys") == 7 else "standard-fixed")
+            return channel_name(int(alias.removeprefix("room")), preset, settings={"auto_difficulty": bool(self.cfg.get("auto_difficulty", False))})
+        return super()._public_status_channel_name()
 
     def update_public_status(self, **kwargs):
         kwargs.update(

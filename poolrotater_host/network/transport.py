@@ -15,7 +15,7 @@ from .contracts import NetworkError, require, canonical, decode, number
 
 RATING_ROUTES={'/v1/events/batches','/v1/ratings/state-query','/v1/ratings/snapshots/current','/v1/ratings/snapshot-page'}
 STATISTICS_ROUTES={'/v1/activity/replica/current','/v1/activity/replica/page'}
-UPDATE_ROUTES={'/v1/hosts/self/updates','/v1/hosts/self/recovery'}
+UPDATE_ROUTES={'/v1/hosts/self/discord','/v1/hosts/self/updates','/v1/hosts/self/recovery'}
 REPORTING_ROUTES={'/v1/activity/consent','/v1/activity/events','/v1/activity/query','/v1/logs/consent','/v1/logs/chunks'}
 ROUTES={'/v1/transfers/capabilities','/v2/capabilities','/v2/rooms','/v2/hosts/self/heartbeat','/v1/capabilities','/v1/enrollments','/v1/rooms','/v1/hosts/self','/v1/hosts/self/heartbeat','/v1/hosts/self/token-rotation','/v1/hosts/self/leave','/v1/ratings/stream-state'}|RATING_ROUTES|STATISTICS_ROUTES
 # Diagnostics never repeat arbitrary strings supplied by a remote endpoint.
@@ -26,7 +26,7 @@ REMOTE_ERRORS=frozenset(('credential_required','credential_refused','credential_
     'stale_sequence','sequence_conflict','request_id_conflict','heartbeat_rate_limited',
     'hub_rate_limited','hub_clock_rollback','hub_storage_unavailable','hub_capacity_required',
     'hub_unavailable','unexpected_fields','unsupported_protocol','invalid_request',
-    'route_not_found','future_room_observation','ratings_migration_required','ratings_schema_refused',
+    'discord_host_not_connected','route_not_found','future_room_observation','ratings_migration_required','ratings_schema_refused',
     'ratings_policy_refused','rating_query_limit','duplicate_rating_query','rating_batch_limit',
     'ratings_revision_exhausted','ratings_migration_recovery_required','request_too_large',
     'ratings_lineage_refused','ratings_lineage_requires_review','ratings_policy_recovery_required',

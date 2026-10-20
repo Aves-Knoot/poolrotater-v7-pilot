@@ -114,6 +114,8 @@ class DiscordPublicStatus:
     map_url: str = ""
     join_base_url: str = ""
     rename_channel: bool = True
+    image_url: str = ""
+    extra_fields: tuple = ()
 
 
 class DiscordControl:
@@ -469,6 +471,8 @@ class DiscordControl:
         display_name: str | None = None,
         instance: str | None = None,
         rename_channel: bool = True,
+        image_url: str = "",
+        extra_fields: tuple = (),
     ) -> bool:
         """Queue one public lobby-status update without blocking the bot."""
         target = int(channel_id or self._public_status_channel_id() or 0)
@@ -493,6 +497,8 @@ class DiscordControl:
             map_url=str(map_url or ""),
             join_base_url=self._public_join_base_url(),
             rename_channel=bool(rename_channel),
+            image_url=str(image_url) if re.fullmatch(r"https://assets\.ppy\.sh/beatmaps/[1-9][0-9]*/covers/cover\.jpg", str(image_url)) else "",
+            extra_fields=tuple((str(k)[:256], str(v)[:1024]) for k,v in extra_fields[:5]),
         )
         with self._status_lock:
             self._status_pending[target] = status
@@ -831,6 +837,11 @@ class DiscordControl:
                 embed.set_footer(
                     text=f"PoolRotater public status · {status.instance}"
                 )
+
+                if status.image_url:
+                    embed.set_image(url=status.image_url)
+                for label, value in status.extra_fields:
+                    embed.add_field(name=label, value=value, inline=False)
 
                 key = str(status.channel_id)
                 message_id = self.status_message_ids.get(key)

@@ -878,6 +878,12 @@ class RollingSupervisor:
             self.shared.hub.connect()
             self.shared.start_dispatch()
             self.discord.start()
+            try:
+                from poolrotater_host.discord_relay.host import HostRelay
+                self.discord.remote_relay = HostRelay(self)
+                self.discord.remote_relay.start()
+            except Exception:
+                log.warning("Discord host relay unavailable; existing rooms retained")
             if self.chat_websocket:
                 self.chat_websocket.start()
             for alias in self.configs:
@@ -912,6 +918,9 @@ class RollingSupervisor:
                 except Exception:
                     log.exception("shutdown ownership unresolved for %s", worker.alias)
             self.write_status(force=True)
+            relay = getattr(self.discord, "remote_relay", None)
+            if relay:
+                relay.stop()
             self.discord.stop()
             for modlog in self.modlogs.values():
                 modlog.stop(timeout=1)

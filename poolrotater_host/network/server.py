@@ -135,6 +135,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=='/v1/hosts/self/token-rotation':result=store.rotate(self.token(),self.body())
                 elif path=='/v1/hosts/self/leave':
                     token=self.token();value=self.body();fields(value,('protocol_version',));base(value);result=store.leave(token)
+                elif path=='/v1/hosts/self/discord':
+                    from ..discord_relay.repository import Repository
+                    result=Repository(store).accept(self.token(),self.body())
                 elif path=='/v1/hosts/self/updates':
                     from ..updates.telemetry import Reports
                     result=Reports(store).accept(self.token(),self.body())
