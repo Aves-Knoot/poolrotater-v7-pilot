@@ -1,4 +1,4 @@
-# v7.2.0 — optional native Catch
+# v7.2.1 — optional native Catch
 
 This release adds optional native osu!catch to the retained PoolRotater engine.
 Existing hosts retain their rooms; adding Catch is an explicit operator choice.
@@ -34,7 +34,7 @@ Catch opinions are captured, acknowledged and synchronized in that domain;
 selection retains the accepted neutral baseline rather than enabling unqualified
 style, farm or representation weights.
 
-The reviewed direct predecessor is the exact published v7.1.20 runtime. Older
+The reviewed direct predecessors are the exact published v7.1.20 and v7.2.0 runtimes. Older
 hosts finish their existing signed upgrade chain first; do not replace an
 outstanding controller transaction with this release.
 
@@ -61,7 +61,7 @@ pilot_instance=catch
 runtime_pin=$(/usr/bin/python3.12 -I -S -c 'import json; print(json.load(open("release.json"))["runtime_sha256"])')
 sudo /usr/bin/python3.12 -I -S -B install.py --instance "$pilot_instance" \
   --bundle runtime.zip --sha256 "$runtime_pin" --live-pilot --preset catch-fixed
-pilot_release="/opt/poolrotater-v7-pilot/$pilot_instance/releases/v7.2.0-${runtime_pin:0:16}"
+pilot_release="/opt/poolrotater-v7-pilot/$pilot_instance/releases/v7.2.1-${runtime_pin:0:16}"
 pr() {
   sudo /usr/bin/python3.12 -I -S -B \
     "$pilot_release/poolrotater_host/pilot_admin_entry.py" --instance "$pilot_instance" "$@"
@@ -137,3 +137,16 @@ separately. A running room alone does not establish countdown, completed-match,
 skip or feedback acceptance. Full-repository tests were not repeated after the
 final localized changes; the validation report lists the remaining fixture and
 legacy-migration limits explicitly.
+
+## Independently pinned recovery on retained hosts
+
+Controller updates preserve an existing recovery runtime pin. Before adding
+Catch to a retained host, also check that this independently pinned runtime can
+validate a Catch host. Older pre-Catch pins cannot. Keep recovery polling paused
+until a reviewed pin refresh preserves the same protected installation, account,
+enrollment, policy flags and boot choices. Do not delete the recovery record or
+re-enable an operator opt-out. This is separate from Catch configuration rollback;
+removing Catch does not make a legacy controller safe for initialized Catch data.
+Fresh Catch-capable installations use current code when recovery is first
+configured. The owner pilot's recovery pin is reviewed separately; normal updates
+do not silently repin other operators.

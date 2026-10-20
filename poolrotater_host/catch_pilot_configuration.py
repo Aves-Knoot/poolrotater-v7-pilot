@@ -70,6 +70,11 @@ def project(marker, host, gameplay_record, integration_record, retained_room, *,
             if not channel:raise ConfigError('Catch pilot has no retained Discord control channel')
             integration.discord_id(channel,allow_zero=False)
             current['discord_control_channel_id']=channel
+        if current.get('discord_public_status_channel_id') or retained.get('discord_public_status_channel_id'):
+            public_channel=retained.get('discord_public_status_channel_id')
+            if not public_channel:raise ConfigError('Catch pilot has no retained public Discord status channel')
+            integration.discord_id(public_channel,allow_zero=False)
+            current['discord_public_status_channel_id']=public_channel
         current['discord_control_room_alias']=alias
         if 'discord_public_status_label' in current:current['discord_public_status_label']='Lobby 1 · Catch' if alias=='room1' else 'Catch'
         if 'discord_public_status_channel_name' in current and retained.get('discord_public_status_channel_name'):
@@ -84,6 +89,11 @@ def project(marker, host, gameplay_record, integration_record, retained_room, *,
             if 'discord_control_channel_ids_by_room' in s and current.get('discord_control_channel_id'):
                 s['discord_control_channel_ids_by_room'][alias]=current['discord_control_channel_id']
         integration.validate_record(new_integration,marker,new_host)
+        channels=[int(row['settings'].get(key)or 0) for row in new_integration['rooms'].values()
+                  for key in ('discord_control_channel_id','discord_public_status_channel_id')]
+        channels=[channel for channel in channels if channel]
+        if len(channels)!=len(set(channels)):
+            raise ConfigError('Catch pilot requires distinct Discord control and public status channels')
     return {'host':new_host,'gameplay':new_gameplay,'integrations':new_integration,
             'alias':alias,'provider_dispatch':False,'existing_rooms_unchanged':True,
             'requires_stopped_transaction':True}

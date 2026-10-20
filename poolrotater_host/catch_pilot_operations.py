@@ -72,9 +72,40 @@ def _summary(job):
 def _load_job(target,marker,parent):
     job=_control(target['prefix']/PLAN,private=True)
     if (job.get('format')!=1 or any(job.get(k)!=marker[k] for k in ('installation_id','generation'))
-            or job.get('parent_sha256')!=parent['bundle_sha256']):
+            or (job.get('parent_sha256')!=parent['bundle_sha256'] and not (
+                job.get('phase') in TERMINAL and _historical_parent(target,parent,job.get('parent_sha256'))))):
         raise ConfigError('Catch transition belongs to another installation or runtime')
     return job
+
+
+def _historical_parent(target,parent,digest):
+    """Retain terminal Catch rollback across exact committed controller upgrades.
+
+    Pending configuration must finish under its original runtime. Terminal
+    schema-1 records may use only the already checked native upgrade lineage;
+    arbitrary old paths, foreign namespaces and unfinished/rollback links do
+    not authorize adoption. The original parent digest remains provenance.
+    """
+    from .pilot_upgrade import _record,_transition
+    from .runtime_lifecycle import read_transition,validate_runtime
+    from .worker_releases import _committed_ancestors
+    value=_control(target['prefix']/'pilot-upgrade.json',optional=True,maximum=512*1024)
+    if value is None:return False
+    value=_record(value,target['prefix'],parent['installation_id'])
+    if value['phase']!='committed' or value['after']!=parent:return False
+    if read_transition(target['prefix'],parent['installation_id'])!=_transition(value,'committed'):
+        raise ConfigError('Catch configuration controller lineage requires review')
+    validate_runtime(parent,target['prefix'])
+    def candidates():
+        yield value['before']
+        yield from _committed_ancestors(parent,value)
+    for ancestor in candidates():
+        if ancestor['bundle_sha256']!=digest:continue
+        if any(ancestor.get(k)!=parent[k]for k in ('installation_id','generation','host_root','service_uid','prefix','execution')):
+            return False
+        checked=validate_runtime(ancestor,target['prefix'])
+        return 'poolrotater_host/catch_pilot_operations.py' in checked['manifest']['files']
+    return False
 
 
 def _prepare(target,marker,parent,value):

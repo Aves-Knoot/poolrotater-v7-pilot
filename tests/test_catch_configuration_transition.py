@@ -85,5 +85,21 @@ class CatchConfigurationTransitionTests(unittest.TestCase):
         self.assertEqual(len(result['gameplay']['rooms']),4)
         self.assertNotIn('token',repr(result['gameplay']).lower())
 
+    def test_public_status_uses_retained_lobby_route_and_keeps_existing_panels(self):
+        for i,row in enumerate(self.integration['rooms'].values()):
+            row['settings']['discord_public_status_channel_id']=200000000000000001+i
+        self.retained['discord_public_status_channel_id']=200000000000000009
+        result=self.make()['integrations']['rooms']
+        self.assertEqual(result['room1']['settings']['discord_public_status_channel_id'],self.retained['discord_public_status_channel_id'])
+        for alias in self.integration['rooms']:
+            self.assertEqual(result[alias]['settings']['discord_public_status_channel_id'],self.integration['rooms'][alias]['settings']['discord_public_status_channel_id'])
+        del self.retained['discord_public_status_channel_id']
+        with self.assertRaisesRegex(ConfigError,'retained public Discord'):self.make()
+
+    def test_duplicate_control_public_or_sibling_routes_refuse_before_configuration(self):
+        for public in (self.retained['discord_control_channel_id'],self.integration['rooms']['room2']['settings']['discord_control_channel_id']):
+            self.retained['discord_public_status_channel_id']=public
+            with self.assertRaisesRegex(ConfigError,'distinct Discord'):self.make()
+
 
 if __name__=='__main__':unittest.main()
