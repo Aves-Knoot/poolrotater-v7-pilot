@@ -391,7 +391,7 @@ def _metric_group(conn, rooms, now, active_ids, names, maps, hidden, scope, peri
     for table,fallback_mode in [('autohost_pp_achievements','standard'),('autohost_pp_achievements_mania','mania_other'),('autohost_pp_achievements_catch','catch')]:
         if table.endswith('_catch') and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
         for row in conn.execute('SELECT * FROM '+table):
-            uid=row['user_id'];at=number(row['created_at']);name(uid,row['username'],at);first=min(first,at)
+            uid=row['user_id'];at=number(row['created_at'])
             mode=rooms.get(row['room_id'],{}).get('type',fallback_mode)
             achievement={'beatmap_id':row['beatmap_id'],'label':maps.get(row['beatmap_id'],{}).get('label','Map #'+str(row['beatmap_id'])),
                          'gain':round(max(0,number(row['profile_gain_pp'])),2),'score_pp':round(max(0,number(row['score_pp'])),2),

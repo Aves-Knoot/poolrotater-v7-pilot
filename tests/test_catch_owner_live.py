@@ -118,6 +118,23 @@ class CatchOwnerLiveTests(unittest.TestCase):
             stats,_,_=self.analytics.run(public=self.root/'public',state=self.root/'analytics',now=self.now)
         self.assertTrue(stats['available'])
         self.assertIn('catch',stats['scopes'])
+    def test_populated_pp_history_exports_all_three_rulesets_without_scope_leaks(self):
+        from bot.ppstats import PPStatsStore
+        from bot.catch_ppstats import CatchPPStatsStore
+        for ruleset,room,gain in ((0,2,1.),(3,3,2.),(2,1,3.)):
+            store=(CatchPPStatsStore if ruleset==2 else PPStatsStore)(str(self.analytics.DB),ruleset_id=ruleset)
+            store.record_room_mode(room)
+            store.record_achievements(room_id=room,playlist_item_id=room,beatmap_id=51945,
+                achievements=[{'user_id':9001,'name':'Invented player','rank':10,'gain':gain,'pp':100,'accuracy':98.}])
+        with sqlite3.connect(self.analytics.DB)as db:
+            db.execute("UPDATE autohost_rooms SET initial_name='Invented Mania 7K' WHERE room_id=3")
+        with patch.object(self.analytics,'read_network_statistics',return_value=None):
+            stats,_,_=self.analytics.run(public=self.root/'public',state=self.root/'analytics',now=self.now)
+        self.assertTrue(stats['available'])
+        for scope,gain in (('all',6.),('standard',1.),('mania_7k',2.),('catch',3.)):
+            group=stats['scopes'][scope]['all']
+            self.assertEqual(group['totals']['pp'],gain,scope)
+            self.assertEqual(group['leaders'][0]['username'],'Invented player')
     def test_catch_card_has_correct_type_art_settings_and_approximate_progress(self):
         data=self.run_export();self.assertTrue(data['available']);self.assertEqual(len(data['rooms']),4)
         row=data['rooms'][0];self.assertEqual((row['type'],row['label'],row['guide']),('catch','Catch fixed','lobbies:catch'))
