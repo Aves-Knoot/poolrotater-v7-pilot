@@ -132,7 +132,7 @@ class ExclusionPolicy:
         self._stamp = None; self._target = None
 
     def refresh(self):
-        path = self.store.path/'exclusions.json'
+        path = self.store.path/('exclusions-catch.json' if self.mode=='catch' else 'exclusions.json')
         try:
             st = path.lstat()
             if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
@@ -140,7 +140,7 @@ class ExclusionPolicy:
             stamp = (st.st_dev,st.st_ino,st.st_ctime_ns,st.st_mtime_ns,st.st_size,st.st_mode,st.st_uid)
         except FileNotFoundError: stamp = None
         if stamp == self._stamp and self.revision is not None: return False
-        state = self.store.exclusions()
+        state = self.store.exclusions(mode='catch') if self.mode=='catch' else self.store.exclusions()
         if self.revision is not None and (state['revision'] < self.revision
                 or (state['revision'] == self.revision and state['target_sha256'] != self._target)):
             raise ConfigError('installed exclusion state regressed during reader lifetime')

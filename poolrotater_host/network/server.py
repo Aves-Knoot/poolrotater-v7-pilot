@@ -84,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
             # Enrolled data transfers have no requests/minute or bandwidth cap.
             # Public/control routes retain admission protection and all requests
             # retain bounded size, concurrency, deadlines and authentication.
-            bulk=path.startswith(('/v1/activity/','/v1/logs/','/v1/ratings/')) or path in ('/v1/events/batches','/v1/transfers/capabilities')
+            bulk=path.startswith(('/v1/activity/','/v1/logs/','/v1/ratings/','/v2/ratings/','/v2/activity/')) or path in ('/v1/events/batches','/v1/transfers/capabilities')
             if bulk:
                 with store.transaction() as db:store._authenticate(db,verifier(self.token()),'heartbeat')
             else:self.server.admission()
@@ -103,28 +103,30 @@ class Handler(BaseHTTPRequestHandler):
                 if path=='/directory':
                     from .directory import render
                     html=render(result)
-            elif method=='GET' and path=='/v1/activity/replica/current':
-                require(not target.query,'unexpected_query');result=self.server.statistics.current(self.token())
-            elif method=='GET' and path=='/v1/activity/replica/page':
+            elif method=='GET' and path in ('/v1/activity/replica/current','/v2/activity/replica/current'):
+                require(not target.query,'unexpected_query');result=self.server.statistics.current(self.token(),include_catch=path.startswith('/v2/'))
+            elif method=='GET' and path in ('/v1/activity/replica/page','/v2/activity/replica/page'):
                 params=parse_qs(target.query,keep_blank_values=True,strict_parsing=True)
                 require(set(params)=={'content_id','index'} and all(len(v)==1 for v in params.values())
                         and params['index'][0].isdigit() and len(params['index'][0])<=4,'invalid_snapshot_query')
-                result=self.server.statistics.read_page(self.token(),params['content_id'][0],int(params['index'][0]))
+                result=self.server.statistics.read_page(self.token(),params['content_id'][0],int(params['index'][0]),include_catch=path.startswith('/v2/'))
             elif method=='GET' and path=='/v1/hosts/self':
                 require(not target.query,'unexpected_query');result=store.status(self.token())
-            elif method=='GET' and path in ('/v1/ratings/snapshots/current','/v1/ratings/snapshot-page'):
+            elif method=='GET' and path in ('/v1/ratings/snapshots/current','/v1/ratings/snapshot-page',
+                                              '/v2/ratings/snapshots/current','/v2/ratings/snapshot-page'):
                 from ..ratings.repository import Repository
                 from ..ratings.snapshots import Publisher,digest
                 repository=Repository(store)
                 with store.transaction() as db:repository._authorized(db,self.token(),'ratings-read')
                 publisher=Publisher(repository)
-                if path=='/v1/ratings/snapshots/current':
-                    require(not target.query,'unexpected_query');result=publisher.current()
+                context=path.startswith('/v2/')
+                if path.endswith('/snapshots/current'):
+                    require(not target.query,'unexpected_query');result=publisher.current(context=context)
                 else:
                     params=parse_qs(target.query,keep_blank_values=True,strict_parsing=True)
                     require(set(params)=={'content_id','index'} and all(len(v)==1 for v in params.values())
                             and params['index'][0].isdigit() and len(params['index'][0])<=3,'invalid_snapshot_query')
-                    result=publisher.read_page(digest(params['content_id'][0]),int(params['index'][0]))
+                    result=publisher.read_page(digest(params['content_id'][0]),int(params['index'][0]),context=context)
             elif method=='POST':
                 require(not target.query,'unexpected_query')
                 if path=='/v1/enrollments':
@@ -163,7 +165,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:status=503;result={'ok':False,'error':'hub_unavailable'}
         raw=html if status==200 and html is not None else canonical(result)
         compressed=False
-        if status==200 and target is not None and target.path.startswith('/v1/activity/replica/') and self.headers.get('Accept-Encoding')=='gzip':
+        if status==200 and target is not None and target.path.startswith(('/v1/activity/replica/','/v2/activity/replica/')) and self.headers.get('Accept-Encoding')=='gzip':
             import gzip
             raw=gzip.compress(raw,compresslevel=1,mtime=0);compressed=True
         try:

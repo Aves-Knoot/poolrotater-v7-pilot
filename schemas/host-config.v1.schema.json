@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:poolrotater:schema:host-config.v1.schema.json",
+  "title": "Host config v1: offline and explicitly installed pilot candidates",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "execution",
+    "network",
+    "updates",
+    "account",
+    "rooms"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "execution": {
+      "enum": [
+        "offline",
+        "pilot-candidate",
+        "pilot-qualification",
+        "pilot-live"
+      ]
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "share_ratings",
+        "public_directory",
+        "share_chat"
+      ],
+      "properties": {
+        "enabled": {
+          "const": false
+        },
+        "share_ratings": {
+          "const": false
+        },
+        "public_directory": {
+          "const": false
+        },
+        "share_chat": {
+          "const": false
+        }
+      }
+    },
+    "updates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "channel",
+        "automatic"
+      ],
+      "properties": {
+        "channel": {
+          "const": "preview"
+        },
+        "automatic": {
+          "const": false
+        }
+      }
+    },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_user_id",
+        "client_id_env",
+        "client_secret_env",
+        "token_file"
+      ],
+      "properties": {
+        "expected_user_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        },
+        "client_id_env": {
+          "type": "string",
+          "pattern": "^POOLROTATER_[A-Z][A-Z0-9_]{0,60}$"
+        },
+        "client_secret_env": {
+          "type": "string",
+          "pattern": "^POOLROTATER_[A-Z][A-Z0-9_]{0,60}$"
+        },
+        "token_file": {
+          "const": "secrets/osu-token.json"
+        }
+      }
+    },
+    "rooms": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "alias",
+          "preset",
+          "sr_min",
+          "sr_max",
+          "language",
+          "catalog"
+        ],
+        "properties": {
+          "alias": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,23}$"
+          },
+          "preset": {
+            "enum": [
+              "standard-auto",
+              "standard-fixed",
+              "mania-4k",
+              "mania-7k",
+              "catch-fixed"
+            ]
+          },
+          "sr_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "sr_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "language": {
+            "enum": [
+              "en",
+              "zh",
+              "ko",
+              "es",
+              "ru",
+              "ja",
+              "pl",
+              "id",
+              "fr",
+              "de"
+            ]
+          },
+          "catalog": {
+            "type": "string",
+            "pattern": "^catalogs/(?!.*(?:^|/)[.]{1,2}(?:/|$))(?!.*//)[^\\\\\\u0000]+[.]db$"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "not": {
+                    "const": "catch-fixed"
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "sr_min": {
+                  "maximum": 20
+                },
+                "sr_max": {
+                  "maximum": 20
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

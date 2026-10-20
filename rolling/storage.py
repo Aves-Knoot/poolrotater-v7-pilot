@@ -55,12 +55,15 @@ def guarded_connect(database, *args, allowed_paths=None, readonly_paths=(), **kw
 def install_guard(cfg):
     allowed = {str(Path(value).resolve()) for key, value in cfg.items()
                if key.endswith("_db") and isinstance(value, str) and value}
+    if cfg.get('ruleset_id') == 2 and cfg.get('catch_catalog'):
+        candidate = Path(cfg['catch_catalog']).resolve()
+        if candidate.is_file(): allowed.add(str(candidate))
     if cfg.get('_host_root'):
         # This exact cache has a reviewed schema prepared by the controller or
         # independent reporting agent. Workers may enqueue lookups, never create
         # arbitrary databases or run migrations through the rolling guard.
         allowed.add(str((Path(cfg['_host_root'])/'state/activity-cache.sqlite3').resolve()))
-    readonly = {str(Path(cfg[key]).resolve()) for key in ("farm_db", "loved_db", "mania_db", "mania_farm_db")
+    readonly = {str(Path(cfg[key]).resolve()) for key in ("farm_db", "loved_db", "mania_db", "mania_farm_db", "catch_catalog")
                 if cfg.get(key)}
     sqlite3.connect = lambda database, *a, **kw: guarded_connect(
         database, *a, allowed_paths=allowed, readonly_paths=readonly, **kw)

@@ -64,6 +64,7 @@ def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=No
             'default_response_language': room['language'],
             'farm_db': catalog if spec['ruleset'] == 0 else '',
             'mania_db': catalog if spec['ruleset'] == 3 else '',
+            **({'catch_catalog': catalog} if spec['ruleset'] == 2 else {}),
             'loved_db': '', 'loved_mode': False, 'mania_farm_db': '',
             'mania_farm_enabled': False, 'mania_convert_db': '',
             'max_length': 240, 'min_passcount': 1000, 'pool_limit': 200,
@@ -100,6 +101,9 @@ def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=No
             'ai_context_file': '', 'map_pp_display_enabled': False,
             'allowed_mods': [], 'required_mods': [], 'freestyle': False,
         }
+        if spec['ruleset'] == 2:
+            from .gameplay_defaults import settings_for as research_defaults
+            settings.update(research_defaults('catch-fixed'))
         from .runtime_defaults import settings_for as default_gameplay
         settings.update(default_gameplay(root,marker,room['preset']))
         if resolved is not None:
@@ -149,7 +153,7 @@ def validate_room_data(data: dict, base: dict):
         raise ConfigError('runtime room configuration is missing managed fields')
     # Native files are flat. Legacy nested Mania overrides could otherwise mask
     # host-controlled catalog/account settings and a new native difficulty band.
-    if 'mania_settings' in data:
+    if 'mania_settings' in data or 'catch_settings' in data:
         raise ConfigError('native runtime room preferences must use flat fields')
     for key, value in data.items():
         if key.startswith('_'):
@@ -162,18 +166,23 @@ def validate_room_data(data: dict, base: dict):
     from .config import LANGUAGES, number
     if 'sr_min' in data or 'sr_max' in data:
         low, high = data.get('sr_min', base['sr_min']), data.get('sr_max', base['sr_max'])
-        number(low, 0, 20, 'sr_min'); number(high, 0, 20, 'sr_max')
+        maximum = 100 if base['ruleset_id'] == 2 else 20
+        number(low, 0, maximum, 'sr_min'); number(high, 0, maximum, 'sr_max')
         if low >= high:
             raise ConfigError('runtime difficulty range must be ordered')
     if data.get('default_response_language', base['default_response_language']) not in LANGUAGES:
         raise ConfigError('unsupported runtime response language')
     if 'auto_difficulty' in data and type(data['auto_difficulty']) is not bool:
         raise ConfigError('auto_difficulty must be boolean')
-    if base['ruleset_id'] == 3 and data.get('auto_difficulty', False):
-        raise ConfigError('Mania requires fixed difficulty')
+    if base['ruleset_id'] in (2, 3) and data.get('auto_difficulty', False):
+        raise ConfigError('Catch and Mania require fixed difficulty')
     owner_integrations.validate_settings({k:v for k,v in data.items() if k in EDITABLE_STAFF}, set())
-    preset = ('mania-' + str(base['mania_keys']) + 'k') if base['ruleset_id'] == 3 else 'standard-auto'
+    preset = ('mania-' + str(base['mania_keys']) + 'k') if base['ruleset_id'] == 3 else 'catch-fixed' if base['ruleset_id'] == 2 else 'standard-auto'
     validate_settings({k: v for k, v in data.items() if k in GAMEPLAY_KEYS}, preset=preset)
+    if base['ruleset_id'] == 2:
+        from bot.mode import validate_catch_config
+        try: validate_catch_config(data)
+        except ValueError as exc: raise ConfigError(str(exc)) from exc
 
 
 class RuntimeConfigBridge:
@@ -193,7 +202,7 @@ class RuntimeConfigBridge:
                  f'{ROOM_DIRECTORY}/universal.json', 'state/rating-migration.json']
         names += [f'{ROOM_DIRECTORY}/{r["alias"]}.json' for r in self.initial['rooms']]
         paths = [contained(self.root, n) for n in names]
-        paths += [Path(r['settings']['farm_db'] or r['settings']['mania_db']) for r in self.initial['rooms']]
+        paths += [Path(r['settings'].get('catch_catalog') or r['settings']['farm_db'] or r['settings']['mania_db']) for r in self.initial['rooms']]
         pointer = contained(self.root, POINTER)
         paths.append(pointer)
         if pointer.exists():

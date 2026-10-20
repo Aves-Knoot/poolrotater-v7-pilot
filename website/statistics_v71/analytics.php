@@ -46,11 +46,11 @@ function prAnalyticsPlayer($p) {
     $id = (int) ($p['user_id'] ?? 0);
     $out = '<a class="pr-player-name" href="https://osu.ppy.sh/users/' . $id . '" target="_blank" rel="noopener noreferrer">' . hsc($p['username'] ?? 'Player') . '</a><details class="pr-player-detail" data-player-id="' . $id . '"><summary>Details</summary><div>';
     $out .= '<p><strong>' . prAnalyticsNumber($p['scores'] ?? 0) . ' scores submitted</strong> · ' . prAnalyticsNumber($p['top_plays'] ?? 0) . ' recorded top-100 plays · ' . prAnalyticsNumber($p['active_days'] ?? 0) . ' active days (UTC)</p>';
-    if (!empty($p['legacy_owner_seconds'])) $out .= '<p>Historical owner connected time: ' . prAnalyticsHours($p['legacy_owner_seconds']) . ' (cumulative ledger; overlap cannot be reconstructed).</p>';
-    if (!empty($p['legacy_community_seconds'])) $out .= '<p>Reviewed historical community connected time: ' . prAnalyticsHours($p['legacy_community_seconds']) . ' (persisted cumulative snapshots; not included in verified interval time).</p>';
+    if (!empty($p['legacy_owner_seconds'])) $out .= '<p>Historical owner connected time: ' . prAnalyticsHours($p['legacy_owner_seconds']) . ' (included in connected time).</p>';
+    if (!empty($p['legacy_community_seconds'])) $out .= '<p>Reviewed historical community connected time: ' . prAnalyticsHours($p['legacy_community_seconds']) . ' (included in connected time).</p>';
     if (!empty($p['time_by_type'])) {
         $out .= '<dl class="pr-time-types">';
-        foreach (['standard'=>'Standard','mania'=>'Mania total','mania_7k'=>'7K tracked rooms','mania_4k'=>'4K tracked rooms'] as $key=>$label) {
+        foreach (['standard'=>'Standard','catch'=>'Catch','mania'=>'Mania total','mania_7k'=>'7K tracked rooms','mania_4k'=>'4K tracked rooms'] as $key=>$label) {
             if (isset($p['time_by_type'][$key])) $out .= '<dt data-setting="' . hsc($key) . '">' . hsc($label) . '</dt><dd>' . prAnalyticsHours($p['time_by_type'][$key]) . '</dd>';
         }
         $out .= '</dl>';
@@ -74,13 +74,13 @@ function prAnalyticsPlayer($p) {
 function prAnalyticsCoverage($data, $host) {
     $coverage = $data['coverage'] ?? [];
     $trackedPP = !empty($coverage['tracked_pp_supported']);
-    if ($host === 'owner') return '<p class="pr-muted" role="note">Owner history includes the existing activity ledger and recorded PP achievements. Historical connected time is cumulative; recent-period time is unavailable.</p>';
+    if ($host === 'owner') return '<p class="pr-muted" role="note">Owner history includes the existing activity ledger and recorded PP achievements. Historical connected time is included in lifetime totals; recent-period time is unavailable.</p>';
     if ($host !== 'combined') {
         $row = $data['hosts'][$host] ?? [];
         $since = (int)($row['consent_at'] ?? 0); $updated = (int)($row['updated_at'] ?? 0);
         return '<p class="pr-muted" role="note">Opt-in public-room coverage since ' . hsc(gmdate('M j, Y H:i', $since)) . ' UTC. Latest host activity received ' . hsc(gmdate('M j, H:i', $updated)) . ' UTC; separately reviewed historical imports may predate opt-in. Map counts are completed-match participation; scores are included only when submitted results were observed. ' . ($trackedPP ? 'PP records are the existing tracked achievements shared by this host; no new PP attribution algorithm or complete profile history is implied.' : 'PP gains are not attributed for community hosts.') . '</p>';
     }
-    $out = '<p class="pr-muted" role="note">Players are counted once across hosts by osu! ID. Verified connected time merges overlapping reported intervals across hosts. Historical owner connected time is shown separately because its cumulative ledger cannot establish overlap. Map participation combines existing owner map starts with completed community matches; ' . ($trackedPP ? 'PP gains and top plays include existing tracked achievements shared by opted-in hosts; missing records are not inferred.' : 'PP gains and top-play achievements are owner records only.') . ' Hidden players contribute only to totals.</p>';
+    $out = '<p class="pr-muted" role="note">Players are counted once across hosts by osu! ID. Connected time includes recorded owner history and community time. Duplicate room reports are counted once; overlapping community intervals are merged. Older cumulative records cannot resolve simultaneous visits. Map participation combines existing owner map starts with completed community matches; ' . ($trackedPP ? 'PP gains and top plays include existing tracked achievements shared by opted-in hosts; missing records are not inferred.' : 'PP gains and top-play achievements are owner records only.') . ' Hidden players contribute only to totals.</p>';
     if (empty($coverage['network_available'])) return $out . '<p class="pr-unavailable" role="status">Community statistics are not currently available; owner history remains visible. No community coverage is inferred before opt-in.</p>';
     return $out . '<p class="pr-updated">' . (int)($coverage['participating_hosts'] ?? 0) . ' opted-in hosts · community snapshot ' . hsc(gmdate('M j, H:i', (int)($coverage['network_generated_at'] ?? 0))) . ' UTC · ' . (!empty($coverage['pre_opt_in_community_history'])?'includes explicitly reviewed historical imports.':'no community history before opt-in.') . '</p>';
 }
@@ -95,9 +95,7 @@ function prAnalyticsStatsBody($data, $mode, $period, $sort, $host = 'combined') 
     usort($players, function($a,$b) use ($sort) { return (prAnalyticsValue($b,$sort) <=> prAnalyticsValue($a,$sort)) ?: (($a['user_id'] ?? 0) <=> ($b['user_id'] ?? 0)); });
     if ($sort === 'accuracy') $players = array_values(array_filter($players,fn($p)=>($p['accuracy_n'] ?? 0)>=20));
     $out = prAnalyticsCoverage($data,$host) . '<div class="pr-metric-grid">';
-    $metrics = [['Players recorded',prAnalyticsNumber($totals['players'] ?? 0)],[$kind==='owner'?'Map starts':'Map participations',prAnalyticsNumber($totals['maps'] ?? 0)],[$ownerPPOnly?'Owner recorded PP gain':'Recorded PP gain',$noPP?'Not attributed':'+' . prAnalyticsNumber($totals['pp'] ?? 0,1)],[$kind==='owner'?'Connected time':'Verified connected time',isset($totals['seconds']) ? prAnalyticsHours($totals['seconds']) : 'Lifetime only']];
-    if ($kind==='combined' && $period==='all') $metrics[] = ['Historical owner connected time',prAnalyticsHours($totals['legacy_owner_seconds'] ?? 0)];
-    if ($kind!=='owner' && $period==='all' && !empty($totals['legacy_community_seconds'])) $metrics[] = ['Reviewed historical community time',prAnalyticsHours($totals['legacy_community_seconds'])];
+    $metrics = [['Players recorded',prAnalyticsNumber($totals['players'] ?? 0)],[$kind==='owner'?'Map starts':'Map participations',prAnalyticsNumber($totals['maps'] ?? 0)],[$ownerPPOnly?'Owner recorded PP gain':'Recorded PP gain',$noPP?'Not attributed':'+' . prAnalyticsNumber($totals['pp'] ?? 0,1)],['Connected time',isset($totals['seconds']) ? prAnalyticsHours($totals['seconds']) : 'Lifetime only']];
     foreach ($metrics as [$label,$value]) {
         $out .= '<div class="pr-metric"><span>' . hsc($label) . '</span><strong>' . hsc($value) . '</strong></div>';
     }
@@ -118,29 +116,33 @@ function prAnalyticsStatsBody($data, $mode, $period, $sort, $host = 'combined') 
         $out .= '</article>';
     }
     $out .= '</div><h2>Player rankings</h2><p class="pr-muted">Top 50 public players for each ranking. Hidden players contribute only to community totals. Explore a player’s Details for time by ruleset, their biggest gain and the map that earned it.</p>';
-    $out .= '<div class="pr-table-scroll"><table class="pr-rankings"><thead><tr><th scope="col">#</th><th scope="col">Player</th><th scope="col">' . ($ownerPPOnly?'Owner PP gained':'PP gained') . '</th><th scope="col">' . ($kind==='owner'?'Map starts':'Map participations') . '</th><th scope="col">Different maps</th><th scope="col">' . ($kind==='owner'?'Connected time':'Verified time') . '</th><th scope="col">Best gain</th><th scope="col">Avg. accuracy</th></tr></thead><tbody>';
+    $out .= '<div class="pr-table-scroll"><table class="pr-rankings"><thead><tr><th scope="col">#</th><th scope="col">Player</th><th scope="col">' . ($ownerPPOnly?'Owner PP gained':'PP gained') . '</th><th scope="col">' . ($kind==='owner'?'Map starts':'Map participations') . '</th><th scope="col">Different maps</th><th scope="col">' . ('Connected time') . '</th><th scope="col">Best gain</th><th scope="col">Avg. accuracy</th></tr></thead><tbody>';
     foreach (array_slice($players,0,50) as $i=>$p) {
         $out .= '<tr><td>' . ($i+1) . '</td><td>' . prAnalyticsPlayer($p) . '</td><td>' . ($noPP?'—':'+' . prAnalyticsNumber($p['pp'] ?? 0,1)) . '</td><td>' . prAnalyticsNumber($p['maps']) . '</td><td>' . prAnalyticsNumber($p['unique_maps']) . '</td><td>' . (!empty($group['time_available']) || $period==='all'?prAnalyticsHours($p['seconds'] ?? 0):'—') . '</td><td>' . (!empty($p['best_gain'])?'+' . prAnalyticsNumber($p['best_gain']['gain'],2) . ' PP':'—') . '</td><td>' . (isset($p['average_accuracy'])?prAnalyticsNumber($p['average_accuracy'],2) . '%':'—') . '</td></tr>';
     }
     return $out . '</tbody></table></div>' . (!$players?'<p>No qualifying public players in this view yet.</p>':'');
 }
 function prAnalyticsStatistics() {
-    $modes = ['all'=>'All lobbies','standard'=>'Standard','mania_7k'=>'Mania 7K','mania_4k'=>'Mania 4K'];
+    $modes = ['all'=>'All lobby types','standard'=>'Standard','catch'=>'Catch','mania_7k'=>'Mania 7K','mania_4k'=>'Mania 4K'];
     $periods = ['all'=>'All recorded history','7d'=>'Past 7 days','14d'=>'Past 14 days','30d'=>'Past 30 days'];
-    $sorts = ['pp'=>'PP gained','maps'=>'Map starts','unique_maps'=>'Different maps','seconds'=>'Connected time','gain'=>'Biggest PP gain','score'=>'Highest top-play PP','active_days'=>'Active days','accuracy'=>'Accuracy (20+ scores)'];
+    $sorts = ['pp'=>'PP gained','maps'=>'Maps','unique_maps'=>'Different maps','seconds'=>'Connected time','gain'=>'Biggest PP gain','score'=>'Highest top-play PP','active_days'=>'Active days','accuracy'=>'Accuracy (20+ scores)'];
     $data = prAnalyticsData('statistics');
     $hosts = ['combined'=>'All participating hosts'];
     foreach (($data['hosts'] ?? []) as $key=>$row) {
         if (is_string($key) && preg_match('/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/D',$key) && is_array($row)) $hosts[$key] = (string)($row['label'] ?? 'Community host');
     }
-    $host = prAnalyticsChoice('pr_host',$hosts,'combined');
+    $requestedHost = $_GET['pr_host'] ?? null;
+    $alias = is_string($requestedHost) ? ($data['host_aliases'][$requestedHost] ?? null) : null;
+    $host = $alias === 'owner' ? 'owner' : prAnalyticsChoice('pr_host',$hosts,'combined');
     $mode = prAnalyticsChoice('pr_mode',$modes,'all'); $period = prAnalyticsChoice('pr_period',$periods,'all'); $sort = prAnalyticsChoice('pr_sort',$sorts,$host==='owner'?'pp':'maps');
-    if ($period!=='all' && $sort==='seconds') $sort='pp';
+    $view = $host === 'combined' ? $data : ($data['hosts'][$host] ?? []);
+    $timeAvailable = !empty($view['scopes'][$mode][$period]['time_available']) || $period === 'all';
+    if (!$timeAvailable && $sort==='seconds') $sort='pp';
     echo '<section class="pr-statistics" data-statistics data-expires="' . (int)($data['expires_at'] ?? 0) . '">' . prAnalyticsUpdated($data);
     echo '<form class="pr-stats-filters" method="get" action="' . hsc(DOKU_BASE . 'doku.php') . '"><input type="hidden" name="id" value="statistics:start">';
     foreach (['pr_host'=>['Host',$hosts,$host],'pr_mode'=>['Lobby type',$modes,$mode],'pr_period'=>['Period',$periods,$period],'pr_sort'=>['Rank by',$sorts,$sort]] as $name=>[$label,$options,$value]) {
         echo '<label>' . hsc($label) . '<select name="' . $name . '">';
-        foreach ($options as $key=>$text) echo '<option value="' . hsc($key) . '"' . ($key===$value?' selected':'') . ($name==='pr_sort' && $key==='seconds' && $period!=='all'?' disabled':'') . '>' . hsc($text) . '</option>';
+        foreach ($options as $key=>$text) echo '<option value="' . hsc($key) . '"' . ($key===$value?' selected':'') . ($name==='pr_sort' && $key==='seconds' && !$timeAvailable?' disabled':'') . '>' . hsc($text) . '</option>';
         echo '</select></label>';
     }
     echo '<button type="submit">Show rankings</button></form><div class="pr-stats-body">' . prAnalyticsStatsBody($data,$mode,$period,$sort,$host) . '</div></section>';

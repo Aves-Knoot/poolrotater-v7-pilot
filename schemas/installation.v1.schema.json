@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:poolrotater:schema:installation.v1.schema.json",
+  "title": "Implemented host installation identity v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "installation_id",
+    "generation"
+  ],
+  "properties": {
+    "format": {
+      "const": 1,
+      "type": "integer"
+    },
+    "installation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "generation": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

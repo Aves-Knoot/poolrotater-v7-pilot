@@ -15,7 +15,7 @@ import stat
 import uuid
 from contextlib import nullcontext
 
-from .catalog_export import MODES, inspect_bundle, sha256
+from .catalog_export import MODES, CORE_MODES, complete_modes, inspect_bundle, sha256
 from .catalog_store import CatalogStore, MAX_VERSIONS, RESERVE, _hash, _sync
 from .catalog_trust import BootstrapTrust, verified_local_catalog, verified_target
 from .config import ConfigError, fields
@@ -69,21 +69,16 @@ def _inventory(store, path):
 
 def _policy(store, repository, stage):
     """New trust must explicitly carry every existing exclusion scope."""
-    from .catalog_exclusions import initial_state, apply_feed
-    previous = store.exclusions()
-    raw = verified_target(repository, stage.path / 'cache', stage.trust, 'exclusions.json')
-    try: feed = json.loads(raw, object_pairs_hook=unique_fields)
-    except (ValueError, UnicodeError) as exc:
-        raise ConfigError('replacement catalog exclusions invalid') from exc
-    state = apply_feed(initial_state(stage.trust.identity), feed, hashlib.sha256(raw).hexdigest())
-    # Compare per-mode scopes; set membership must cover every new content ID
-    # (the normal reader refuses unknown membership rather than releasing it).
-    active = {(m, e['kind'], e['id']): e for e in state['events'] for m in e['modes']}
-    for old in previous['events']:
-        for mode in old['modes']:
-            if (mode, old['kind'], old['id']) not in active:
-                raise ConfigError('replacement catalog trust drops existing exclusion')
-    stage._write(stage.path / 'exclusions.json', state)
+    include_catch='catch' in stage.current()['modes']
+    stage._accept_exclusions_locked(repository,include_catch=include_catch)
+    for mode in ((None,'catch') if include_catch else (None,)):
+        previous=store.exclusions(mode=mode)
+        state=stage.exclusions(mode=mode)
+        active={(m,e['kind'],e['id']) for e in state['events'] for m in e['modes']}
+        for old in previous['events']:
+            for scope in old['modes']:
+                if (scope,old['kind'],old['id']) not in active:
+                    raise ConfigError('replacement catalog trust drops existing exclusion')
 
 
 def _stage(store, repository, trust, transaction, modes):
@@ -147,7 +142,8 @@ def replace(store, repository, trust, *, old_sha256, new_sha256, confirm_replace
         candidate = store._read('candidate.json', optional=True)
         if candidate is not None and store._journal(candidate)['after'] != before:
             raise ConfigError('uncommitted catalog candidate must settle before trust replacement')
-        modes = sorted(set(MODES))  # Every replacement carries all prepared modes.
+        modes = sorted(set(CORE_MODES) | set(before['modes']) |
+                       ({'catch'} if (store.path/'exclusions-catch.json').exists() else set()))
         if os.statvfs(store.path).f_bavail * os.statvfs(store.path).f_frsize < RESERVE + 1024**3:
             raise ConfigError('catalog trust replacement disk reserve required')
         old_inventory = _inventory(store, store.path)
@@ -220,7 +216,8 @@ def _references(journal):
         if not isinstance(entry, dict) or entry.get('sha256') != root:
             raise ConfigError('catalog trust inventory root pin changed')
     if (journal['after_reference']['serial'] != journal['before_reference']['serial'] + 1
-            or set(journal['after_reference']['modes']) != set(MODES)):
+            or not complete_modes(journal['after_reference']['modes'])
+            or not set(journal['before_reference']['modes']) <= set(journal['after_reference']['modes'])):
         raise ConfigError('catalog trust replacement complete-set sequence changed')
 
 

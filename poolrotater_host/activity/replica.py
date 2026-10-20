@@ -69,7 +69,7 @@ def page(value,entry):
             and len(canonical(value))==entry['bytes'] and fingerprint(value)==entry['sha256'],'invalid_statistics_replica')
     previous=(-1,0)
     for row in value['rows']:
-        fields(row,('ruleset_id','player'));require(type(row['ruleset_id']) is int and row['ruleset_id'] in (0,3),'invalid_statistics_replica')
+        fields(row,('ruleset_id','player'));require(type(row['ruleset_id']) is int and row['ruleset_id'] in (0,2,3),'invalid_statistics_replica')
         validate_player(row['player']);key=(row['ruleset_id'],row['player']['user_id'])
         require(key>previous,'invalid_statistics_replica');previous=key
     return value
@@ -83,7 +83,7 @@ class Publisher:
     """One process-wide source projection, shared by authenticated consumers."""
     def __init__(self,repository):
         self.repository=repository;self.store=repository.store;self.lock=threading.Lock()
-        self.projection=None;self.stamp=None
+        self.projection=None;self.stamp=None;self.include_catch=False
 
     def authority(self,token):
         with self.store.transaction() as auth:
@@ -97,7 +97,7 @@ class Publisher:
                 watermark=db.execute('SELECT COALESCE(MAX(rowid),0) FROM events').fetchone()[0]
         return host['id'],epoch,policy,watermark
 
-    def _project(self,epoch,policy,watermark,now):
+    def _project(self,epoch,policy,watermark,now,*,include_catch=False):
         snapshot=self.repository.snapshot(now=now)
         groups={}
         for kind in COLLECTIONS:
@@ -106,7 +106,7 @@ class Publisher:
                 if uid not in groups:groups[uid]={key:[] for key in COLLECTIONS}
                 groups[uid][kind].append(row)
         rows=[]
-        require(len(groups)*2<=MAX_ROWS,'statistics_replica_capacity_required',503)
+        require(len(groups)*(3 if include_catch else 2)<=MAX_ROWS,'statistics_replica_capacity_required',503)
         for uid in sorted(groups):
             group={**snapshot,**groups[uid]}
             # Cross-mode name resolution must work even when one mode has zero totals.
@@ -115,7 +115,7 @@ class Publisher:
             host_groups=defaultdict(lambda:{key:[] for key in COLLECTIONS})
             for key in COLLECTIONS:
                 for r in groups[uid][key]:host_groups[r['host_id']][key].append(r)
-            for mode in (0,3):
+            for mode in ((0,2,3) if include_catch else (0,3)):
                 result=player(group,uid,ruleset_id=mode)
                 # Hidden IDs are not included in snapshot records at all.
                 require(not result['hidden'],'invalid_statistics_replica')
@@ -126,17 +126,17 @@ class Publisher:
                     own[host]={key:totals[key] for key in TOTALS}
                 rows.append({'ruleset_id':mode,'player':result,'own':own})
         rows.sort(key=lambda r:(r['ruleset_id'],r['player']['user_id']))
-        self.projection=rows;self.stamp=(epoch,policy,watermark,now)
+        self.projection=rows;self.stamp=(epoch,policy,watermark,now);self.include_catch=include_catch
 
-    def current(self,token):
+    def current(self,token,*,include_catch=False):
         with self.lock:
             host,epoch,policy,watermark=self.authority(token);now=self.store.clock()
-            if self.stamp is None or self.stamp[:2]!=(epoch,policy) or not 0<=now-self.stamp[3]<INTERVAL:
-                self._project(epoch,policy,watermark,now)
+            if self.include_catch!=include_catch or self.stamp is None or self.stamp[:2]!=(epoch,policy) or not 0<=now-self.stamp[3]<INTERVAL:
+                self._project(epoch,policy,watermark,now,include_catch=include_catch)
                 # A hide/revoke/consent change during projection must never publish stale policy.
                 check=self.authority(token)
                 require(check[:3]==(host,epoch,policy),'statistics_replica_policy_changed',409)
-            base=directory(self.store.root/'activity-replicas');hostbase=directory(base/host)
+            base=directory(self.store.root/('activity-replicas-v2' if include_catch else 'activity-replicas'));hostbase=directory(base/host)
             pointer=hostbase/'current.json'
             old=manifest(read_json(pointer)) if pointer.exists() else None
             if old and (old['server_epoch'],old['policy_id'],old['watermark'],old['generated_at'])==self.stamp:
@@ -177,10 +177,10 @@ class Publisher:
             except (OSError,ValueError,NetworkError):continue
             shutil.rmtree(candidate)
 
-    def read_page(self,token,content_id,index):
+    def read_page(self,token,content_id,index,*,include_catch=False):
         digest(content_id);integer(index,0,MAX_PAGES-1)
         host,epoch,policy,_=self.authority(token)
-        base=_private(self.store.root/'activity-replicas'/host/content_id,directory=True)
+        base=_private(self.store.root/('activity-replicas-v2' if include_catch else 'activity-replicas')/host/content_id,directory=True)
         value=manifest(read_json(base/'manifest.json'))
         require(value['host_id']==host and value['server_epoch']==epoch and value['policy_id']==policy,'statistics_replica_policy_changed',409)
         require(index<len(value['pages']),'statistics_replica_not_found',404)
@@ -331,7 +331,13 @@ class Replica:
         with connection(self.path) as db:
             self.schema(db);old=db.execute('SELECT * FROM replica_meta WHERE id=1').fetchone()
             if old and not force and old['checked']<=now<old['next_check']:return {'ok':True,'phase':'idle','transferred':0}
-        try:reply=transport.request('GET','/v1/activity/replica/current',token=token)
+        route='/v2/activity/replica' if any(r['preset']=='catch-fixed' for r in load(self.root)[1]['rooms']) else '/v1/activity/replica'
+        try:
+            try:reply=transport.request('GET',route+'/current',token=token)
+            except NetworkError as exc:
+                if exc.status!=404 or route.startswith('/v1/'):raise
+                route='/v1/activity/replica'
+                reply=transport.request('GET',route+'/current',token=token)
         except NetworkError as exc:
             if exc.status==404 and exc.code=='route_not_found':
                 with connection(self.path) as db:
@@ -374,10 +380,10 @@ class Replica:
                 try:page(read_json(_private(path),maximum=MAX_PAGE),entry);continue
                 except (OSError,ValueError,NetworkError):pass
             require(shutil.disk_usage(base).free>16*1024**2+entry['bytes'],'statistics_replica_disk_reserve',503)
-            body=transport.request('GET',f"/v1/activity/replica/page?content_id={value['content_id']}&index={entry['index']}",token=token)
+            body=transport.request('GET',f"{route}/page?content_id={value['content_id']}&index={entry['index']}",token=token)
             page(body,entry);atomic_json(path,body);transferred+=entry['bytes']
         # Confirm current authority again after the last page; no stale-policy window.
-        confirmed=manifest(transport.request('GET','/v1/activity/replica/current',token=token))
+        confirmed=manifest(transport.request('GET',route+'/current',token=token))
         require(confirmed==value,'statistics_replica_policy_changed',409)
         now=self.clock();previous_key=(-1,0)
         # Build outside the command cache: no large writer transaction blocks .stats.
@@ -399,7 +405,7 @@ class Replica:
         fd=os.open(target,os.O_RDONLY|os.O_DIRECTORY)
         try:os.fsync(fd)
         finally:os.close(fd)
-        confirmed=manifest(transport.request('GET','/v1/activity/replica/current',token=token))
+        confirmed=manifest(transport.request('GET',route+'/current',token=token))
         require(confirmed==value,'statistics_replica_policy_changed',409)
         now=self.clock()
         with connection(self.path) as db:

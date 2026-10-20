@@ -20,14 +20,14 @@ BOOLEANS = frozenset({
     'adaptive_chat_polling', 'map_pp_display_enabled', 'map_pp_auto_announce_enabled',
     'mania_style_fallback_enabled', 'mania_high_star_relax_style', 'high_star_relax_enabled',
     'close_room_on_exit', 'lazer_coordinator_enabled', 'lazer_chat_patrol_enabled',
-    'lazer_rejoin_on_hard_restart', 'loved_mode', 'mania_farm_enabled',
+    'lazer_rejoin_on_hard_restart', 'loved_mode', 'mania_farm_enabled', 'catch_include_loved',
 })
 # Bounds are intentionally compatible with the currently used native settings;
 # bool is never accepted as a number. No unreviewed string/path/identity fields.
 NUMBERS = {
     'countdown_seconds': (0, 600), 'auto_start_seconds': (0, 600),
     'queue_ahead': (1, 20), 'min_players': (1, 16),
-    'max_length': (0, 3600), 'real_max_length': (0, 3600),
+    'catch_min_length': (0, 3600), 'max_length': (0, 3600), 'real_max_length': (0, 3600),
     'min_passcount': (0, 10**9), 'pool_limit': (1, 200000), 'max_map_age_years': (0, 100),
     'preferred_length_share': (0, 1), 'preferred_min_length': (0, 3600),
     'preferred_max_length': (0, 3600), 'jump_preferred_length_share': (0, 1),
@@ -118,7 +118,11 @@ def validate_settings(value, *, preset):
                      ('jump_preferred_ar_min','jump_preferred_ar_max')]:
         if low in value and high in value and value[low]>value[high]:
             raise ConfigError('owner gameplay preference range invalid')
-    if preset.startswith('mania-'):
+    if preset == 'catch-fixed':
+        from bot.mode import validate_catch_config
+        try: validate_catch_config(value)
+        except ValueError as exc: raise ConfigError('owner gameplay Catch settings invalid') from exc
+    elif preset.startswith('mania-'):
         from bot.mode import validate_mania_mods
         try:validate_mania_mods(value.get('allowed_mods',[]),value.get('required_mods',[]),value.get('freestyle',False))
         except ValueError as exc:raise ConfigError('owner gameplay mania mods invalid') from exc
@@ -146,6 +150,8 @@ def project_legacy(defaults, room_configs, universal):
         import re
         if type(alias) is not str or not re.fullmatch('[a-z][a-z0-9_-]{0,23}',alias):
             raise ConfigError('owner legacy alias invalid')
+        if cfg['ruleset_id']==2:
+            raise ConfigError('Catch research requires explicit offline setup; legacy owner migration is not qualified')
         if cfg['ruleset_id']==3:preset='mania-'+str(cfg.get('mania_keys',4))+'k'
         else:preset='standard-auto' if cfg.get('auto_difficulty',True) else 'standard-fixed'
         spec=PRESETS[preset]
@@ -186,6 +192,7 @@ def effective_legacy(defaults,room_configs,universal):
         # Its validated leaves have already been applied by merge_room_config;
         # stopped adoption archives the exact raw source object separately.
         cfg.pop('mania_settings',None)
+        cfg.pop('catch_settings',None)
         cfg.update(close_room_on_exit=True,lazer_coordinator_enabled=False,
                    lazer_chat_patrol_enabled=False,lazer_rejoin_on_hard_restart=False,
                    discord_control_accept_untargeted=False)

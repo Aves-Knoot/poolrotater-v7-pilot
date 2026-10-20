@@ -288,6 +288,7 @@ class ProviderRoomApi:
             self.auth._mutex.release()
 
     def preflight_start(self, user_id):
+        self._startup_owned_observation=None
         code, values = _fetch(self.auth, OWNED_PATH)
         if code != 200: raise AuthError('ownership_listing_unavailable')
         if type(values) is not list or len(values) > ROOM_LIMIT:
@@ -299,6 +300,8 @@ class ProviderRoomApi:
             raise AuthError('provider_existing_rooms_require_review')
         # A bounded listing is a conservative observed-room check, not proof of
         # account-wide absence. Lost local ownership is independently fenced.
+        self._startup_owned_observation={'active_owned_room_ids':[], 'observed_ended_room_ids':[r['room_id'] for r in rows],
+                'listing_at_limit':False, 'account_wide_absence_proved':False}
 
     def __getattr__(self, name):
         from rolling.adapters import Api
@@ -333,6 +336,20 @@ def provider_host_controller(root, release, *, authentication, api, hub):
                    for state in journal['rooms'].values()):
                 raise ConfigError('provider room ownership requires stopped reconciliation')
         api.preflight_start(account.user_id)
+        rooms=auth._current()['rooms']
+        if any(r['preset']=='catch-fixed' for r in rooms):
+            owned=api._startup_owned_observation
+            if not isinstance(owned,dict):raise ConfigError('fresh Catch capacity observation required')
+            # Fresh provider-owned listing plus clean local ownership precedes
+            # every MakeRoom. The normal four-room installation budget stays.
+            from .layout import atomic_json
+            import time
+            atomic_json(root/'state/catch-startup-admission.json',{'format':1,
+                **auth.binding,'checked_at':time.time(),**owned,
+                'configured_rooms':len(rooms),'local_room_budget':4,
+                'configured_aliases':[r['alias'] for r in rooms],
+                'native_catch_aliases':[r['alias'] for r in rooms if r['preset']=='catch-fixed'],
+                'ownership_recovery_pending':False,'room_creation_dispatched':False})
         enroll(root, expected)
 
     from offline_host_controller import _host_controller

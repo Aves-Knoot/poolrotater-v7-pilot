@@ -33,8 +33,8 @@ function prDashboardQueue($room,$fresh) {
 function prDashboardRoomCard($room,$fresh) {
     $alias=$room['alias'];$settings=$room['settings']??[];
     $descriptions=['room1'=>'Difficulty follows the room. Keep the rounds flowing.','room2'=>'A steady difficulty range, with player votes.','room3'=>'Seven keys. Find your next Mania challenge.','room4'=>'Four keys. A fresh mix of Mania maps.'];
-    $out='<article class="pr-room-card pr-dash-room" id="'.hsc($alias).'" data-room-type="'.(in_array($alias,['room1','room2'],true)?'standard':'mania').'">'.prNowPlayingCard($room,$fresh,false);
-    $out.='<div class="pr-room-body"><p class="pr-room-description">'.hsc($descriptions[$alias]??'Automatic multiplayer').'</p><div class="pr-room-pills"><span><span class="pr-pill-label">Difficulty</span> <b data-room-range>';
+    $out='<article class="pr-room-card pr-dash-room" id="'.hsc($alias).'" data-room-type="'.(($room['type']??'')==='catch'?'catch':(in_array($alias,['room1','room2'],true)?'standard':'mania')).'">'.prNowPlayingCard($room,$fresh,false);
+    $out.='<div class="pr-room-body"><p class="pr-room-description">'.hsc(($room['type']??'')==='catch'?'Native osu!catch NM, Ranked/Approved charts and fixed difficulty with player votes.':($descriptions[$alias]??'Automatic multiplayer')).'</p><div class="pr-room-pills"><span><span class="pr-pill-label">Difficulty</span> <b data-room-range>';
     $range=$fresh?($settings['active_range']??[]):[];
     $out.=count($range)===2?prAnalyticsNumber($range[0],2).'–'.prAnalyticsNumber($range[1],2).'★':'Unknown';
     $out.='</b></span><span><span class="pr-pill-label">Map limit</span> <b data-room-limit>'.($fresh&&is_numeric($settings['max_length']??null)?prDashboardLength($settings['max_length']):'Unknown').'</b></span></div>';
@@ -120,7 +120,7 @@ function prDashboardStatus($embedStatus=true) {
         if ($key==='players') echo '<small class="pr-peak-record"><span>Peak observed <b data-live-peak>'.($peakValid?(int)$peak['count']:'—').'</b></span><span data-live-peak-since>'.($peakValid?'since '.hsc(gmdate('M j, Y',$peak['tracking_since'])):'').'</span></small>';
         echo '</div>';
     }
-    echo '</div><div class="pr-room-toolbar" id="rooms"><div><h2>Choose your room</h2><p>Standard or Mania. There’s a round for you.</p></div><div class="pr-room-filters" role="group" aria-label="Filter lobbies"><button type="button" data-room-filter="all" aria-pressed="true">All rooms</button><button type="button" data-room-filter="standard" aria-pressed="false">Standard</button><button type="button" data-room-filter="mania" aria-pressed="false">Mania</button></div></div><div class="pr-room-grid">';
+    echo '</div><div class="pr-room-toolbar" id="rooms"><div><h2>Choose your room</h2><p>Choose a ruleset and join a round.</p></div><div class="pr-room-filters" role="group" aria-label="Filter lobbies"><button type="button" data-room-filter="all" aria-pressed="true">All rooms</button><button type="button" data-room-filter="standard" aria-pressed="false">Standard</button><button type="button" data-room-filter="mania" aria-pressed="false">Mania</button><button type="button" data-room-filter="catch" aria-pressed="false">Catch</button></div></div><div class="pr-room-grid">';
     foreach ($rooms as $room) echo prDashboardRoomCard($room,$fresh);
     echo '</div><p class="pr-dashboard-timing">Status updates every 10 seconds. Song progress is approximate. <a href="#about_status">How it works ↓</a></p>';
     require_once __DIR__.'/community.php';

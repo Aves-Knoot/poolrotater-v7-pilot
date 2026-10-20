@@ -1,0 +1,1134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:poolrotater:network:display:v2",
+  "title": "PoolRotater public display protocol v2",
+  "description": "Closed public display fields. Runtime additionally enforces finite numbers, canonical UUIDs, matching preset/ruleset/keys, match/current-map identity, start <= observation+5 seconds, observed playing <= occupants, unique aliases/room IDs and host/future/freshness checks. No OAuth/chat/player identities.",
+  "$defs": {
+    "Map": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "beatmap_id",
+        "title",
+        "stars"
+      ],
+      "properties": {
+        "beatmap_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "stars": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "Settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ruleset_id",
+        "keys",
+        "auto_difficulty",
+        "selection_style",
+        "allowed_mods",
+        "required_mods",
+        "freestyle",
+        "countdown_seconds"
+      ],
+      "properties": {
+        "ruleset_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "keys": {
+          "enum": [
+            null,
+            4,
+            7
+          ]
+        },
+        "auto_difficulty": {
+          "type": "boolean"
+        },
+        "selection_style": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "allowed_mods": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16,
+            "pattern": "^[A-Z0-9]+$"
+          }
+        },
+        "required_mods": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16,
+            "pattern": "^[A-Z0-9]+$"
+          }
+        },
+        "freestyle": {
+          "type": "boolean"
+        },
+        "countdown_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ruleset_id": {
+                "not": {
+                  "const": 3
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "keys": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "playlist_item_id",
+        "beatmap_id",
+        "started_at",
+        "clock_rate",
+        "participants"
+      ],
+      "properties": {
+        "playlist_item_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "beatmap_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "started_at": {
+          "type": "number",
+          "minimum": 0.001,
+          "maximum": 9007199254740991
+        },
+        "clock_rate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0.25,
+          "maximum": 3
+        },
+        "participants": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 128
+        }
+      }
+    },
+    "DirectoryMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "playlist_item_id",
+        "beatmap_id",
+        "started_at",
+        "clock_rate",
+        "participants",
+        "clock_skew_seconds"
+      ],
+      "properties": {
+        "playlist_item_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "beatmap_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "started_at": {
+          "type": "number",
+          "minimum": 0.001,
+          "maximum": 9007199254740991
+        },
+        "clock_rate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0.25,
+          "maximum": 3
+        },
+        "participants": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 128
+        },
+        "clock_skew_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -30,
+          "maximum": 30
+        }
+      }
+    },
+    "Display": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "settings",
+        "playing_players",
+        "match"
+      ],
+      "properties": {
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        },
+        "playing_players": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 128
+        },
+        "match": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/Match"
+            }
+          ]
+        }
+      }
+    },
+    "DirectoryDisplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "settings",
+        "playing_players",
+        "match"
+      ],
+      "properties": {
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        },
+        "playing_players": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 128
+        },
+        "match": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/DirectoryMatch"
+            }
+          ]
+        }
+      }
+    },
+    "Room": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "alias",
+        "osu_room_id",
+        "preset",
+        "state",
+        "occupants",
+        "visibility",
+        "title",
+        "min_stars",
+        "max_stars",
+        "observed_at",
+        "code_version",
+        "catalog_version",
+        "current_map",
+        "display"
+      ],
+      "properties": {
+        "alias": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,23}$"
+        },
+        "osu_room_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "preset": {
+          "enum": [
+            "standard-auto",
+            "standard-fixed",
+            "mania-4k",
+            "mania-7k",
+            "catch-fixed"
+          ]
+        },
+        "state": {
+          "enum": [
+            "idle",
+            "starting",
+            "playing",
+            "draining",
+            "unavailable"
+          ]
+        },
+        "occupants": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 128
+        },
+        "visibility": {
+          "const": "public"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "min_stars": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "max_stars": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "observed_at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "code_version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.+-]{1,64}$"
+        },
+        "catalog_version": {
+          "type": "string",
+          "pattern": "^(unavailable|[a-f0-9]{64})$"
+        },
+        "current_map": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/Map"
+            }
+          ]
+        },
+        "display": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/Display"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "const": "standard-auto"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "settings": {
+                    "properties": {
+                      "ruleset_id": {
+                        "const": 0
+                      },
+                      "keys": {
+                        "enum": [
+                          null
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "const": "standard-fixed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "settings": {
+                    "properties": {
+                      "ruleset_id": {
+                        "const": 0
+                      },
+                      "keys": {
+                        "enum": [
+                          null
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "const": "mania-4k"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "settings": {
+                    "properties": {
+                      "ruleset_id": {
+                        "const": 3
+                      },
+                      "keys": {
+                        "enum": [
+                          null,
+                          4
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "const": "mania-7k"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "settings": {
+                    "properties": {
+                      "ruleset_id": {
+                        "const": 3
+                      },
+                      "keys": {
+                        "enum": [
+                          null,
+                          7
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "not": {
+                  "const": "playing"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "playing_players": {
+                    "type": "null"
+                  },
+                  "match": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "const": "catch-fixed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "settings": {
+                    "properties": {
+                      "ruleset_id": {
+                        "const": 2
+                      },
+                      "keys": {
+                        "type": "null"
+                      },
+                      "auto_difficulty": {
+                        "const": false
+                      },
+                      "freestyle": {
+                        "const": false
+                      },
+                      "selection_style": {
+                        "const": "variety"
+                      },
+                      "allowed_mods": {
+                        "items": {
+                          "const": "NM"
+                        }
+                      },
+                      "required_mods": {
+                        "items": {
+                          "const": "NM"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "not": {
+                  "const": "catch-fixed"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "min_stars": {
+                "maximum": 20
+              },
+              "max_stars": {
+                "maximum": 20
+              },
+              "current_map": {
+                "properties": {
+                  "stars": {
+                    "maximum": 20
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "DirectoryRoom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "alias",
+        "osu_room_id",
+        "preset",
+        "state",
+        "occupants",
+        "visibility",
+        "title",
+        "min_stars",
+        "max_stars",
+        "observed_at",
+        "code_version",
+        "catalog_version",
+        "current_map",
+        "display",
+        "host_id",
+        "operator",
+        "age_seconds",
+        "freshness",
+        "join_url",
+        "distribution"
+      ],
+      "properties": {
+        "alias": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,23}$"
+        },
+        "osu_room_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "preset": {
+          "enum": [
+            "standard-auto",
+            "standard-fixed",
+            "mania-4k",
+            "mania-7k",
+            "catch-fixed"
+          ]
+        },
+        "state": {
+          "enum": [
+            "idle",
+            "starting",
+            "playing",
+            "draining",
+            "unavailable"
+          ]
+        },
+        "occupants": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 128
+        },
+        "visibility": {
+          "const": "public"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "min_stars": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "max_stars": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "observed_at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "code_version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.+-]{1,64}$"
+        },
+        "catalog_version": {
+          "type": "string",
+          "pattern": "^(unavailable|[a-f0-9]{64})$"
+        },
+        "current_map": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/Map"
+            }
+          ]
+        },
+        "display": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/DirectoryDisplay"
+            }
+          ]
+        },
+        "host_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+          "format": "uuid"
+        },
+        "operator": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "age_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "freshness": {
+          "enum": [
+            "fresh",
+            "stale"
+          ]
+        },
+        "join_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^https://osu\\.ppy\\.sh/multiplayer/rooms/[1-9][0-9]*$"
+        },
+        "distribution": {
+          "const": "self-reported"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "const": "standard-auto"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "settings": {
+                    "properties": {
+                      "ruleset_id": {
+                        "const": 0
+                      },
+                      "keys": {
+                        "enum": [
+                          null
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "const": "standard-fixed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "settings": {
+                    "properties": {
+                      "ruleset_id": {
+                        "const": 0
+                      },
+                      "keys": {
+                        "enum": [
+                          null
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "const": "mania-4k"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "settings": {
+                    "properties": {
+                      "ruleset_id": {
+                        "const": 3
+                      },
+                      "keys": {
+                        "enum": [
+                          null,
+                          4
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "const": "mania-7k"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "settings": {
+                    "properties": {
+                      "ruleset_id": {
+                        "const": 3
+                      },
+                      "keys": {
+                        "enum": [
+                          null,
+                          7
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "not": {
+                  "const": "playing"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "playing_players": {
+                    "type": "null"
+                  },
+                  "match": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "const": "catch-fixed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display": {
+                "properties": {
+                  "settings": {
+                    "properties": {
+                      "ruleset_id": {
+                        "const": 2
+                      },
+                      "keys": {
+                        "type": "null"
+                      },
+                      "auto_difficulty": {
+                        "const": false
+                      },
+                      "freestyle": {
+                        "const": false
+                      },
+                      "selection_style": {
+                        "const": "variety"
+                      },
+                      "allowed_mods": {
+                        "items": {
+                          "const": "NM"
+                        }
+                      },
+                      "required_mods": {
+                        "items": {
+                          "const": "NM"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "preset": {
+                "not": {
+                  "const": "catch-fixed"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "min_stars": {
+                "maximum": 20
+              },
+              "max_stars": {
+                "maximum": 20
+              },
+              "current_map": {
+                "properties": {
+                  "stars": {
+                    "maximum": 20
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Heartbeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "installation_id",
+        "generation",
+        "sequence",
+        "code_version",
+        "catalog_version",
+        "rooms",
+        "sent_at"
+      ],
+      "properties": {
+        "protocol_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+          "format": "uuid"
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+          "format": "uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "code_version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.+-]{1,64}$"
+        },
+        "catalog_version": {
+          "type": "string",
+          "pattern": "^(unavailable|[a-f0-9]{64})$"
+        },
+        "rooms": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/Room"
+          }
+        },
+        "sent_at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "Capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "protocol_version",
+        "display_version",
+        "heartbeat_path",
+        "directory_path"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "protocol_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "display_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "heartbeat_path": {
+          "const": "/v2/hosts/self/heartbeat"
+        },
+        "directory_path": {
+          "const": "/v2/rooms"
+        }
+      }
+    },
+    "HeartbeatReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "sequence",
+        "replayed",
+        "received_at"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "received_at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "Directory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "protocol_version",
+        "server_epoch",
+        "generated_at",
+        "rooms",
+        "next_offset"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "protocol_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "server_epoch": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+          "format": "uuid"
+        },
+        "generated_at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "rooms": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/DirectoryRoom"
+          }
+        },
+        "next_offset": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      }
+    }
+  },
+  "$ref": "#/$defs/Heartbeat"
+}

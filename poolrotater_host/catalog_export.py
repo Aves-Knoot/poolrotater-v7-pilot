@@ -26,7 +26,12 @@ READER = 'poolrotater-selection-v1'
 MAX_FILE = 512 * 1024**2
 MAX_ROWS = 500_000
 MAX_TEXT = 4096
-MODES = {'standard': (0, None), 'mania4': (3, 4), 'mania7': (3, 7)}
+MODES = {'standard': (0, None), 'mania4': (3, 4), 'mania7': (3, 7), 'catch': (2, None)}
+CORE_MODES = ('standard', 'mania4', 'mania7')
+
+def complete_modes(value):
+    return type(value) is dict and set(CORE_MODES) <= set(value) <= set(MODES)
+
 EXCLUDED = (1549496,)
 HASH = re.compile(r'[0-9a-f]{64}\Z')
 # Entries are fixed (column name, SQLite type) pairs; never source-provided SQL.
@@ -308,7 +313,7 @@ def _pack(folder, files):
 
 def export_bundle(catalog, destination, mode, *, dt=None, farm=None, converts=None, convert_validation=None):
     """Build a new local export directory; never overwrite an installed package."""
-    if (mode not in MODES or (dt is not None and mode != 'standard')
+    if (mode == 'catch' or mode not in MODES or (dt is not None and mode != 'standard')
             or (farm is not None and mode == 'standard')
             or ((converts is None)!=(convert_validation is None))
             or (converts is not None and mode=='standard')):
@@ -425,6 +430,9 @@ def validate_manifest(manifest):
     """Closed application contract, not an authenticity assertion."""
     _closed(manifest, {'format', 'export_schema', 'reader', 'mode', 'ruleset', 'keys', 'files', 'sources', 'analysis', 'capabilities', 'exclusions', 'archive', 'content_id'})
     mode = manifest['mode']
+    if mode == 'catch':
+        from .catalog_catch import validate_manifest as validate_catch
+        return validate_catch(manifest)
     if type(mode) is not str or mode not in MODES or type(manifest['format']) is not int or manifest['format'] != 1 or type(manifest['export_schema']) is not int or manifest['export_schema'] != 1 or manifest['reader'] != READER:
         raise ConfigError('unsupported catalog manifest/reader')
     if type(manifest['ruleset']) is not int or (manifest['ruleset'], manifest['keys']) != MODES[mode] or (mode != 'standard' and type(manifest['keys']) is not int):
@@ -540,6 +548,9 @@ def inspect_bundle(folder):
         path = folder / item['name']
         if path.is_symlink() or not path.is_file() or path.stat().st_size != item['bytes'] or sha256(path) != item['sha256']:
             raise ConfigError('catalog export content mismatch')
+    if manifest['mode'] == 'catch':
+        from .catalog_catch import inspect as inspect_catch
+        return inspect_catch(folder, manifest)
     ids = None
     for item in manifest['files']:
         with source(folder / item['name']) as (db, _origin):
@@ -603,6 +614,9 @@ def pool_from_bundle(folder, *, sr_min=0, sr_max=20, source_mode='variety', limi
         raise ConfigError('source capability is unavailable in this catalog')
     options = dict(sr_min=sr_min, sr_max=sr_max, min_passcount=0, max_length=3600,
                    max_map_age_years=0, limit=limit, ratings_db=None)
+    if manifest['mode'] == 'catch':
+        from bot.catch_pool import ProductionCatchPool
+        return ProductionCatchPool(folder/'catalog.db', purpose='production', **options)
     if manifest['mode'] == 'standard':
         if 'dt' in manifest['capabilities']['companions']:
             from bot.standard_pool import StandardPool

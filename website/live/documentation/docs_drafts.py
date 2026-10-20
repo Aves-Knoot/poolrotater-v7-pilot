@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -27,10 +28,26 @@ def read_json(path):
 
 def atomic(path, value):
     payload = json.dumps(value, ensure_ascii=False, indent=2) + '\n'
-    tmp = path.with_name(path.name + '.new')
-    tmp.write_text(payload)
-    os.chmod(tmp, 0o640)
-    tmp.replace(path)
+    previous_gid = os.getegid()
+    try:
+        if os.geteuid() == 0:
+            # Create with the wiki group using the reader's existing SETGID
+            # authority; the hardened service deliberately has no CHOWN.
+            import pwd
+            os.setegid(pwd.getpwnam('poolrotator-wiki').pw_gid)
+        fd, name = tempfile.mkstemp(prefix=path.name+'.', dir=path.parent)
+    finally:
+        os.setegid(previous_gid)
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), 0o640)
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def digest(value):
@@ -139,10 +156,23 @@ def main():
                 'manifest_digest': publication['manifest_digest'], 'text': output}
         if release.get('source_kind') == 'rolling_worker':
             plan.update(source_kind='rolling_worker', supervisor_version=release['supervisor_version'])
+        if release.get('source_kind') == 'owner_v7_registered':
+            plan.update(source_kind='owner_v7_registered',
+                        runtime_sha256=release['runtime_sha256'],
+                        source_files_sha256=release['source_files_sha256'])
         plan_path = STATE/'draft_plan.json'
         atomic(plan_path, plan)
         # The PHP helper refuses an existing draft, so contributor edits are never overwritten.
-        subprocess.run(['/usr/bin/php', str(FILES/'draft_commit.php'), str(plan_path)], check=True, timeout=30)
+        command = ['/usr/bin/php', str(FILES/'draft_commit.php'), str(plan_path)]
+        if plan.get('source_kind') == 'owner_v7_registered':
+            # The privileged reader attests source; native revisions retain the wiki UID.
+            import pwd
+            if os.geteuid() != 0 or FILES != Path('/srv/poolrotator-wiki/documentation') or STATE != Path('/var/lib/poolrotator-wiki/documentation'):
+                raise ValueError('owner draft requires its fixed privileged reader')
+            if pwd.getpwnam('poolrotator-wiki').pw_uid <= 0:
+                raise ValueError('native wiki writer identity unavailable')
+            command = ['/usr/sbin/runuser', '-u', 'poolrotator-wiki', '--', *command]
+        subprocess.run(command, check=True, timeout=30)
         written = PAGES/(page_id.replace(':', '/')+'.txt')
         if not written.is_file() or digest(written.read_bytes()) != digest(output.encode()):
             raise ValueError('Private draft was not saved; baseline and queue retained')

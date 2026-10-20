@@ -461,6 +461,14 @@ def _wait_ready(target, record, *, timeout=None):
         # The cold full-catalog load and several checked provider handshakes per
         # room must fit the explicit owner four-room startup observation too.
         timeout = 120 + 90 * (expected_room_count - 1)
+        # Native Catch validates the full identity/PP projection in the parent
+        # and again in its independent worker. A cold one-room install must not
+        # time out before the unchanged 180s worker preparation deadline. This
+        # only extends observation; failures and exact ownership/readiness
+        # checks below remain authoritative.
+        selected = expected_rooms if private_profile is None else [
+            room for room in expected_rooms if room['alias'] == private_profile.alias]
+        timeout += 120 * sum(room['preset'] == 'catch-fixed' for room in selected)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         state = _service_state(target['root'].name)

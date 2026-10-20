@@ -51,6 +51,8 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
             load_provisioned(root,release=release)
             from poolrotater_host.worker_releases import load_worker
             runtime_validator = lambda candidate: load_worker(root, candidate)
+    from poolrotater_host.catch_pilot_operations import admission as catch_transition_admission
+    catch_transition_admission(root)
     lease = authentication.verified_owner() if authentication is not None else owner_lease(root, account_id=account_id)
     with lease as account:
         if authentication is not None: account_id = account.user_id

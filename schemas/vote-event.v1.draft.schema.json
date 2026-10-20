@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:poolrotater:schema:vote-event.v1.draft.schema.json",
+  "title": "DRAFT explicit vote event: conflict decision D05 pending",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "event_id",
+    "installation_id",
+    "generation",
+    "sequence",
+    "beatmap_id",
+    "player_id",
+    "value",
+    "ruleset",
+    "key_count",
+    "origin_room_alias",
+    "observed_at",
+    "base_revision"
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "installation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "generation": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "beatmap_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "player_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "value": {
+      "type": "integer",
+      "enum": [
+        -1,
+        0,
+        1
+      ]
+    },
+    "ruleset": {
+      "enum": [
+        0,
+        3
+      ]
+    },
+    "key_count": {
+      "enum": [
+        null,
+        4,
+        7
+      ]
+    },
+    "origin_room_alias": {
+      "type": "string",
+      "maxLength": 24
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "base_revision": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 0
+        }
+      ]
+    }
+  }
+}

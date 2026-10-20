@@ -13,7 +13,7 @@ import zipfile
 
 from .config import ConfigError, fields as config_fields
 from .layout import atomic_json, checked_root, file_lease, read_json
-from .catalog_export import MODES, inspect_bundle, sha256
+from .catalog_export import MODES, CORE_MODES, complete_modes, inspect_bundle, sha256
 from .catalog_trust import no_links
 from .network.hub_service import BOOTSTRAP as HUB_BOOTSTRAP
 
@@ -206,6 +206,12 @@ def prepare(destination,*,wheel_cache):
         for name in ('__init__.py','standard_pool.py','pool.py','jump_catalog.py'):
             path=source.parent/'bot'/name;no_links(path);target=runtime/'bot'/name
             target.parent.mkdir(mode=0o755,exist_ok=True);target.write_bytes(path.read_bytes());target.chmod(0o644)
+        # Catch validators are pure catalog contracts; no research inputs or
+        # live transports enter this independent catalog-service kit.
+        for name in ('__init__.py','production.py','c6_schema.py','errors.py'):
+            path=source.parent/'bot/catch_catalog'/name;no_links(path)
+            target=runtime/'bot/catch_catalog'/name
+            target.parent.mkdir(mode=0o755,exist_ok=True);target.write_bytes(path.read_bytes());target.chmod(0o644)
         (runtime/'bootstrap.py').write_text(BOOTSTRAP);(runtime/'bootstrap.py').chmod(0o644)
         dependencies=runtime/'dependencies';dependencies.mkdir(mode=0o755)
         pins=freeze_dependencies(wheel_cache,dependencies)
@@ -289,7 +295,7 @@ def configure_refresh(state,*,custody,bundles,exclusions=None,allow_expired_pend
     require(os.geteuid()==0,'catalog_administrator_required')
     protected(state,directory=True);protected(custody,directory=True,private=True)
     from .catalog_publication import Publisher
-    publisher=Publisher(custody);require(set(bundles)==set(MODES),'all_prepared_catalog_modes_required')
+    publisher=Publisher(custody);require(complete_modes(bundles),'all_prepared_catalog_modes_required')
     require(type(allow_expired_pending_renewal) is bool,'catalog_refresh_configuration_refused')
     inputs={}
     for mode,path in bundles.items():
@@ -315,7 +321,7 @@ def refresh(state,*,dry_run=False):
     config=read_json(Path(state)/'refresh.json');fields(config,('format','custody','repository_id','bootstrap_sha256',
                   'served','inputs','exclusions','allow_expired_pending_renewal'))
     require(type(config['format']) is int and config['format']==1 and type(config['allow_expired_pending_renewal']) is bool
-            and type(config['inputs']) is dict and set(config['inputs'])==set(MODES),'catalog_refresh_configuration_refused')
+            and complete_modes(config['inputs']),'catalog_refresh_configuration_refused')
     from .catalog_publication import Publisher
     publisher=Publisher(protected(config['custody'],directory=True,private=True))
     require(publisher.state['repository_id']==config['repository_id'] and publisher.state['bootstrap_sha256']==config['bootstrap_sha256']
@@ -364,8 +370,8 @@ def main(argv=None):
             from .catalog_publication import initialize
             result=initialize(args.custody,args.served)
         elif args.action=='configure-refresh':
-            require(args.custody is not None and all(getattr(args,mode) is not None for mode in MODES),'catalog_refresh_configuration_refused')
-            result=configure_refresh(args.state,custody=args.custody,bundles={mode:getattr(args,mode) for mode in MODES},
+            require(args.custody is not None and all(getattr(args,mode) is not None for mode in CORE_MODES),'catalog_refresh_configuration_refused')
+            result=configure_refresh(args.state,custody=args.custody,bundles={mode:getattr(args,mode) for mode in MODES if getattr(args,mode) is not None},
                 exclusions=args.exclusions,allow_expired_pending_renewal=args.allow_expired_pending_renewal)
         elif args.action in ('refresh','check-refresh'):result=refresh(args.state,dry_run=args.action=='check-refresh')
         else:

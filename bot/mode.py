@@ -25,10 +25,50 @@ MANIA_KEYS = frozenset({
     "ai_context_file",
 })
 
+# Research Catch has no qualified alternate variants or player-skill calibration.
+CATCH_DEFAULTS = {
+    'auto_difficulty': False, 'allowed_mods': [], 'required_mods': [], 'freestyle': False,
+    'loved_mode': False, 'stream_enabled': False, 'mania_farm_enabled': False,
+    'catch_include_loved': False, 'catch_min_length': 0,
+    'max_length': 240, 'min_passcount': 0, 'max_map_age_years': 0, 'pool_limit': 200000,
+    'high_star_relax_enabled': False, 'map_pp_display_enabled': False,
+    'map_pp_auto_announce_enabled': False,
+}
+CATCH_KEYS = frozenset({
+    'catch_catalog', 'catch_include_loved', 'catch_min_length',
+    'sr_min', 'sr_max', 'max_length', 'preferred_min_length', 'preferred_max_length',
+    'preferred_length_share', 'pool_limit', 'auto_difficulty', 'difficulty_vote_step',
+    'difficulty_vote_max_steps', 'allowed_mods', 'required_mods', 'freestyle',
+    'room_name', 'stream_enabled', 'loved_mode',
+    'discord_control_enabled', 'discord_control_channel_id',
+    'discord_public_status_channel_id', 'discord_public_status_label',
+    'discord_public_status_channel_name', 'discord_public_join_base_url', 'ai_context_file',
+})
+
+
+def validate_catch_mods(allowed, required, freestyle):
+    if type(allowed) is not list or type(required) is not list or allowed or required or freestyle is not False:
+        raise ValueError('Native Catch currently supports NM only: empty allowed/required mods and freestyle=false')
+
+
+def validate_catch_config(cfg):
+    validate_catch_mods(cfg.get('allowed_mods', []), cfg.get('required_mods', []), cfg.get('freestyle', False))
+    if cfg.get('auto_difficulty', False) is not False:
+        raise ValueError('Native Catch requires fixed difficulty')
+    if cfg.get('loved_mode', False) is not False or cfg.get('stream_enabled', False) is not False:
+        raise ValueError('Native Catch cannot use Standard Loved or stream pools')
+    if type(cfg.get('catch_include_loved', False)) is not bool:
+        raise ValueError('catch_include_loved must be boolean')
+    if cfg.get('mania_farm_enabled', False) or cfg.get('high_star_relax_enabled', False):
+        raise ValueError('Native Catch cannot use unqualified farm or high-star relaxation')
+    for key in ('clock_rate', 'speed_rate', 'rate'):
+        if key in cfg and (type(cfg[key]) not in (int, float) or cfg[key] != 1):
+            raise ValueError('Native Catch supports clock rate 1.0 only')
+
 def ruleset_id(cfg):
     value = cfg.get("ruleset_id", 0)
-    if type(value) is not int or value not in (0, 3):
-        raise ValueError("ruleset_id must be 0 (standard) or 3 (native Mania)")
+    if type(value) is not int or value not in (0, 2, 3):
+        raise ValueError("ruleset_id must be 0 (standard), 2 (native Catch) or 3 (native Mania)")
     return value
 
 def validate_mania_mods(allowed, required, freestyle):
@@ -79,4 +119,15 @@ def merge_room_config(defaults, room, universal):
         if cfg.get("mania_keys", 4) not in (4, 7):
             raise ValueError("Only native 4K or 7K mania is supported in this release")
         validate_mania_mods(cfg.get("allowed_mods", []), cfg.get("required_mods", []), cfg.get("freestyle", False))
+    elif ruleset_id(cfg) == 2:
+        local = room.get('catch_settings', {})
+        if not isinstance(local, dict) or set(local) - CATCH_KEYS:
+            raise ValueError('catch_settings must contain only documented Catch room-tuning keys')
+        # Global Standard tuning must not silently select an unqualified variant.
+        # Flat explicit room values are restored after safe defaults; local block wins.
+        cfg.update({key: list(value) if isinstance(value, list) else value
+                    for key, value in CATCH_DEFAULTS.items()})
+        cfg.update({key: room[key] for key in CATCH_KEYS if key in room})
+        cfg.update(local)
+        validate_catch_config(cfg)
     return cfg

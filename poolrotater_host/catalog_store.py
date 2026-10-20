@@ -27,14 +27,14 @@ from .runtime_package import fixture_only, json_bytes
 POINTER = 'state/catalog-installation.json'
 RESERVE = 5 * 1024**3
 MAX_VERSIONS = 128
-CATALOG_KEYS = ('farm_db', 'standard_dt_db', 'standard_catalog_binding', 'mania_db',
+CATALOG_KEYS = ('catch_catalog', 'farm_db', 'standard_dt_db', 'standard_catalog_binding', 'mania_db',
                 'mania_farm_db', 'mania_farm_enabled', 'mania_convert_db',
                 'mania_convert_validation_db', '_host_catalog_set', '_host_catalog_reference')
 
 
 def mode_for(room):
     spec = PRESETS[room['preset']]
-    return 'standard' if spec['ruleset'] == 0 else 'mania' + str(spec['keys'])
+    return 'standard' if spec['ruleset'] == 0 else 'catch' if spec['ruleset'] == 2 else 'mania' + str(spec['keys'])
 
 
 def _hash(value):
@@ -338,10 +338,12 @@ class CatalogStore:
     def stage(self, repository, modes):
         """Authenticate and publish all requested immutable versions; refs unchanged."""
         modes = list(modes)
-        if not modes or len(modes) > 3 or len(modes) != len(set(modes)) or any(m not in MODES for m in modes):
-            raise ConfigError('stage requires one to three distinct supported modes')
+        if not modes or len(modes) > len(MODES) or len(modes) != len(set(modes)) or any(m not in MODES for m in modes):
+            raise ConfigError('stage requires distinct supported modes')
         with self._writer():
             before = self.current()
+            if 'catch' in modes:
+                self._accept_exclusions_locked(repository,include_catch=True)
             if len(list((self.path / 'versions').iterdir())) + len(modes) > MAX_VERSIONS:
                 raise ConfigError('catalog version budget exceeded; reference-aware cleanup required')
             selected = dict(before['modes'])
@@ -431,24 +433,52 @@ class CatalogStore:
             (self.path / 'pending.json').unlink(); _sync(self.path)
             return {'status': 'committed' if current == journal['after'] else 'aborted', 'reference': current}
 
-    def exclusions(self):
+    def exclusions(self, *, mode=None):
         from .catalog_exclusions import initial_state, validate_state
         self._check()
-        state = self._read('exclusions.json', optional=True)
+        name='exclusions-catch.json' if mode=='catch' else 'exclusions.json'
+        state = self._read(name, optional=True)
         return validate_state(state if state is not None else initial_state(self.trust.identity), self.trust.identity)
 
-    def accept_exclusions(self, repository):
-        from .catalog_exclusions import apply_feed
+    def _accept_exclusions_locked(self, repository, *, include_catch=False):
+        from .catalog_exclusions import apply_feed, validate_feed
         from .catalog_trust import verified_target
         from .layout import unique_fields
+        from .catalog_export import CORE_MODES
         import hashlib
+        def target(name):
+            raw=verified_target(repository,self.path/'cache',self.trust,name)
+            try:feed=json.loads(raw,object_pairs_hook=unique_fields)
+            except (ValueError,UnicodeError) as exc:raise ConfigError('invalid signed exclusion JSON') from exc
+            validate_feed(feed)
+            return raw,feed
+        raw,feed=target('exclusions.json')
+        if any(not set(e['modes'])<=set(CORE_MODES) for e in feed['events']):
+            raise ConfigError('legacy exclusion target contains an incompatible mode')
+        result=apply_feed(self.exclusions(),feed,hashlib.sha256(raw).hexdigest())
+        if include_catch:
+            extended_raw,extended=target('exclusions-v2.json')
+            if extended['revision']!=feed['revision']:
+                raise ConfigError('catalog exclusion contracts changed during refresh; retry')
+            from .catalog_publication import _legacy_feed
+            if _legacy_feed(extended)!=feed:
+                raise ConfigError('catalog exclusion contract projections disagree')
+            events=[]
+            for e in extended['events']:
+                if 'catch' in e['modes']:
+                    events.append({**e,'modes':['catch'],'memberships':
+                                   {'catch':e['memberships']['catch']} if e['memberships'] else {}})
+            scoped={**extended,'events':events}
+            catch=apply_feed(self.exclusions(mode='catch'),scoped,hashlib.sha256(extended_raw).hexdigest())
+            # Catch state never enters the legacy file. An older runtime can
+            # reactivate its previous reference without deleting newer data.
+            self._write(self.path/'exclusions-catch.json',catch)
+        self._write(self.path/'exclusions.json',result)
+        return result
+
+    def accept_exclusions(self, repository):
         with self._writer():
-            raw = verified_target(repository, self.path/'cache', self.trust, 'exclusions.json')
-            try: feed = json.loads(raw, object_pairs_hook=unique_fields)
-            except (ValueError, UnicodeError) as exc: raise ConfigError('invalid signed exclusion JSON') from exc
-            result = apply_feed(self.exclusions(), feed, hashlib.sha256(raw).hexdigest())
-            self._write(self.path/'exclusions.json', result)
-            return result
+            return self._accept_exclusions_locked(repository,include_catch='catch' in self.current()['modes'])
 
     def rollback(self, reference=None):
         """Explicit local verified rollback; remote metadata and exclusions unchanged."""
@@ -657,7 +687,8 @@ def settings_for(room, resolved):
     folder, manifest = resolved['bundles'][mode_for(room)]
     companions = manifest['capabilities']['companions']
     files = {f['name']: f['sha256'] for f in manifest['files']}
-    return {'farm_db': str(folder / 'catalog.db') if manifest['ruleset'] == 0 else '',
+    return {**({'catch_catalog': str(folder/'catalog.db')} if manifest['ruleset']==2 else {}),
+            'farm_db': str(folder / 'catalog.db') if manifest['ruleset'] == 0 else '',
             'mania_db': str(folder / 'catalog.db') if manifest['ruleset'] == 3 else '',
             'standard_dt_db': str(folder / 'dt.db') if 'dt' in companions else '',
             'standard_catalog_binding': {'source_sha256': files['catalog.db'], 'dt_sha256': files['dt.db']} if 'dt' in companions else None,

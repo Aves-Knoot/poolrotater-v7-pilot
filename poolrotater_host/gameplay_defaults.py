@@ -395,5 +395,10 @@ PROFILES = {'mania-4k': {'settings': {'active_chat_countdown_extension_seconds':
                     'sr_min': 3.5}}
 
 def settings_for(preset):
-    from .owner_settings import validate_settings
+    from .owner_settings import validate_settings, GAMEPLAY_KEYS
+    if preset == 'catch-fixed':
+        from bot.mode import CATCH_DEFAULTS
+        # Operational defaults come from the engine, never from another ruleset's tuning.
+        return validate_settings({key: copy.deepcopy(value) for key, value in CATCH_DEFAULTS.items()
+                                  if key in GAMEPLAY_KEYS}, preset=preset)
     return validate_settings(copy.deepcopy(PROFILES[preset]['settings']), preset=preset)

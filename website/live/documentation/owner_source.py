@@ -50,6 +50,16 @@ class Source:
                  'mania_7k.db':('room3','mania_db'),'loved.db':('room1','loved_db')}
         if filename not in choices:raise ValueError('unknown catalog role')
         alias,key=choices[filename]
+        # Lobby 1 can now be Catch. Resolve Standard enrichment from the
+        # configured Standard room instead of reading Catch's unrelated paths.
+        host_path=self.root/'config/host.json'
+        if filename in ('farm.db','loved.db') and host_path.exists():
+            rooms=bounded_json(host_path).get('rooms',[])
+            aliases=[r.get('alias') for r in rooms if isinstance(r,dict)
+                     and r.get('preset') in ('standard-auto','standard-fixed')]
+            if not aliases or not re.fullmatch('room[1-4]',str(aliases[0])):
+                raise ValueError('configured Standard catalog unavailable')
+            alias=aliases[0]
         value=bounded_json(self.config(alias)).get(key)
         if not isinstance(value,str) or not value:raise ValueError('catalog role unavailable')
         candidate=Path(value)

@@ -43,6 +43,10 @@ class FeedbackReplies:
     def enqueue(self, beatmap_id, user_id, title, label):
         item = {'beatmap_id': beatmap_id, 'user_id': user_id,
                 'title': title, 'label': label, 'deadline': self.clock() + self.TIMEOUT}
+        if getattr(self.store, 'ruleset_id', None) == 2:
+            # The caller invokes this only after its local transaction commits.
+            # Catch never waits for an upload, cache, or shared count to thank it.
+            return [self._message(item)]
         key = (beatmap_id, user_id)
         try:
             connection = self._connect()

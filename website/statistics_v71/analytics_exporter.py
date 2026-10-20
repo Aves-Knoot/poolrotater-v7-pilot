@@ -3,7 +3,7 @@
 from pathlib import Path
 from datetime import datetime, timezone
 from collections import defaultdict
-import ast, json, math, os, re, sqlite3, subprocess, time
+import ast, fcntl, json, math, os, re, sqlite3, stat, subprocess, time, tempfile
 from contextlib import contextmanager
 import sys
 sys.path.insert(0, "/usr/local/lib/poolrotator-ops")
@@ -14,7 +14,8 @@ except ModuleNotFoundError:
 
 # Mutable observations/config/catalogs are independent of the active release.
 from owner_source import selected
-from network_statistics import compose as compose_network_statistics, read_snapshot as read_network_statistics
+from network_statistics import (compose as compose_network_statistics, read_snapshot as read_network_statistics,
+                                HOST as NETWORK_HOST, number as network_number)
 SOURCE = selected()
 APP = SOURCE.root
 OPS = Path('/var/lib/poolrotator-ops/snapshots')
@@ -27,7 +28,7 @@ TYPES = ['standard', 'standard', 'mania_7k', 'mania_4k']
 GUIDES = ['standard_auto','standard_fixed','mania_7k','mania_4k']
 LOG_PREFIX = r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[room[1-4]\] '
 PERIODS = {'all': 0, '7d': 7*86400, '14d': 14*86400, '30d': 30*86400}
-SCOPES = ['all', 'standard', 'mania_7k', 'mania_4k']
+SCOPES = ['all', 'standard', 'mania_7k', 'mania_4k', 'catch']
 
 def number(value, default=0):
     try:
@@ -88,10 +89,40 @@ def runtime_rooms(now, service):
     return result
 
 def atomic(path, data, mode=0o644):
+    """Replace a complete, flushed document; failed writes leave the old one."""
+    path=Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp=path.with_name(path.name+'.tmp')
-    tmp.write_text(json.dumps(data, ensure_ascii=True, separators=(',',':'), allow_nan=False)+'\n')
-    tmp.chmod(mode); os.replace(tmp,path)
+    fd,name=tempfile.mkstemp(prefix='.'+path.name+'.',suffix='.tmp',dir=path.parent)
+    temporary=Path(name)
+    try:
+        with os.fdopen(fd,'w') as stream:
+            os.fchmod(stream.fileno(),mode)
+            json.dump(data,stream,ensure_ascii=True,separators=(',',':'),allow_nan=False)
+            stream.write('\n');stream.flush();os.fsync(stream.fileno())
+        os.replace(temporary,path)
+        directory=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try:os.fsync(directory)
+        finally:os.close(directory)
+    finally:
+        try:temporary.unlink()
+        except FileNotFoundError:pass
+
+
+@contextmanager
+def statistics_lock(state):
+    """Only one statistics producer may snapshot/aggregate/publish at a time."""
+    state.mkdir(parents=True,exist_ok=True,mode=0o700)
+    fd=os.open(state/'statistics.lock',os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+    try:
+        info=os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1:
+            raise ValueError('Unsafe statistics lock')
+        try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        yield True
+    finally:os.close(fd)
 
 @contextmanager
 def readonly(path):
@@ -100,21 +131,40 @@ def readonly(path):
         yield conn
 
 @contextmanager
-def snapshot_db(path):
-    # Copy a consistent ledger into private memory, then release the live DB
-    # before aggregating. Long Python work must never hold a rollback-journal
-    # read lock that could delay the bot's score/visibility writes.
+def snapshot_db(path, *, directory=None):
+    """Release the live read transaction before doing any Python aggregation.
+
+    The private disk copy and SQLite page caches have bounded resident memory;
+    neither the ledger nor its query temporary files are copied into RAM.
+    TemporaryDirectory removes the copy even when aggregation/publication fails.
+    """
     if os.environ.get('POOLROTATOR_WIKI_REQUIRE_READONLY')=='1' and not os.statvfs(path).f_flag & os.ST_RDONLY:
         raise OSError('Ledger must be mounted read-only')
-    target=sqlite3.connect(':memory:')
-    try:
+    with tempfile.TemporaryDirectory(prefix='analytics-', dir=directory) as temporary:
+        root=Path(temporary)
+        owner=Path(path).stat()
+        # readonly_database keeps the source owner's effective credentials for
+        # backup too. Permit only that owner to create the target/journal.
+        if os.geteuid()==0:
+            os.chown(root,owner.st_uid,owner.st_gid)
         with readonly_database(path, timeout=2) as source:
-            source.backup(target,pages=128,sleep=0.01)
-        target.row_factory=sqlite3.Row
-        target.execute('PRAGMA query_only=ON')
-        yield target
-    finally:
-        target.close()
+            source.execute('PRAGMA cache_size=-2048')
+            target=sqlite3.connect(str(root/'ledger.sqlite3'))
+            try:
+                os.chmod(root/'ledger.sqlite3',0o600)
+                target.execute('PRAGMA cache_size=-2048')
+                target.execute('PRAGMA temp_store=FILE')
+                target.execute('PRAGMA mmap_size=0')
+                source.backup(target,pages=128,sleep=0.01)
+            except BaseException:
+                target.close()
+                raise
+        try:
+            target.row_factory=sqlite3.Row
+            target.execute('PRAGMA query_only=ON')
+            yield target
+        finally:
+            target.close()
 
 def service_status(now):
     result=subprocess.run(['systemctl','show',SOURCE.service,'--property=ActiveState,SubState,NRestarts,ExecMainStartTimestampMonotonic'],
@@ -128,6 +178,7 @@ def service_status(now):
 
 def room_type(row):
     title=(str(row['initial_name'] or '')+' '+str(row['last_name'] or '')).upper()
+    if row['ruleset_id']==2:return 'catch'
     if row['ruleset_id']==3 or re.search(r'\b[47]K\b',title):
         if re.search(r'\b7K\b',title):return 'mania_7k'
         if re.search(r'\b4K\b',title):return 'mania_4k'
@@ -237,7 +288,7 @@ def enrich_map(info, mode, cache):
     if type(bid) is not int or bid<=0:return info
     key=(bid,mode)
     if key not in cache:
-        catalogs=[('farm.db','beatmaps'),('loved.db','beatmaps')] if mode=='standard' else [('mania_7k.db','maps'),('mania.db','maps')]
+        catalogs=[] if mode=='catch' else ([('farm.db','beatmaps'),('loved.db','beatmaps')] if mode=='standard' else [('mania_7k.db','maps'),('mania.db','maps')])
         if mode=='all':catalogs=[('farm.db','beatmaps'),('loved.db','beatmaps'),('mania_7k.db','maps'),('mania.db','maps')]
         cache[key]=None
         for filename,table in catalogs:
@@ -258,56 +309,87 @@ def empty_player(uid):
             'top_plays':0,'visits':0,'time_by_type':{}}
 
 def metrics(conn, rooms, now, active_ids, network_snapshot=None, views_out=None):
-    # A single read transaction includes privacy and stats consistently. A
-    # failed privacy query aborts named publication rather than treating it public.
+    """Aggregate one scope/window at a time; keep only bounded public results."""
     hidden={r[0] for r in conn.execute('SELECT user_id FROM autohost_stats_privacy WHERE hidden!=0')}
-    groups={mode:{period:defaultdict(empty_player) for period in PERIODS} for mode in SCOPES}
     names={};name_dates={};first=now
-    def player(mode,period,uid):
-        group=groups[mode][period]
-        if uid not in group:group[uid]=empty_player(uid)
-        return group[uid]
     def name(uid,value,at):
         if value and at>=name_dates.get(uid,0):names[uid]=clean(value,64);name_dates[uid]=at
-    def targets(mode,at):
-        for scope in (['all',mode] if mode in SCOPES and mode!='all' else ['all']):
-            for period,seconds in PERIODS.items():
-                if seconds==0 or at>=now-seconds:yield scope,period
-    current_live=defaultdict(lambda:defaultdict(float))
-    room_time=defaultdict(lambda:defaultdict(float))
-    for row in conn.execute('SELECT * FROM autohost_room_players'):
-        uid=row['user_id'];room=rooms.get(row['room_id']);mode=room['type'] if room else 'standard'
-        seconds=max(0,number(row['total_seconds']))
-        if row['room_id'] in active_ids and number(row['last_join_at'])>number(row['last_leave_at']):
-            live=max(0,now-number(row['last_join_at']));seconds+=live;current_live[uid][mode]+=live
-        room_time[uid][mode]+=seconds
-    mania_totals={}
-    for table,mode in [('autohost_lobby_time','standard'),('autohost_lobby_time_mania','mania')]:
-        for row in conn.execute('SELECT * FROM '+table):
-            uid=row['user_id'];name(uid,row['username'],number(row['updated_at']));first=min(first,number(row['first_join_at'],now))
-            live=sum(v for m,v in current_live[uid].items() if (m=='standard')==(mode=='standard'))
-            seconds=max(0,number(row['total_seconds']))+live
-            p=player('all','all',uid);p['seconds']+=seconds;p['visits']+=int(number(row['visit_count']));p['time_by_type'][mode]=round(seconds,1)
-            if mode=='standard':q=player('standard','all',uid);q['seconds']=seconds;q['visits']=int(number(row['visit_count']))
-            else:mania_totals[uid]=seconds
-    for uid,types in room_time.items():
-        for mode in ['mania_7k','mania_4k']:
-            if types[mode]>0:
-                p=player(mode,'all',uid);p['seconds']=types[mode]
-                player('all','all',uid)['time_by_type'][mode]=round(types[mode],1)
+    for table in ('autohost_lobby_time','autohost_lobby_time_mania','autohost_lobby_time_catch'):
+        if table.endswith('_catch') and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
+        for row in conn.execute('SELECT user_id,username,updated_at,first_join_at FROM '+table):
+            name(row['user_id'],row['username'],number(row['updated_at']))
+            first=min(first,number(row['first_join_at'],now))
+    for table in ('autohost_match_players','autohost_pp_achievements','autohost_pp_achievements_mania','autohost_pp_achievements_catch'):
+        if table.endswith('_catch') and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
+        for row in conn.execute('SELECT user_id,username,created_at FROM '+table):
+            at=number(row['created_at']);name(row['user_id'],row['username'],at);first=min(first,at)
     maps={};labels={}
-    for row in conn.execute('SELECT * FROM autohost_matches ORDER BY started_at'):
-        bid=row['beatmap_id']; info={'beatmap_id':bid,'label':clean(row['map_label']) or 'Map #'+str(bid),'stars':number(row['star_rating'],None)}
+    for row in conn.execute('SELECT beatmap_id,map_label,star_rating FROM autohost_matches ORDER BY started_at'):
+        bid=row['beatmap_id'];info={'beatmap_id':bid,'label':clean(row['map_label']) or 'Map #'+str(bid),'stars':number(row['star_rating'],None)}
         maps[bid]=info;labels[info['label']]=info
+    output={mode:{} for mode in SCOPES};views={}
+    for scope in SCOPES:
+        for period in PERIODS:
+            raw=_metric_group(conn,rooms,now,active_ids,names,maps,hidden,scope,period)
+            published,extra=compose_network_statistics(raw,names,hidden,network_snapshot,set(rooms),now,selection=(scope,period))
+            output[scope][period]=published[scope][period]
+            if not views:
+                views={**extra,'hosts':{hid:{**host,'scopes':{mode:{} for mode in SCOPES}} for hid,host in extra['hosts'].items()}}
+            views['coverage']['pre_opt_in_community_history'] |= extra['coverage']['pre_opt_in_community_history']
+            for hid,host in extra['hosts'].items():
+                views['hosts'][hid]['scopes'][scope][period]=host['scopes'][scope][period]
+            del raw,published,extra
+    if views_out is not None:views_out.update(views)
+    return output,maps,labels,first
+
+
+def _metric_group(conn, rooms, now, active_ids, names, maps, hidden, scope, period):
+    # A single read transaction includes privacy and stats consistently. A
+    # failed privacy query aborts named publication rather than treating it public.
+    groups={scope:{period:{}}}
+    def player(mode, window, uid):
+        if mode != scope or window != period:
+            return empty_player(uid)
+        group=groups[scope][period]
+        if uid not in group:group[uid]=empty_player(uid)
+        return group[uid]
+    def targets(mode, at):
+        if scope in ('all',mode) and (not PERIODS[period] or at>=now-PERIODS[period]):
+            yield scope,period
+    if period=='all':
+        current_live=defaultdict(lambda:defaultdict(float))
+        room_time=defaultdict(lambda:defaultdict(float))
+        for row in conn.execute('SELECT * FROM autohost_room_players'):
+            uid=row['user_id'];room=rooms.get(row['room_id']);mode=room['type'] if room else 'standard'
+            seconds=max(0,number(row['total_seconds']))
+            if row['room_id'] in active_ids and number(row['last_join_at'])>number(row['last_leave_at']):
+                live=max(0,now-number(row['last_join_at']));seconds+=live;current_live[uid][mode]+=live
+            room_time[uid][mode]+=seconds
+        mania_totals={}
+        for table,mode in [('autohost_lobby_time','standard'),('autohost_lobby_time_mania','mania'),('autohost_lobby_time_catch','catch')]:
+            if table.endswith('_catch') and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
+            for row in conn.execute('SELECT * FROM '+table):
+                uid=row['user_id']
+                live=sum(v for m,v in current_live[uid].items() if (m==mode if mode in ('standard','catch') else m in ('mania_7k','mania_4k','mania_other')))
+                seconds=max(0,number(row['total_seconds']))+live
+                p=player('all','all',uid);p['seconds']+=seconds;p['visits']+=int(number(row['visit_count']));p['time_by_type'][mode]=round(seconds,1)
+                if mode in ('standard','catch'):q=player(mode,'all',uid);q['seconds']=seconds;q['visits']=int(number(row['visit_count']))
+                else:mania_totals[uid]=seconds
+        for uid,types in room_time.items():
+            for mode in ['mania_7k','mania_4k']:
+                if types[mode]>0:
+                    p=player(mode,'all',uid);p['seconds']=types[mode]
+                    player('all','all',uid)['time_by_type'][mode]=round(types[mode],1)
     for row in conn.execute('SELECT * FROM autohost_match_players'):
-        uid=row['user_id'];at=number(row['created_at']);name(uid,row['username'],at);first=min(first,at)
+        uid=row['user_id'];at=number(row['created_at'])
         mode=rooms.get(row['room_id'],{}).get('type','standard')
         for scope,period in targets(mode,at):
             p=player(scope,period,uid);p['maps']+=1;p['scores']+=int(bool(row['score_submitted']));p['unique'].add(row['beatmap_id']);p['days'].add(int(at//86400))
             if row['score_submitted'] and row['accuracy'] is not None:
                 acc=number(row['accuracy'],-1)
                 if 0<=acc<=100:p['accuracy_sum']+=acc;p['accuracy_n']+=1
-    for table,fallback_mode in [('autohost_pp_achievements','standard'),('autohost_pp_achievements_mania','mania_other')]:
+    for table,fallback_mode in [('autohost_pp_achievements','standard'),('autohost_pp_achievements_mania','mania_other'),('autohost_pp_achievements_catch','catch')]:
+        if table.endswith('_catch') and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
         for row in conn.execute('SELECT * FROM '+table):
             uid=row['user_id'];at=number(row['created_at']);name(uid,row['username'],at);first=min(first,at)
             mode=rooms.get(row['room_id'],{}).get('type',fallback_mode)
@@ -318,9 +400,7 @@ def metrics(conn, rooms, now, active_ids, network_snapshot=None, views_out=None)
                 p=player(scope,period,uid);p['pp']+=max(0,number(row['profile_gain_pp']));p['top_plays']+=1
                 if not p['best_gain'] or achievement['gain']>p['best_gain']['gain']:p['best_gain']=achievement
                 if not p['best_score'] or achievement['score_pp']>p['best_score']['score_pp']:p['best_score']=achievement
-    output, views = compose_network_statistics(groups,names,hidden,network_snapshot,set(rooms),now)
-    if views_out is not None: views_out.update(views)
-    return output,maps,labels,first
+    return groups
 
 def history_seed():
     rows=[]
@@ -361,37 +441,82 @@ def history_room_states(history, saved, current_time, current_states):
                       0 if row[5]==0 else None for i in range(1,5)]])
     return aligned
 
+def _privacy_checked(stats, network_snapshot, now):
+    """Revalidate privacy before publishing or retaining a previous result."""
+    with readonly(DB) as conn:
+        hidden={r[0] for r in conn.execute('SELECT user_id FROM autohost_stats_privacy WHERE hidden!=0')}
+    if stats.get('coverage',{}).get('network_available'):
+        if network_snapshot is None:
+            raise ValueError('Network privacy unavailable')
+        hidden.update(uid for uid in network_snapshot.get('hidden_user_ids',[]) if type(uid) is int and uid>0)
+        eligible=set()
+        for row in network_snapshot.get('hosts',[]):
+            if not isinstance(row,dict):continue
+            hid=row.get('host_id');consent=network_number(row.get('consent_at'),None)
+            if isinstance(hid,str) and NETWORK_HOST.fullmatch(hid) and hid!='owner' and row.get('enabled') is True and consent is not None and 0<=consent<=now:
+                eligible.add(hid)
+        if not (set(stats.get('hosts',{}))-{'owner'}) <= eligible:
+            raise ValueError('Statistics host consent changed')
+    for scopes in [stats.get('scopes',{}),*[host.get('scopes',{}) for host in stats.get('hosts',{}).values()]]:
+        for periods in scopes.values():
+            for group in periods.values():
+                # If a published player opted out during aggregation, rebuild
+                # on the next run instead of publishing an incomplete ranking.
+                if any(row['user_id'] in hidden for row in group['leaders']):
+                    raise ValueError('Statistics privacy changed')
+    return stats
+
+
 def run(*, public=PUBLIC, state=STATE, now=None, publish_status=True):
+    public=Path(public);state=Path(state)
+    with statistics_lock(state) as acquired:
+        if not acquired:
+            return (read_json(public/'statistics.json',{}),read_json(public/'status.json',{}),read_json(public/'activity.json',{}))
+        return _run(public=public,state=state,now=now,publish_status=publish_status)
+
+
+def _run(*, public, state, now, publish_status):
+    """Publish statistics only. The independent sampler owns live/graph files.
+
+    Retain the return tuple and publish_status argument for existing callers;
+    neither grants this heavy job ownership of live observations.
+    """
     realtime=now is None
     now=time.time() if realtime else now
     shell={'schema':1,'generated_at':round(now),'expires_at':round(now)+TTL}
-    snapshot=read_json(OPS/'latest.json',{})
-    if not isinstance(snapshot,dict):snapshot={}
-    snapshot_fresh=-30<=now-epoch(snapshot.get('generated_at'))<=TTL
-    try:service=service_status(now)
-    except (OSError,ValueError,subprocess.SubprocessError):service={'online':None,'uptime_seconds':None,'started_at':None,'restarts':None}
-    runtime=runtime_rooms(now,service)
-    stats={**shell,'available':False,'scopes':{}}
-    status={**shell,'service':service,'rooms':[],'available':False}
-    rooms={};active_ids=set()
+    unavailable={**shell,'available':False,'scopes':{}}
+    stats=unavailable
+    network_snapshot=None
     try:
+        snapshot=read_json(OPS/'latest.json',{})
+        if not isinstance(snapshot,dict):snapshot={}
+        snapshot_fresh=-30<=now-epoch(snapshot.get('generated_at'))<=TTL
+        try:service=service_status(now)
+        except (OSError,ValueError,subprocess.SubprocessError):service={'online':None}
+        runtime=runtime_rooms(now,service)
+        # PrivateTmp provides a writable disk directory traversable by the
+        # ledger owner; the analytics state directory itself is root-only.
         with snapshot_db(DB) as conn:
-            for row in conn.execute('SELECT r.*,rr.ruleset_id FROM autohost_rooms r LEFT JOIN autohost_room_rulesets rr USING(room_id)'):
-                rooms[row['room_id']]={**dict(row),'type':room_type(row)}
+            rooms={row['room_id']:{**dict(row),'type':room_type(row)} for row in conn.execute(
+                'SELECT r.*,rr.ruleset_id FROM autohost_rooms r LEFT JOIN autohost_room_rulesets rr USING(room_id)')}
             latest={r.get('alias'):r for r in snapshot.get('rooms',[]) if isinstance(r,dict)}
-            # Determine current IDs from local creation logs and cross-check
-            # against the room ledger before treating anyone as currently present.
-            tails={}; ids={}
+            active_ids=set()
             for i in range(4):
-                alias='room'+str(i+1);lines=tail_lines(SOURCE.room_log(alias));tails[alias]=lines
-                created=[int(m[1]) for line in lines if (m:=re.search(LOG_PREFIX+r'bot INFO room (\d+) created\b',line))]
-                candidate=runtime[alias]['room_id'] if runtime is not None else created[-1] if created else latest.get(alias,{}).get('room_id')
-                ids[alias]=candidate
+                alias='room'+str(i+1)
+                if runtime is not None:
+                    candidate=runtime[alias]['room_id']
+                else:
+                    candidate=latest.get(alias,{}).get('room_id')
+                    for line in tail_lines(SOURCE.room_log(alias)):
+                        created=re.search(LOG_PREFIX+r'bot INFO room (\d+) created\b',line)
+                        if created:candidate=int(created[1])
                 row=rooms.get(candidate)
-                if service['online'] and (runtime[alias]['valid'] if runtime is not None else snapshot_fresh) and row and row['closed_at'] is None:active_ids.add(candidate)
-            observed_now=time.time() if realtime else now
+                if service['online'] and (runtime[alias]['valid'] if runtime is not None else snapshot_fresh) and row and row['closed_at'] is None:
+                    active_ids.add(candidate)
+            network_snapshot=read_network_statistics(now)
             network_views={}
-            scopes,map_by_id,map_by_label,first=metrics(conn,rooms,now,active_ids,read_network_statistics(now),network_views)
+            scopes,map_by_id,map_by_label,first=metrics(conn,rooms,now,active_ids,network_snapshot,network_views)
+            del map_by_id,map_by_label
             catalog_cache={}
             for view_scopes in [scopes,*[host['scopes'] for host in network_views.get('hosts',{}).values()]]:
                 for mode,periods in view_scopes.items():
@@ -400,65 +525,23 @@ def run(*, public=PUBLIC, state=STATE, now=None, publish_status=True):
                             for key in ['best_gain','best_score']:
                                 if player_row[key]:player_row[key]=enrich_map(player_row[key],mode,catalog_cache)
             stats={**shell,'available':True,'tracking_since':round(first),'scopes':scopes,**network_views}
-            universal=read_json(SOURCE.config('universal'),{})
-            for i in range(4):
-                alias='room'+str(i+1);candidate=ids[alias];row=rooms.get(candidate)
-                parsed=runtime[alias] if runtime is not None else playlist(tails[alias],map_by_id,map_by_label,candidate)
-                valid=bool(parsed['valid'] and candidate in active_ids) if runtime is not None else room_observation_valid(candidate,active_ids,parsed['observed_at'],observed_now)
-                phase=parsed['state'] if runtime is not None else (parsed['state'] or latest.get(alias,{}).get('state') or 'UNKNOWN') if valid else 'OFFLINE' if service['online'] is False or row and row['closed_at'] else 'STALE'
-                occupants=None
-                if valid:
-                    occupants=parsed['players'] if runtime is not None else conn.execute('SELECT COUNT(*) FROM autohost_room_players WHERE room_id=? AND last_join_at>COALESCE(last_leave_at,0)',(candidate,)).fetchone()[0]
-                # A closed room has no observation of an empty *open* room.
-                # Keep it out of the occupancy series and record it offline.
-                cfg=read_json(SOURCE.config(alias),{})
-                # A frozen MatchStarted ledger row is the strongest current-map
-                # evidence during gameplay, even when playlist promotion raced.
-                current=parsed['current_map'] if valid else None
-                if valid and phase=='PLAYING' and runtime is None:
-                    playing=conn.execute('SELECT beatmap_id,map_label,star_rating FROM autohost_matches WHERE room_id=? AND result="playing" ORDER BY started_at DESC LIMIT 1',(candidate,)).fetchone()
-                    if playing:current={'beatmap_id':playing[0],'label':clean(playing[1]),'stars':number(playing[2],None)}
-                current=enrich_map(current,TYPES[i],catalog_cache)
-                parsed['queue']=[enrich_map(m,TYPES[i],catalog_cache) for m in parsed['queue']]
-                status['rooms'].append({'alias':alias,'label':LABELS[i],'type':TYPES[i],'room_id':candidate if valid else None,
-                    'state':phase,'players':occupants,'observed_at':parsed['observed_at'] if valid else None,
-                    'current_map':current,'queue':parsed['queue'] if valid else [],'queue_known':bool(valid and parsed['queue_known']),
-                    'settings':public_settings(cfg if isinstance(cfg,dict) else {},universal if isinstance(universal,dict) else {},row),
-                    'guide':'lobbies:'+GUIDES[i]})
-            status['available']=True
+        # Release full private rows before loading the latest privacy snapshot.
+        network_snapshot=None
+        network_snapshot=read_network_statistics(time.time() if realtime else now)
+        stats=_privacy_checked(stats,network_snapshot,time.time() if realtime else now)
     except (OSError,ValueError,TypeError,KeyError,sqlite3.Error) as exc:
         import traceback
         print('Analytics source unavailable: '+type(exc).__name__+' '+str(getattr(exc,'sqlite_errorname',''))+' '+str([(f.name,f.lineno) for f in traceback.extract_tb(exc.__traceback__)]))
-        stats={**shell,'available':False,'scopes':{}}
-        status['rooms']=[]
-        # Do not retain named statistics when privacy cannot be verified.
-    if not status['rooms']:
-        status['rooms']=[{'alias':'room'+str(i+1),'label':LABELS[i],'type':TYPES[i],'state':'STALE','players':None,
-                         'room_id':None,'observed_at':None,'current_map':None,'queue':[],'queue_known':False,'settings':{},'guide':'lobbies:'+GUIDES[i]} for i in range(4)]
-    history=read_json(state/'observations.json')
-    if not isinstance(history,list):history=history_seed()
-    history=[r for r in history if isinstance(r,list) and len(r)==6 and now-31*86400<=number(r[0])<=now+30]
-    history.append([round(now),*[r['players'] for r in status['rooms']],1 if service['online'] else 0 if service['online'] is False else None])
-    # Retain aggregate observations for 31 days; never touch production logs.
-    history=list({row[0]:row for row in history}.values());history.sort(key=lambda r:r[0])
-    current_states=[1 if type(r['players']) is int and r.get('room_id') else
-                    0 if service['online'] is False or r['state']=='OFFLINE' else None
-                    for r in status['rooms']]
-    saved_states=read_json(state/'room-states.json',[])
-    if not isinstance(saved_states,list):saved_states=[]
-    room_states=history_room_states(history,saved_states,round(now),current_states)
-    atomic(state/'observations.json',history,0o600)
-    atomic(state/'room-states.json',room_states,0o600)
-    known=[r for r in history if r[0]>=now-86400 and r[5] is not None]
-    status['availability']={'window_seconds':86400,'samples':len(known),'online_samples':sum(r[5] for r in known),
-                            'percent':round(100*sum(r[5] for r in known)/len(known),2) if known else None}
-    status['history_since']=history[0][0] if history else None
-    activity={**shell,'samples':history,'room_states':room_states,'room_labels':LABELS}
+        previous=read_json(public/'statistics.json',{})
+        try:
+            if not isinstance(previous,dict) or previous.get('schema')!=1 or previous.get('available') is not True or not isinstance(previous.get('scopes'),dict):
+                raise ValueError('No valid previous statistics')
+            network_snapshot=None
+            network_snapshot=read_network_statistics(time.time() if realtime else now)
+            stats=_privacy_checked(previous,network_snapshot,time.time() if realtime else now)
+        except (OSError,ValueError,TypeError,KeyError,sqlite3.Error):
+            stats=unavailable
     atomic(public/'statistics.json',stats)
-    if publish_status:atomic(public/'status.json',status)
-    from network_statistics import merge_live_activity
-    activity=merge_live_activity(activity,state,read_json(public/'status.json',status),read_json(public/'community/rooms.json',{}),now)
-    atomic(public/'activity.json',activity)
-    return stats,status,activity
+    return stats,read_json(public/'status.json',{}),read_json(public/'activity.json',{})
 
 if __name__=='__main__':run(publish_status=False)

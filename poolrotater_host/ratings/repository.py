@@ -9,6 +9,7 @@ from ..network.contracts import (require, identifier, verifier, fingerprint,
                                  canonical, NetworkError, SCOPES, fields, base)
 from .contracts import event, batch, query
 from .conflict import decide
+from bot.rating_outbox import storage_key
 
 TABLES = {'ratings_policy','ratings_events','ratings_current','ratings_sources'}
 SCHEMA = (
@@ -204,11 +205,12 @@ class Repository:
         if item['sequence'] <= last_sequence:
             return self._record(db, host, item, digest, 'permanently_rejected', 'restored_sequence', 0)
         db.execute('UPDATE ratings_policy SET last_sequence=? WHERE host_id=?', (item['sequence'],host['id']))
+        key = storage_key(item['beatmap_id'], item['context'], map_origin=item['map_origin'], key_count=item['key_count'])
         state = db.execute('SELECT * FROM ratings_current WHERE beatmap_id=? AND user_id=?',
-                           (item['beatmap_id'],item['user_id'])).fetchone()
-        state=self.policy.effective_state(policy['rules'],state,bid=item['beatmap_id'],uid=item['user_id'],host=host['id'])
+                           (key,item['user_id'])).fetchone()
+        state=self.policy.effective_state(policy['rules'],state,bid=key,uid=item['user_id'],host=host['id'])
         revision = state['revision'] if state else 0
-        exclusion=self.policy.excluded(policy['rules'],bid=item['beatmap_id'],uid=item['user_id'],host=host['id'])
+        exclusion=self.policy.excluded(policy['rules'],bid=key,uid=item['user_id'],host=host['id'])
         if exclusion is not None:
             return self._record(db,host,item,digest,'permanently_rejected','policy_excluded',revision,
                                 valid=exclusion['effect']!='delete')
@@ -233,17 +235,18 @@ class Repository:
     def _record(self, db, host, item, digest, phase, reason, revision, *, valid=True):
         watermark = self._watermark(db)
         payload = canonical(item).decode() if valid else '{}'
+        key = storage_key(item['beatmap_id'], item['context'], map_origin=item['map_origin'], key_count=item['key_count']) if valid else None
         if phase == 'accepted':
             revision = watermark
             db.execute('INSERT INTO ratings_current(beatmap_id,user_id,rating,revision,event_id,host_id) VALUES(?,?,?,?,?,?) '
                        'ON CONFLICT(beatmap_id,user_id) DO UPDATE SET rating=excluded.rating,revision=excluded.revision,event_id=excluded.event_id,host_id=excluded.host_id',
-                       (item['beatmap_id'],item['user_id'],item['rating'],revision,item['event_id'],host['id']))
+                       (key,item['user_id'],item['rating'],revision,item['event_id'],host['id']))
             db.execute('INSERT INTO ratings_sources VALUES(?,?,?,?,?,?,?) ON CONFLICT(host_id,beatmap_id,user_id) DO UPDATE SET '
                        'rating=excluded.rating,event_id=excluded.event_id,revision=excluded.revision,payload=excluded.payload',
-                       (host['id'],item['beatmap_id'],item['user_id'],item['rating'],item['event_id'],revision,payload))
+                       (host['id'],key,item['user_id'],item['rating'],item['event_id'],revision,payload))
         db.execute('INSERT INTO ratings_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                    (item['event_id'],host['id'],item['installation_id'] if valid else None,item['generation'] if valid else None,
-                    item['sequence'] if valid else None,item['beatmap_id'] if valid else None,item['user_id'] if valid else None,
+                    item['sequence'] if valid else None,key,item['user_id'] if valid else None,
                     digest,payload,phase,reason,revision,watermark,self.store.clock()))
         return {'event_id':item['event_id'],'phase':phase,'reason':reason,'revision':revision,'watermark':watermark}
 

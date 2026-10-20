@@ -212,6 +212,9 @@ class Store:
         for host in rows:
             payload=json.loads(host['heartbeat'])
             for stored in payload['rooms']:
+                # Catch is an explicit v2 directory capability. Old v1 readers
+                # must not reject all legacy rooms because of an unknown preset.
+                if protocol_version==1 and stored['preset']=='catch-fixed':continue
                 from .display import V1_ROOM_FIELDS
                 observation = {k: stored[k] for k in V1_ROOM_FIELDS}
                 skew = host['received'] - payload['sent_at'] if payload.get('protocol_version') == 2 else None

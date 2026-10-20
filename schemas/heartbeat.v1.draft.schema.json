@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:poolrotater:schema:heartbeat.v1.draft.schema.json",
+  "title": "DRAFT public status payload: not implemented",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "generation",
+    "sequence",
+    "code_version",
+    "catalog_version",
+    "rooms"
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": 1
+    },
+    "generation": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "code_version": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "catalog_version": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "rooms": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "alias",
+          "osu_room_id",
+          "preset",
+          "state",
+          "occupants",
+          "visibility"
+        ],
+        "properties": {
+          "alias": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,23}$"
+          },
+          "osu_room_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "preset": {
+            "enum": [
+              "standard-auto",
+              "standard-fixed",
+              "mania-4k",
+              "mania-7k"
+            ]
+          },
+          "state": {
+            "enum": [
+              "idle",
+              "starting",
+              "playing",
+              "draining",
+              "unavailable"
+            ]
+          },
+          "occupants": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "visibility": {
+            "const": "public"
+          }
+        }
+      }
+    }
+  }
+}

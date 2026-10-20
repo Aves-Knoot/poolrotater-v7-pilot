@@ -8,7 +8,7 @@ import uuid
 
 MAX_BODY = 65536
 MAX_SEQUENCE = 2**53 - 1
-PRESETS = ('standard-auto', 'standard-fixed', 'mania-4k', 'mania-7k')
+PRESETS = ('standard-auto', 'standard-fixed', 'mania-4k', 'mania-7k', 'catch-fixed')
 SCOPES = ('heartbeat', 'rotate', 'leave')
 
 
@@ -105,14 +105,15 @@ def room(value):
     fields(value, ('alias', 'osu_room_id', 'preset', 'state', 'occupants', 'visibility', 'title', 'min_stars', 'max_stars', 'observed_at', 'code_version', 'catalog_version', 'current_map'))
     require(type(value['alias']) is str and re.fullmatch('[a-z][a-z0-9_-]{0,23}', value['alias']), 'invalid_alias')
     integer(value['osu_room_id']); require(value['preset'] in PRESETS, 'invalid_preset')
+    star_limit = 100 if value['preset'] == 'catch-fixed' else 20
     require(value['state'] in ('idle', 'starting', 'playing', 'draining', 'unavailable'), 'invalid_room_state')
     integer(value['occupants'], 0, 128); require(value['visibility'] == 'public', 'private_room_refused')
-    text(value['title']); number(value['min_stars'], 0, 20); number(value['max_stars'], 0, 20)
+    text(value['title']); number(value['min_stars'], 0, star_limit); number(value['max_stars'], 0, star_limit)
     require(value['min_stars'] <= value['max_stars'], 'invalid_star_range'); number(value['observed_at'])
     versions(value)
     if value['current_map'] is not None:
         fields(value['current_map'], ('beatmap_id', 'title', 'stars'))
-        integer(value['current_map']['beatmap_id']); text(value['current_map']['title']); number(value['current_map']['stars'], 0, 20)
+        integer(value['current_map']['beatmap_id']); text(value['current_map']['title']); number(value['current_map']['stars'], 0, star_limit)
     return value
 
 

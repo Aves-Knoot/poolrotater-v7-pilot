@@ -38,7 +38,7 @@ class Reader:
             db.execute('CREATE TABLE IF NOT EXISTS lookups(username TEXT NOT NULL,ruleset_id INTEGER NOT NULL,fetched REAL NOT NULL,PRIMARY KEY(username,ruleset_id))')
 
     def request(self, *, user_id=None, username=None, ruleset_id=0):
-        require(type(ruleset_id) is int and ruleset_id in (0,3),'invalid_activity_ruleset')
+        require(type(ruleset_id) is int and ruleset_id in (0,2,3),'invalid_activity_ruleset')
         require((user_id is None)!=(username is None),'invalid_activity_lookup')
         if user_id is not None:integer(user_id);key='id:'+str(user_id)
         else:text(username,80);key='name:'+username.casefold()
@@ -90,7 +90,7 @@ class Reader:
         state=Replica(self.root,clock=self.clock).status()
         if state['phase']=='ready':return 'not_found'
         if state['phase'] not in ('cold','legacy'):return 'pending'
-        require(type(ruleset_id) is int and ruleset_id in (0,3),'invalid_activity_ruleset')
+        require(type(ruleset_id) is int and ruleset_id in (0,2,3),'invalid_activity_ruleset')
         with connection(self.path) as db:
             row=db.execute('SELECT fetched FROM lookups WHERE username=? AND ruleset_id=?',(username.casefold(),ruleset_id)).fetchone()
         return 'not_found' if row and 0<=self.clock()-row[0]<=self.max_age else 'pending'

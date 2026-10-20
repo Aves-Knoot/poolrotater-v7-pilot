@@ -15,7 +15,7 @@ HOST='91.107.237.182';PORT=9444;RESOURCE='/v1/rooms?limit=100'
 MAX_BYTES=262144;FETCH_SECONDS=4;CACHE_SECONDS=60;FRESH_SECONDS=180;HIDE_SECONDS=600
 TOP={'ok','protocol_version','server_epoch','generated_at','rooms','next_offset'}
 ROW={'alias','osu_room_id','preset','state','occupants','visibility','title','min_stars','max_stars','observed_at','code_version','catalog_version','current_map','host_id','operator','age_seconds','freshness','join_url','distribution'}
-PRESETS={'standard-auto','standard-fixed','mania-4k','mania-7k'}
+PRESETS={'standard-auto','standard-fixed','mania-4k','mania-7k','catch-fixed'}
 STATES={'idle','starting','playing','draining','unavailable'}
 def require(value):
     if not value:raise ValueError('invalid public directory')
@@ -44,6 +44,13 @@ def validate_display(display,row):
     for key in('allowed_mods','required_mods'):
         mods=settings[key];require(type(mods)is list and len(mods)<=32 and all(type(mod)is str for mod in mods) and len(set(mods))==len(mods))
         for mod in mods:require(type(mod)is str and re.fullmatch('[A-Z0-9]{1,16}',mod))
+    expected=3 if row['preset'].startswith('mania-') else 2 if row['preset']=='catch-fixed' else 0
+    require(settings['ruleset_id']==expected)
+    require(settings['keys'] in (None,4 if row['preset']=='mania-4k' else 7) if expected==3 else settings['keys']is None)
+    if row['preset']=='catch-fixed':
+        require(settings['auto_difficulty']is False and settings['freestyle']is False
+                and settings['selection_style']=='variety'
+                and all(mod=='NM' for key in('allowed_mods','required_mods') for mod in settings[key]))
     if display['playing_players']is not None:integer(display['playing_players'],0,128)
     match=display['match']
     if match is not None:
@@ -68,12 +75,13 @@ def project(value,*,now,owner_room_ids=(),owner_host_id=None,metadata_lookup=Non
         integer(row['osu_room_id'],1);require(row['osu_room_id']not in seen);seen.add(row['osu_room_id'])
         require(row['visibility']=='public' and row['preset']in PRESETS and row['state']in STATES)
         require(row['freshness']in('fresh','stale') and row['distribution']=='self-reported')
-        number(row['min_stars'],0,20);number(row['max_stars'],row['min_stars'],20);number(row['observed_at']);number(row['age_seconds']);require(row['observed_at']<=value['generated_at']+30)
+        star_limit=100 if row['preset']=='catch-fixed' else 20
+        number(row['min_stars'],0,star_limit);number(row['max_stars'],row['min_stars'],star_limit);number(row['observed_at']);number(row['age_seconds']);require(row['observed_at']<=value['generated_at']+30)
         require(type(row['code_version'])is str and re.fullmatch('[A-Za-z0-9.+-]{1,64}',row['code_version']))
         require(row['catalog_version']=='unavailable' or type(row['catalog_version'])is str and re.fullmatch('[a-f0-9]{64}',row['catalog_version']))
         if row['occupants']is not None:integer(row['occupants'],0,128)
         if row['current_map']is not None:
-            m=row['current_map'];require(type(m)is dict and set(m)=={'beatmap_id','title','stars'});integer(m['beatmap_id'],1);text(m['title']);number(m['stars'],0,20)
+            m=row['current_map'];require(type(m)is dict and set(m)=={'beatmap_id','title','stars'});integer(m['beatmap_id'],1);text(m['title']);number(m['stars'],0,star_limit)
         display=row.get('display')
         if display is not None:validate_display(display,row)
         # Supplied links are never used; an invalid type also fails closed.
@@ -136,12 +144,56 @@ def fetch_directory(ca_file,ca_sha256,*,connection_factory=http.client.HTTPSConn
     finally:connection.close()
 
 def unavailable(now):return {'schema':1,'available':False,'generated_at':now,'expires_at':now+CACHE_SECONDS,'source':'self-reported community rooms','rooms':[],'more_available':False}
+def last_seen(destination, *, now, owner_room_ids=()):
+    """Retain only bounded public identity when a refresh cannot be verified.
+
+    Never carry map/players/settings/links into this fallback and never extend
+    hide_at. A successful empty directory does not use this path.
+    """
+    result=unavailable(now)
+    try:
+        fd=os.open(destination,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        with os.fdopen(fd,'rb')as stream:
+            info=os.fstat(stream.fileno())
+            require(stat.S_ISREG(info.st_mode) and info.st_uid==os.geteuid()
+                    and info.st_nlink==1 and not info.st_mode&0o022 and info.st_size<=MAX_BYTES)
+            previous=decode(stream.read(MAX_BYTES+1))
+        require(type(previous)is dict and previous.get('schema')in(1,2) and previous.get('available')is True)
+        number(previous['generated_at']);number(previous['expires_at'])
+        require(-30<=now-previous['generated_at']<HIDE_SECONDS
+                and 0<previous['expires_at']-previous['generated_at']<=CACHE_SECONDS)
+        require(type(previous['rooms'])is list and len(previous['rooms'])<=100)
+        known=set(owner_room_ids);rooms=[];seen=set()
+        for old in previous['rooms']:
+            require(type(old)is dict)
+            rid=old.get('room_id');integer(rid,1)
+            key=old.get('key');require(type(key)is str and re.fullmatch('[a-f0-9]{24}',key))
+            require(key not in seen);seen.add(key)
+            text(old.get('title'));text(old.get('operator'),80);require(old.get('preset')in PRESETS)
+            number(old.get('hide_at'));number(old.get('fresh_until'))
+            # An impossible future hide deadline cannot renew the cache.
+            require(old['hide_at']<=previous['generated_at']+HIDE_SECONDS)
+            if old['hide_at']<=now or rid in known or old.get('visibility','public')!='public':continue
+            rooms.append({'key':key,'room_id':rid,'title':old['title'],'operator':old['operator'],
+                'preset':old['preset'],'ownership':'community','state':'unavailable',
+                'players':None,'playing_players':None,'match_participants':None,
+                'current_map':None,'settings':None,'playback':None,
+                'fresh_until':0,'hide_at':old['hide_at'],'self_reported':True,
+                'browser_url':None,'join_url':None})
+        if rooms:
+            result.update(available=True,rooms=rooms,refresh_failed=True,
+                          more_available=previous.get('more_available')is True)
+    except (OSError,ValueError,KeyError,TypeError):
+        pass
+    return result
+
+
 def publish(destination,fetch,*,now=None,owner_room_ids=(),owner_host_id=None,metadata_lookup=None):
-    """A refresh failure withdraws cached remote links; owner feed is untouched."""
+    """Refresh atomically; preserve bounded last-seen identities on outage."""
     now=time.time()if now is None else now
-    try:value=project(fetch(),now=now,owner_room_ids=owner_room_ids,owner_host_id=owner_host_id,metadata_lookup=metadata_lookup)
-    except Exception:value=unavailable(now)
     destination=Path(destination)
+    try:value=project(fetch(),now=now,owner_room_ids=owner_room_ids,owner_host_id=owner_host_id,metadata_lookup=metadata_lookup)
+    except Exception:value=last_seen(destination,now=now,owner_room_ids=owner_room_ids)
     temporary=None
     try:
         with tempfile.NamedTemporaryFile(dir=destination.parent,prefix='.community-',mode='w',delete=False)as f:

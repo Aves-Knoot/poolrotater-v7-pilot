@@ -10,9 +10,21 @@ PRIVATE_TABLES = {'scores', 'users', 'players', 'map_ratings', 'shadow_map_ratin
 
 
 def inspect_catalog(path: Path, preset: str) -> dict:
-    if not path.is_file() or path.is_symlink():
+    if (not path.is_file() and not (preset == 'catch-fixed' and path.is_dir())) or path.is_symlink():
         raise ConfigError('catalog missing or not a regular local file')
     spec = PRESETS[preset]
+    if spec['ruleset'] == 2:
+        if path.is_file():
+            with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+                production=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='catch_maps'").fetchone()
+            if production:
+                from bot.catch_catalog.production import rows
+                return {'maps':sum(1 for _ in rows(path)),'tables':['catch_maps','metadata'],
+                        'research_only':False,'bytes':path.stat().st_size}
+        from bot.catch_catalog.c6_reader import imported_rows, Catalog
+        rows = Catalog(path, purpose='research').rows() if path.is_dir() else imported_rows(path)
+        count = sum(1 for _ in rows)
+        return {'maps': count, 'tables': ['maps', 'metadata'], 'research_only': True}
     try:
         with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=2)) as db:
             db.execute('PRAGMA query_only=ON')
@@ -45,6 +57,33 @@ def inspect_catalog(path: Path, preset: str) -> dict:
 
 
 def make_pool(root: Path, room: dict, *, ratings: Path | None = None, resolved=None):
+    if PRESETS[room['preset']]['ruleset'] == 2:
+        from .layout import load
+        from .catalog_store import resolved_catalogs, mode_for, CatalogStore
+        _, config = load(root)
+        if resolved is None:
+            resolved = resolved_catalogs(root)
+        if resolved is not None:
+            from bot.catch_pool import ProductionCatchPool
+            from .ratings.reader import for_settings, profile
+            from .catalog_exclusions import ExclusionPolicy, attach_policy
+            if not isinstance(resolved,dict) or 'catch' not in resolved.get('bundles',{}):
+                raise ConfigError('invalid managed/live Catch catalog reference')
+            folder, manifest = resolved['bundles']['catch']
+            rp=profile(root)
+            reader=for_settings({'ruleset_id':2, 'ratings_reader_mode':rp['mode'],
+                                 'ratings_reader_root':str(root), 'ratings_reader_epoch':rp['server_epoch']})
+            pool=ProductionCatchPool(folder/'catalog.db',purpose='production',
+                                     sr_min=room['sr_min'],sr_max=room['sr_max'],max_length=240,
+                                     min_passcount=0,ratings_db=str(ratings) if ratings else None,
+                                     ratings_reader=reader)
+            return attach_policy(pool,ExclusionPolicy(CatalogStore.open(root),'catch',manifest['content_id']))
+        if config['execution'] != 'offline':
+            raise ConfigError('Catch research-only catalogs cannot activate in managed/live hosts')
+        from bot.catch_pool import CatchPool
+        path = contained(root, room['catalog'])
+        return CatchPool(path, purpose='research', sr_min=room['sr_min'], sr_max=room['sr_max'],
+                         max_length=240, min_passcount=0)
     from .ratings.reader import profile,NetworkReader
     from .ratings import reader as ratings_reader
     read_profile=profile(root)

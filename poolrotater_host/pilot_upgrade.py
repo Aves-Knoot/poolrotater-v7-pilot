@@ -55,7 +55,7 @@ def require_repair_compatible(before, after):
     independently before this check.
     """
     v71 = after.get('version')=='v7.1.0' and before.get('version') in ('v7.0.6','v7.0.7','v7.0.8')
-    if not v71 and (before.get('version'), after.get('version')) not in (('v7.1.16','v7.1.19'),('v7.1.17','v7.1.19'),('v7.1.11','v7.1.17'),('v7.1.15','v7.1.17'),('v7.1.16','v7.1.17'),('v7.1.13','v7.1.16'),
+    if not v71 and (before.get('version'), after.get('version')) not in (('v7.1.20','v7.2.0'),('v7.2.0','v7.1.20'),('v7.1.16','v7.1.19'),('v7.1.17','v7.1.19'),('v7.1.11','v7.1.17'),('v7.1.15','v7.1.17'),('v7.1.16','v7.1.17'),('v7.1.13','v7.1.16'),
             ('v7.0.1','v7.0.1'), ('v7.0.1','v7.0.2'), ('v7.0.2','v7.0.2'),
             ('v7.0.2','v7.0.5'), ('v7.0.5','v7.0.5'), ('v7.0.1','v7.0.6'),
             ('v7.0.5','v7.0.6'), ('v7.0.6','v7.0.6'), ('v7.1.0','v7.1.1'),
@@ -327,6 +327,9 @@ def _finish(target, marker, path, value, decision):
             raise ConfigError('upgrade bootstrap differs from frozen release')
     from .updates.approval import require_upgrade
     require_upgrade(manifests['before'], manifests['after'], value['before'], value['after'], recovering=True)
+    if decision == 'complete':
+        from .catch_rollback import require_target
+        require_target(target['root'],prefix,value['before']['service_uid'],manifests['before'],manifests['after'])
     if _control(prefix / NAME, maximum=512*1024) != value:
         raise ConfigError('upgrade journal changed')
     if transition is None or (predecessor is not None and transition == predecessor):
@@ -425,7 +428,10 @@ def upgrade(instance, bundle, expected_sha256, *, from_sha256, recover=None, tra
         after = _control(prefix / 'candidates' / marker['installation_id'] / (expected_sha256 + '.json'))
         new = validate_runtime(after, prefix)
         from .updates.approval import require_upgrade
-        require_upgrade(validate_runtime(current, prefix)['manifest'], new['manifest'], current, after)
+        before_manifest=validate_runtime(current,prefix)['manifest']
+        require_upgrade(before_manifest,new['manifest'],current,after)
+        from .catch_rollback import require_target
+        require_target(target['root'],prefix,current['service_uid'],before_manifest,new['manifest'])
         replacement = _code(new['release'] / 'poolrotater_host/service_bootstrap.py')
         from .pilot_operations import unit_text
         value = {'format':1, 'phase':'prepared', 'transition_id':str(uuid.uuid4()),

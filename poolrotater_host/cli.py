@@ -33,7 +33,7 @@ def main(argv=None):
     download.add_argument('--ca-file', required=True, type=Path)
     download.add_argument('--ca-sha256', required=True)
     download.add_argument('--destination', required=True, type=Path)
-    download.add_argument('--mode', required=True, choices=('standard', 'mania4', 'mania7'))
+    download.add_argument('--mode', required=True, choices=('standard', 'mania4', 'mania7', 'catch'))
     for action in ('install', 'check', 'code-proof', 'status', 'support', 'unit', 'configure', 'authorize', 'cancel',
                    'recover', 'pacing-recover', 'catalog-import', 'catalog-recover',
                    'catalog-trust-replace', 'catalog-trust-recover', 'start', 'stop', 'remove',
@@ -46,6 +46,7 @@ def main(argv=None):
                    'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
                    'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch',
                    'room-settings-configure','room-settings-status',
+                   'catch-pilot-prepare','catch-pilot-status','catch-pilot-resume','catch-pilot-rollback',
                    'worker-stage','worker-queue','worker-cancel','worker-status',
                    'maintenance-request','maintenance-cancel','maintenance-status',
                    'update-configure','update-check','update-download','update-apply','update-pause','update-resume',
@@ -84,7 +85,7 @@ def main(argv=None):
             command.add_argument('--owner-review-stdin', required=True, action='store_true')
             command.add_argument('--snapshot-sha256', required=True)
         if action in ('ratings-configure','ratings-reader-configure','ratings-review-epoch'):command.add_argument('--ratings-stdin',required=True,action='store_true')
-        if action == 'room-settings-configure':command.add_argument('--settings-stdin',required=True,action='store_true')
+        if action in ('room-settings-configure','catch-pilot-prepare'):command.add_argument('--settings-stdin',required=True,action='store_true')
         if action == 'install':
             command.add_argument('--bundle', required=True, type=Path)
             command.add_argument('--sha256', required=True)
@@ -121,7 +122,7 @@ def main(argv=None):
             command.add_argument('--trust-root', required=True, type=Path)
             command.add_argument('--trust-sha256', required=True)
             if action == 'catalog-import':
-                command.add_argument('--mode', required=True, action='append', choices=('standard', 'mania4', 'mania7'))
+                command.add_argument('--mode', required=True, action='append', choices=('standard', 'mania4', 'mania7', 'catch'))
     for name in ('setup', 'check', 'status', 'config', 'runtime-config', 'simulate'):
         command = commands.add_parser(name)
         command.add_argument('--root', type=Path, required=True, help='explicit private host directory')
@@ -161,6 +162,10 @@ def main(argv=None):
                 result=update_command(args.instance,action.removeprefix('update-'),
                     stream=sys.stdin.buffer if action=='update-configure' else None,
                     operation_id=getattr(args,'operation_id',None),decision=getattr(args,'decision',None))
+            elif action.startswith('catch-pilot-'):
+                from .catch_pilot_operations import command as catch_command
+                result=catch_command(args.instance,action.removeprefix('catch-pilot-'),
+                    stream=sys.stdin.buffer if action=='catch-pilot-prepare' else None)
             elif action.startswith('room-settings-'):
                 from .room_settings_operations import command as settings_command
                 result=settings_command(args.instance,action.removeprefix('room-settings-'),

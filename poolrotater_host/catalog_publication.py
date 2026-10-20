@@ -14,7 +14,7 @@ import stat
 import tempfile
 import uuid
 
-from .catalog_export import MODES, MAX_FILE, inspect_bundle, canonical, sha256
+from .catalog_export import MODES, CORE_MODES, complete_modes, MAX_FILE, inspect_bundle, canonical, sha256
 from .catalog_trust import BootstrapTrust, bounded_file, dependencies, no_links, ROOT_LIMIT, METADATA_LIMIT
 from .catalog_exclusions import validate_feed, apply_feed, initial_state
 from .config import ConfigError, fields
@@ -105,8 +105,23 @@ def _time(now):
     return now.astimezone(timezone.utc).replace(microsecond=0)
 
 
+def _extended(record):
+    return 'catch' in record['content_ids'] or any('catch' in e['modes'] for e in record['exclusions']['events'])
+
+
+def _legacy_feed(feed):
+    # Old readers reject unknown mode names, even in an unrelated scope.
+    events=[]
+    for event in feed['events']:
+        modes=[m for m in event['modes'] if m in CORE_MODES]
+        if not modes:continue
+        events.append({**event,'modes':modes,'memberships':
+                       {m:event['memberships'][m] for m in modes} if event['memberships'] else {}})
+    return validate_feed({**feed,'events':events})
+
+
 def _default_feed():
-    return {'format':1,'revision':1,'events':[{'kind':'beatmap','id':1549496,'modes':list(MODES),
+    return {'format':1,'revision':1,'events':[{'kind':'beatmap','id':1549496,'modes':list(CORE_MODES),
             'action':'exclude','reason':'missing_audio','memberships':{}}]}
 
 
@@ -200,7 +215,7 @@ class Publisher:
             require(stream.read()==self.bootstrap,'public_catalog_authority_changed')
         require(type(self.state['keys']) is dict and set(self.state['keys'])==set(ROLES),'catalog_authority_refused')
         require(type(self.state['content_ids']) is dict and (not self.state['content_ids'] if self.state['version']==0
-                else set(self.state['content_ids'])==set(MODES) and all(type(v) is str and re.fullmatch('[a-f0-9]{64}',v)
+                else complete_modes(self.state['content_ids']) and all(type(v) is str and re.fullmatch('[a-f0-9]{64}',v)
                      for v in self.state['content_ids'].values())),'catalog_authority_refused')
         _time(datetime.fromisoformat(self.state['clock_high_water']))
         if self.state['exclusions'] is not None:validate_feed(self.state['exclusions'])
@@ -259,8 +274,9 @@ class Publisher:
         expected={f'metadata/{version+1}.root.json',f'metadata/{version}.targets.json',
                   f'metadata/{version}.snapshot.json',f'metadata/{version}.timestamp.json','metadata/timestamp.json'}
         names={'exclusions.json'}
+        if _extended(record):names.add('exclusions-v2.json')
         from .catalog_export import read_manifest
-        for mode in MODES:
+        for mode in record['content_ids']:
             info=objects['targets'].signed.targets[mode+'/manifest.json']
             manifest_path=pending/'targets'/mode/(info.hashes['sha256']+'.manifest.json')
             manifest=read_manifest(manifest_path)
@@ -269,9 +285,14 @@ class Publisher:
             names.update(mode+'/'+name for name in ('manifest.json','bundle.tar.gz',*(row['name'] for row in manifest['files'])))
         require(set(objects['targets'].signed.targets)==names,'pending_catalog_target_scope_changed')
         feed_info=objects['targets'].signed.targets['exclusions.json']
-        feed_raw=canonical(record['exclusions'])
+        feed_raw=canonical(_legacy_feed(record['exclusions']))
         require(feed_info.length==len(feed_raw) and feed_info.hashes=={'sha256':hashlib.sha256(feed_raw).hexdigest()},
                 'pending_catalog_exclusion_identity_changed')
+        if _extended(record):
+            extra=objects['targets'].signed.targets['exclusions-v2.json']
+            raw=canonical(record['exclusions'])
+            require(extra.length==len(raw) and extra.hashes=={'sha256':hashlib.sha256(raw).hexdigest()},
+                    'pending_catalog_exclusion_identity_changed')
         for name,info in objects['targets'].signed.targets.items():
             require(set(info.hashes)=={'sha256'},'pending_catalog_identity_mismatch')
             path='targets/'+str(Path(name).parent/(info.hashes['sha256']+'.'+Path(name).name))
@@ -317,7 +338,7 @@ class Publisher:
         fields(record,('version','clock','content_ids','exclusions','files','timestamp_sha256'),'pending publication')
         version=record['version'];require(type(version) is int and self.state['version']<version==self.state['reserved_version'],'pending_catalog_version_refused')
         pending=private(self.root/'pending',directory=True)
-        require(type(record['content_ids']) is dict and set(record['content_ids'])==set(MODES)
+        require(type(record['content_ids']) is dict and complete_modes(record['content_ids'])
                 and all(type(v) is str and re.fullmatch('[a-f0-9]{64}',v) for v in record['content_ids'].values()),
                 'pending_catalog_modes_refused')
         require(type(record['files']) is dict and 1<=len(record['files'])<=64,'pending_catalog_files_refused')
@@ -413,7 +434,7 @@ class Publisher:
         require(audit['repository_id']==self.state['repository_id'] and audit['source_sha256']==hashlib.sha256(canonical(source)).hexdigest()
                 and source['version']==version and source['timestamp_sha256']==cursor['source_timestamp_sha256'],
                 'catalog_renewal_source_changed')
-        bundles={mode:folder/mode for mode in MODES}
+        bundles={mode:folder/mode for mode in source['content_ids']}
         for mode,bundle in bundles.items():
             manifest=inspect_bundle(bundle)
             require(manifest['content_id']==source['content_ids'][mode],'catalog_renewal_source_changed')
@@ -508,7 +529,7 @@ class Publisher:
                 atomic_json(folder/'identity.json',{'format':1,'repository_id':self.state['repository_id'],'cursor':cursor})
                 atomic_json(folder/'source.json',record)
             from .catalog_export import read_manifest
-            for mode in MODES:
+            for mode in record['content_ids']:
                 bundle=folder/mode;bundle.mkdir(mode=0o700,exist_ok=True)
                 manifest_row=next((name,row) for name,row in record['files'].items()
                                   if name.startswith('targets/'+mode+'/') and name.endswith('.manifest.json'))
@@ -571,7 +592,7 @@ class Publisher:
         try:
             bundles={}
             from .catalog_export import read_manifest
-            for mode in MODES:
+            for mode in (m for m in MODES if m+'/manifest.json' in targets.signed.targets):
                 bundle=workspace/mode;bundle.mkdir(mode=0o700);bundles[mode]=bundle
                 info=targets.signed.targets[mode+'/manifest.json']
                 source=self.served/'targets'/mode/(info.hashes['sha256']+'.manifest.json')
@@ -589,7 +610,7 @@ class Publisher:
 
     def publish(self,bundles,*,exclusions=None,now=None):
         """All modes, complete prepared bytes; never sampling/research DB export."""
-        require(type(bundles) is dict and set(bundles)==set(MODES),'all_prepared_catalog_modes_required')
+        require(complete_modes(bundles),'all_prepared_catalog_modes_required')
         with file_lease(self.root/'publisher.lock'):
             self._reload()
             require(self.state['renewal'] is None,'catalog_renewal_requires_continue')
@@ -609,7 +630,7 @@ class Publisher:
                     'catalog_exclusion_revision_rollback')
         apply_feed(initial_state(self.state['bootstrap_sha256']),feed,hashlib.sha256(canonical(feed)).hexdigest())
         manifests={mode:inspect_bundle(path) for mode,path in bundles.items()}
-        require(all(manifests[m]['mode']==m for m in MODES),'prepared_catalog_mode_mismatch')
+        require(all(manifests[m]['mode']==m for m in bundles),'prepared_catalog_mode_mismatch')
         budget=sum(sum(row['bytes'] for row in manifest['files'])+manifest['archive']['bytes']+65536
                    for manifest in manifests.values())+1024*1024
         same_device=self.root.stat().st_dev==self.served.stat().st_dev
@@ -629,7 +650,7 @@ class Publisher:
             root=Metadata.from_bytes(self.bootstrap);root.signed.version=version+1
             root.signed.expires=now+timedelta(days=EXPIRY_DAYS['root'])
             targets=Metadata(Targets(version=version,expires=now+timedelta(days=EXPIRY_DAYS['targets'])))
-            for mode in MODES:
+            for mode in bundles:
                 manifest=manifests[mode]
                 for name in ('manifest.json','bundle.tar.gz',*(row['name'] for row in manifest['files'])):
                     if name=='manifest.json':
@@ -644,9 +665,13 @@ class Publisher:
                     destination.parent.mkdir(mode=0o700,exist_ok=True)
                     if name=='manifest.json':_write(destination,data,mode=0o600)
                     else:_copy_target(destination,source,{'bytes':info.length,'sha256':info.hashes['sha256']},mode=0o600)
-            info=TargetFile.from_data('exclusions.json',canonical(feed),['sha256'])
-            targets.signed.targets[info.path]=info
-            _write(pending/'targets'/(info.hashes['sha256']+'.exclusions.json'),canonical(feed),mode=0o600)
+            feeds={'exclusions.json':_legacy_feed(feed)}
+            if 'catch' in bundles or any('catch' in e['modes'] for e in feed['events']):
+                feeds['exclusions-v2.json']=feed
+            for name,body in feeds.items():
+                raw=canonical(body);info=TargetFile.from_data(name,raw,['sha256'])
+                targets.signed.targets[info.path]=info
+                _write(pending/'targets'/(info.hashes['sha256']+'.'+name),raw,mode=0o600)
             for index,signer in enumerate(self.signers['root']):root.sign(signer,append=index>0)
             targets.sign(self.signers['targets'][0]);targets_raw=targets.to_bytes()
             snapshot=Metadata(Snapshot(version=version,expires=now+timedelta(days=EXPIRY_DAYS['snapshot'])))
@@ -664,7 +689,7 @@ class Publisher:
                    for p in pending.rglob('*') if p.is_file() and p.name!='.building.json'}
             self.state['reserved_version']=version
             self.state['pending']={'version':version,'clock':now.isoformat(),
-                'content_ids':{m:manifests[m]['content_id'] for m in MODES},'exclusions':feed,'files':files,
+                'content_ids':{m:manifests[m]['content_id'] for m in bundles},'exclusions':feed,'files':files,
                 'timestamp_sha256':files['metadata/timestamp.json']['sha256']}
             self._save();journaled=True
             result=self._commit();result['resumed']=False;return result

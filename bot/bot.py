@@ -244,6 +244,16 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                  lifecycle=None):
         self.hub, self.api, self.pool, self.cfg = hub, api, pool, cfg
         mode = ruleset_id(cfg)
+        if mode == 2:
+            from .mode import validate_catch_mods
+            if (not getattr(pool, 'catch_mode', False)
+                    or (getattr(pool,'research_only',True) and cfg.get('_host_offline') is not True)
+                    or (not getattr(pool,'research_only',True) and cfg.get('_host_managed_catalogs') is not True)):
+                raise ValueError('Catch requires signed managed production or explicit offline research')
+            validate_catch_mods(cfg.get('allowed_mods', []), cfg.get('required_mods', []), cfg.get('freestyle', False))
+            if cfg.get('auto_difficulty', False):
+                raise ValueError('Catch AutoDiff is not qualified')
+            cfg.update(auto_difficulty=False, loved_mode=False, stream_enabled=False)
         if mode == 3:
             if not getattr(pool, "mania_mode", False):
                 raise ValueError("Mania room requires ManiaPool")
@@ -660,8 +670,13 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         from poolrotater_host.ratings.reader import for_settings as rating_reader
         self.rating_reader=rating_reader(cfg)
         self.pool.ratings_reader=self.rating_reader
-        self.ratings = RatingStore(cfg.get("ratings_db", "ratings.db"),
-                                   initialize=not cfg.get("ratings_schema_prepared", False),reader=self.rating_reader)
+        if mode == 2:
+            from .scoped_ratings import ScopedRatingStore
+            self.ratings = ScopedRatingStore(cfg.get('ratings_db','ratings.db'),
+                initialize=not cfg.get('ratings_schema_prepared',False),reader=self.rating_reader,ruleset_id=2)
+        else:
+            self.ratings = RatingStore(cfg.get('ratings_db','ratings.db'),
+                initialize=not cfg.get('ratings_schema_prepared',False),reader=self.rating_reader)
         self._init_player_languages()
         # Keep persistent per-player PP gains in the same SQLite file as
         # ratings/performance evidence, but in a separate table. This starts
@@ -669,8 +684,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         # room + playlist item + user so a score report can never count twice.
         from poolrotater_host.activity.reader import for_settings as activity_reader
         self.activity_reader = activity_reader(cfg)
-        self.pp_stats = PPStatsStore(cfg.get("ratings_db", "ratings.db"), ruleset_id=mode,
-                                     reader=self.activity_reader)
+        stats_factory=PPStatsStore
+        if mode == 2:
+            from .catch_ppstats import CatchPPStatsStore
+            stats_factory=CatchPPStatsStore
+        self.pp_stats = stats_factory(cfg.get('ratings_db','ratings.db'),ruleset_id=mode,
+                                      reader=self.activity_reader)
         self.last_played_map = None           # what map feedback refers to
         self._rating_context = {}
         self._rating_window_until = 0.0
@@ -1572,6 +1591,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         renamed_now = self.update_room_name_for_range(
             self.pool.sr_min, self.pool.sr_max
         )
+        if self.cfg.get('ruleset_id', 0) == 2:
+            self.say(f'Catch fixed range {self.pool.sr_min:.2f}-{self.pool.sr_max:.2f}* ({n} maps). Future picks only.')
+            return
         if self.cfg.get("ruleset_id", 0) == 3:
             self.say(f"Mania fixed range {self.pool.sr_min:.2f}-{self.pool.sr_max:.2f}* ({n} maps). Future picks use it; title updates between maps. {p}harder/{p}easier remain temporary votes.{self._persist_suffix(saved)}")
             return
@@ -1591,6 +1613,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
     def _enable_auto_difficulty_operator(self) -> None:
         """Enable AutoDiff and persist it for an admin/mod operator."""
+        if self.cfg.get('ruleset_id', 0) == 2:
+            from .catch_runtime import catch_message
+            self.say(catch_message(self, 'catch_fixed_difficulty'))
+            return
         if self.cfg.get("ruleset_id", 0) == 3:
             self.say("Mania AutoDiff is not calibrated. Use .range <min> <max>; players can vote .harder/.easier.")
             return
@@ -1634,6 +1660,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
     def show_admin_settings(self) -> None:
         """Show operational knobs only to an authenticated lobby admin."""
+        if self.cfg.get('ruleset_id', 0) == 2:
+            self.say(f'Catch native NM: fixed {self.pool.sr_min:.2f}-{self.pool.sr_max:.2f}* | '
+                     f'{len(self.pool.maps)} maps | max length {self.pool.max_length}s | '
+                     f'countdown {self.cfg.get("countdown_seconds")}s | '
+                     'catalog/min-length changes require worker replacement; native NM Ranked/Approved only.')
+            return
         if self.cfg.get("ruleset_id", 0) == 3:
             self.say(f"Mania: {self._mania_key_label()} | {self.pool.source_mode_label()} | vetted converts up to {self.pool.mania_convert_max_share:.0%} in variety | AutoDiff unavailable | farm {'enabled (experimental)' if self.pool.mania_farm_enabled else 'disabled pending validation'} | mode/schema settings require restart.")
         mode = "manual" if self.manual_range else (
@@ -1807,6 +1839,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             "downloadavailabilitycachedays": "availabilitycache",
         }
         name = aliases.get(name, name)
+        if self.cfg.get('ruleset_id', 0) == 2 and name in ('bias','halfwidth','minpasses','maxage','streamshare','farmshare'):
+            from .catch_runtime import catch_message
+            self.say(catch_message(self, 'catch_fixed_difficulty'))
+            return
         if self.cfg.get("ruleset_id", 0) == 3 and name in ("bias", "halfwidth"):
             self.say("Standard AutoDiff tuning does not apply to mania. Use .range or .set difficultyvotestep instead.")
             return
@@ -2516,7 +2552,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             for key, value in desired.items():
                 attr = fields[key][0]
                 setattr(self.pool, attr, value)
-            if source_requested and not getattr(self.pool, "loved_mode", False) and self.cfg.get("ruleset_id", 0) != 3:
+            if source_requested and not getattr(self.pool, "loved_mode", False) and self.cfg.get("ruleset_id", 0) == 0:
                 if not stream_enabled or stream_share <= 0.0:
                     self.pool.source_mode = "farm"
                     self.pool.farm_share = 1.0
@@ -2571,6 +2607,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         "mania_ln_pick_multiplier",
         "standard_dt_db", "dt_auto_threshold", "dt_pick_share",
         "sparse_passcount_enabled", "sparse_passcount_min_maps", "sparse_passcount_floor",
+        "catch_catalog", "catch_include_loved", "catch_min_length",
         "ruleset_id", "mania_db", "mania_keys", "mania_source_mode",
         "mania_min_length", "mania_style_min_score", "mania_farm_enabled",
         "mania_min_rank_score", "mania_min_confidence", "mania_min_appearances", "mania_min_bands",
@@ -2671,8 +2708,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         ``self.pool`` is swapped. The visible osu! playlist is then rebuilt at
         the next safe between-map boundary.
         """
-        if self.cfg.get("ruleset_id", 0) == 3:
-            return []  # Mania source/schema settings are restart-required.
+        if self.cfg.get("ruleset_id", 0) in (2, 3):
+            return []  # Native Catch/Mania source/schema settings require restart.
         keys = ("farm_db", "loved_db", "loved_mode")
         if not any(key in data and self.cfg.get(key) != data[key] for key in keys):
             return []
@@ -2769,6 +2806,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             log.warning("ignored invalid hot-reloaded freestyle=%r: must be true/false", freestyle)
             return []
         try:
+            if self.cfg.get('ruleset_id', 0) == 2:
+                from .mode import validate_catch_mods
+                validate_catch_mods(allowed, required, freestyle)
             if self.cfg.get("ruleset_id", 0) == 3:
                 validate_mania_mods(allowed, required, freestyle)
             validate_mods(allowed, required)
@@ -2870,6 +2910,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if data.get("ruleset_id", self.cfg.get("ruleset_id", 0)) != self.cfg.get("ruleset_id", 0):
             log.warning("Ruleset identity changed; restart supervisor before applying this room config")
             return []
+        if self.cfg.get('ruleset_id', 0) == 2:
+            data = dict(data)
+            # Shared Standard tuning cannot enable unsupported Catch policies.
+            data.update(auto_difficulty=False,loved_mode=False,stream_enabled=False,
+                        freestyle=False,allowed_mods=[],required_mods=[],
+                        min_passcount=0,max_map_age_years=0,high_star_relax_enabled=False)
         if self.cfg.get("ruleset_id", 0) == 3:
             data = dict(data)
             data.update(auto_difficulty=False, loved_mode=False, stream_enabled=False)
@@ -3306,7 +3352,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
     def _build_ai_live_context(self, user_id: int) -> str:
         lines = [
-            f"Ruleset: {'native ' + self._mania_key_label() + ' mania (fixed difficulty; no standard calibration)' if self.cfg.get('ruleset_id', 0) == 3 else 'osu!standard'}",
+            f"Ruleset: {'native ' + self._mania_key_label() + ' mania (fixed difficulty; no standard calibration)' if self.cfg.get('ruleset_id', 0) == 3 else 'native Catch NM (fixed difficulty)' if self.cfg.get('ruleset_id', 0) == 2 else 'osu!standard'}",
             f"Room id: {self.room_id or 'unknown'}",
             f"State: {self.state}",
         ]
@@ -3394,6 +3440,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             lines.append(f"Sparse-pool pass fallback: target {self.pool.sparse_passcount_min_maps}; floor {self.pool.sparse_passcount_floor}; current minimum {self.pool.effective_min_passcount()}; original {self.pool.min_passcount} preferred")
         if self.cfg.get("ruleset_id", 0) == 3:
             lines.append(f"Mania fixed-range community overlay: {self._community_bias_overlay():+.2f}*; standard AutoDiff does not apply")
+        elif self.cfg.get('ruleset_id', 0) == 2:
+            lines.append('Native Catch NM; fixed range; unreviewed style weights neutral.')
         else:
             lines.append(
                 f"AutoDiff baseline bias: {float(self.cfg.get('auto_sr_bias', 0.30)):+.2f}*; "
@@ -4488,10 +4536,14 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             self._handle_language_command(user_id, parts)
             return
 
+        if self.cfg.get('ruleset_id', 0) == 2:
+            from .catch_runtime import handle_command
+            if handle_command(self, cmd, parts):
+                return
         mania = self.cfg.get("ruleset_id", 0) == 3
         if mania and self._handle_mania_command(user_id, cmd, parts):
             return
-        if not mania and self._handle_standard_style_toggle(user_id, cmd, parts, is_privileged):
+        if self.cfg.get("ruleset_id", 0) == 0 and self._handle_standard_style_toggle(user_id, cmd, parts, is_privileged):
             return
 
         if cmd in ("help", "commands"):
@@ -7005,6 +7057,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                  else self.pool.next_map())
             if m is None:
                 return None
+            if self.cfg.get('ruleset_id', 0) == 2:
+                self.pool.verify_variant(m, in_range=True)
+                if not self._check_catch_revision(m):
+                    return None
             if getattr(m, 'is_dt', False):
                 # MakeRoom has no atomic required-mod setting. Always seed NM.
                 if native_only:
@@ -7136,7 +7192,31 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
     def _dt_pp_kwargs(m):
         return {'mods': ('DT',)} if getattr(m, 'is_dt', False) else {}
 
+    def _check_catch_revision(self, m, *, force=False):
+        """ID-only provider items need a fresh exact checksum/native proof."""
+        cache = getattr(self, '_catch_revisions', {})
+        self._catch_revisions = cache
+        saved = cache.get(m.beatmap_id)
+        if not force and saved and saved[1] == m.file_md5 and time.monotonic()-saved[0] < 30:
+            return True
+        try:
+            value = self.api.beatmap(m.beatmap_id)
+        except Exception:
+            log.warning('Catch revision observation unavailable; holding queue/start')
+            return False
+        if (isinstance(value,dict) and type(value.get('mode_int')) is int and value['mode_int'] == 2
+                and value.get('checksum') == m.file_md5 and value.get('convert',False) is False
+                and value.get('status') == m.status):
+            cache[m.beatmap_id] = (time.monotonic(),m.file_md5)
+            return True
+        cache.pop(m.beatmap_id,None)
+        self.pool.exclude_beatmap(m.beatmap_id)
+        log.warning('Catch current file/native identity differs; excluding candidate')
+        return False
+
     def _prefetch_map_pp(self, m):
+        if self.cfg.get('ruleset_id', 0) == 2:
+            return  # C6 judgement scenarios are not a generic accuracy curve.
         self.pp_projection.prefetch(m.beatmap_id, **self._dt_pp_kwargs(m))
 
     def _cleanup_disabled_dt(self):
@@ -7235,7 +7315,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         log.info("creating room")
         initial_name = self._room_name_for_range(
             self.pool.sr_min, self.pool.sr_max)
-        resp = self.hub.make_room(initial_name, first.beatmap_id, **({"ruleset_id": 3} if self.cfg.get("ruleset_id", 0) == 3 else {}))
+        resp = self.hub.make_room(initial_name, first.beatmap_id, **({"ruleset_id": self.cfg["ruleset_id"]} if self.cfg.get("ruleset_id", 0) in (2, 3) else {}))
         self._current_room_name = initial_name
         self.room_id = resp["room_id"]
         self.channel_id = resp["chat_channel_id"]
@@ -7296,7 +7376,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             )
 
         self.say(
-            f"{self._current_room_name} — auto-rotating {self._mania_key_label() + ' mania' if self.cfg.get('ruleset_id', 0) == 3 else 'farm'} pool. "
+            f"{self._current_room_name} — auto-rotating {self._mania_key_label() + ' mania' if self.cfg.get('ruleset_id', 0) == 3 else 'native Catch NM' if self.cfg.get('ruleset_id', 0) == 2 else 'farm'} pool. "
             f"Type {self.prefix}help for commands.",
             automatic=True,
         )
@@ -7554,6 +7634,15 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                         break
             self._playlist_dirty = True
             return normalized
+        if self.cfg.get('ruleset_id', 0) == 2:
+            from .catch_runtime import playlist_valid
+            normalized['catch_invalid'] = not playlist_valid(self, item)
+            if normalized['catch_invalid']:
+                self._playlist_maps.pop(item_id, None)
+                self._server_playlist_items[item_id] = normalized
+                self._playlist_dirty = True
+                log.error('Catch playlist item has unqualified or unknown native NM identity: %s', item_id)
+                return normalized
         if self.cfg.get("ruleset_id", 0) == 3:
             invalid = item.get("ruleset_id", 3) != 3 or beatmap_id is None
             resolved = None
@@ -7608,7 +7697,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return None
         item_id = int(item_id)
         if (self._server_playlist_items.get(item_id, {}).get("mania_invalid")
-                or self._server_playlist_items.get(item_id, {}).get('standard_invalid')):
+                or self._server_playlist_items.get(item_id, {}).get('standard_invalid')
+                or self._server_playlist_items.get(item_id, {}).get('catch_invalid')):
             return None
         m = self._playlist_maps.get(item_id)
         if m is not None:
@@ -7834,6 +7924,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 return False
             self._last_playlist_audit = time.time()
 
+        if self.cfg.get('ruleset_id', 0) == 2 and any(
+                i.get('catch_invalid') and not i.get('played') and not i.get('expired')
+                for i in self._server_playlist_items.values()):
+            log.error('Catch playlist contains an unverifiable variant; refusing start')
+            return False
         if self.cfg.get("ruleset_id", 0) == 3 and any(
             item.get("mania_invalid") and not item.get("played") and not item.get("expired")
             for item in self._server_playlist_items.values()
@@ -7929,6 +8024,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         return True
 
     def _playlist_rules_for_map(self, m) -> dict:
+        if self.cfg.get('ruleset_id', 0) == 2:
+            from .mode import validate_catch_mods
+            validate_catch_mods(self.cfg.get('allowed_mods', []), self.cfg.get('required_mods', []), self.cfg.get('freestyle', False))
+            self.pool.verify_variant(m, in_range=True)
+            return dict(ruleset_id=2, allowed_mods=[], required_mods=[], freestyle=False)
         rules = dict(allowed_mods=self.cfg.get("allowed_mods", ["HD", "HR", "NF"]),
                      required_mods=self.cfg.get("required_mods", []),
                      freestyle=self.cfg.get("freestyle", False))
@@ -8101,6 +8201,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         self.say(f"{projection.display()} — {m.label}{suffix}")
 
     def _maybe_announce_post_match_pp(self) -> bool:
+        if self.cfg.get('ruleset_id', 0) == 2:
+            self._post_match_pp_announce_pending = False
+            return False
         """Announce PP once for the promoted map after MatchCompleted.
 
         Playlist promotion can happen either before or after MatchCompleted.
@@ -9391,7 +9494,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             m = self._next_downloadable_map()
             if not m:
                 break
-            if int(m.beatmap_id) in used:
+            if int(m.beatmap_id) in used and not (
+                    getattr(self.pool, 'catch_mode', False)
+                    and getattr(self.pool, 'queue_repeat_unavoidable', False)):
                 continue
 
             try:
@@ -10801,6 +10906,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
     def _show_player_stats(self, user_id, parts, *, pending=False):
         mania = self.cfg.get('ruleset_id', 0) == 3
+        stats_label='Catch' if self.cfg.get('ruleset_id',0)==2 else 'Mania' if mania else 'AutoHost'
         requester_name = str(
             (self.players.get(user_id) or {}).get("name")
             or self.pp_stats.username_for_user_id(user_id)
@@ -10851,7 +10957,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     except Exception:
                         lookup_status = None
                     if lookup_status == 'not_found':
-                        self.say(f"{requester_name} — no shared AutoHost stats are available for {requested_name} yet.")
+                        self.say(f"{requester_name} — no shared {stats_label} stats are available for {requested_name} yet.")
                     else:
                         self._queue_stats_reply(user_id, parts, requested_name, announce=not pending)
                         return False
@@ -10937,14 +11043,14 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         coverage_note = ""
         if achievement_count:
             self.say(
-                f"{target_name} — {'Mania' if mania else 'AutoHost'} gains: +{total_gain:.1f}pp "
+                f"{target_name} — {stats_label} gains: +{total_gain:.1f}pp "
                 f"across {achievement_count} gain"
                 f"{'s' if achievement_count != 1 else ''} "
                 f"(best +{best_gain:.1f}pp) | Playtime: {playtime}.{coverage_note}"
             )
         else:
             self.say(
-                f"{target_name} — {'Mania' if mania else 'AutoHost'} gains: +0.0pp tracked so far "
+                f"{target_name} — {stats_label} gains: +0.0pp tracked so far "
                 f"| Playtime: {playtime}.{coverage_note}"
             )
 
@@ -10981,7 +11087,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # network I/O must not hold commands or READY processing behind it.
             self._defer_player_profile(user_id)
             return
-        mode_kwargs = {"mode": "mania"} if self.cfg.get("ruleset_id", 0) == 3 else {}
+        mode_kwargs = {"mode": {2: "fruits", 3: "mania"}[self.cfg["ruleset_id"]]} if self.cfg.get("ruleset_id", 0) in (2, 3) else {}
         try:
             u = self.api.user(user_id, **mode_kwargs)
         except (ApiAdmissionDeferred, ApiProfileReadUnavailable):
@@ -11069,7 +11175,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         for uid, work in list(pending.items()):
             if now < work["retry_at"]:
                 continue
-            mode_kwargs = {"mode": "mania"} if self.cfg.get("ruleset_id", 0) == 3 else {}
+            mode_kwargs = {"mode": {2: "fruits", 3: "mania"}[self.cfg["ruleset_id"]]} if self.cfg.get("ruleset_id", 0) in (2, 3) else {}
             fields = None
             try:
                 profile = work["profile"]
@@ -11183,7 +11289,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 continue
             result = queue.Queue(maxsize=2)
             api, profile = self.api, work['profile']
-            mode = {'mode': 'mania'} if self.cfg.get('ruleset_id', 0) == 3 else {}
+            mode = {'mode': {2:'fruits', 3:'mania'}[self.cfg['ruleset_id']]} if self.cfg.get('ruleset_id', 0) in (2,3) else {}
             def fetch(api=api, uid=uid, profile=profile, mode=mode, result=result):
                 raw = None
                 try:
@@ -11905,7 +12011,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     len(announced_achievements), len(pp_achievements),
                 )
 
-        if bid and evidence_records and self.cfg.get("ruleset_id", 0) != 3:
+        if bid and evidence_records and self.cfg.get("ruleset_id", 0) == 0:
             participant_count = len(self.playing_player_ids)
             if participant_count <= 0:
                 participant_count = max(len(scored_users),

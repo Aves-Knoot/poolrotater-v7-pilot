@@ -10,7 +10,7 @@ import sqlite3
 import stat
 
 MODES = {'standard-auto': 'standard', 'standard-fixed': 'standard',
-         'mania-4k': 'mania_4k', 'mania-7k': 'mania_7k'}
+         'mania-4k': 'mania_4k', 'mania-7k': 'mania_7k', 'catch-fixed': 'catch'}
 EXCLUDED_MAPS = frozenset({1549496})
 MAX_INDEX_BYTES = 64 * 1024**2
 

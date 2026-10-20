@@ -85,6 +85,7 @@ def main():
         'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
         'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch',
         'room-settings-configure','room-settings-status',
+        'catch-pilot-prepare','catch-pilot-status','catch-pilot-resume','catch-pilot-rollback',
         'worker-stage','worker-queue','worker-cancel','worker-status',
         'maintenance-request','maintenance-cancel','maintenance-status',
         'update-configure','update-check','update-download','update-apply','update-pause','update-resume',

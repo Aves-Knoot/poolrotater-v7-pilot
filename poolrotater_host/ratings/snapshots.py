@@ -10,11 +10,13 @@ from ..network.contracts import require,fields,integer,number,identifier,canonic
 from ..network.contracts import NetworkError
 from ..config import ConfigError
 from .migration import _private
+from bot.rating_outbox import public_key, storage_key, CATCH_KEY_BASE
 
 PAGE_MAPS=500
 MAX_MAPS=100000
 MAX_PAGE=512*1024
 SCHEME='canonical-map-v1'
+CONTEXT_SCHEME='canonical-map-context-v2'
 
 
 def digest(value):
@@ -24,8 +26,9 @@ def digest(value):
 
 def manifest(value):
     fields(value,('ok','format','protocol_version','scheme','server_epoch','watermark','policy_watermark','generated_at','maps','pages','content_id'))
-    require(value['ok'] is True and type(value['format']) is int and value['format']==1
-            and type(value['protocol_version']) is int and value['protocol_version']==1 and value['scheme']==SCHEME,
+    require(value['ok'] is True and type(value['format']) is int and value['format'] in (1,2)
+            and type(value['protocol_version']) is int and value['protocol_version']==1
+            and (value['format'],value['scheme']) in ((1,SCHEME),(2,CONTEXT_SCHEME)),
             'incompatible_rating_snapshot')
     identifier(value['server_epoch']);integer(value['watermark'],0);number(value['generated_at']);integer(value['maps'],0,MAX_MAPS)
     integer(value['policy_watermark'],0,value['watermark'])
@@ -41,16 +44,32 @@ def manifest(value):
 
 def page(value,entry):
     fields(value,('ok','format','index','rows'))
-    require(value['ok'] is True and type(value['format']) is int and value['format']==1
+    require(value['ok'] is True and type(value['format']) is int and value['format'] in (1,2)
             and type(value['index']) is int and value['index']==entry['index'] and type(value['rows']) is list
             and len(value['rows'])==entry['maps'] and len(canonical(value))==entry['bytes']
             and fingerprint(value)==entry['sha256'],'invalid_rating_snapshot')
     previous=0
     for row in value['rows']:
-        fields(row,('beatmap_id','good','bad','neutral'));integer(row['beatmap_id'])
-        require(row['beatmap_id']>previous,'invalid_rating_snapshot');previous=row['beatmap_id']
+        expected=('beatmap_id','good','bad','neutral')
+        if value['format']==2:expected+=('ruleset_id','variant')
+        fields(row,expected);integer(row['beatmap_id'])
+        key = snapshot_key(row, value['format'])
+        require(key>previous,'invalid_rating_snapshot');previous=key
         for key in ('good','bad','neutral'):integer(row[key],0)
     return value
+
+
+def snapshot_key(row, format):
+    try:
+        if format == 1:
+            return storage_key(row['beatmap_id'])
+        if row['ruleset_id'] is None and row['variant'] == 'legacy-map':
+            return storage_key(row['beatmap_id'])
+        require(type(row['ruleset_id']) is int and row['ruleset_id']==2
+                and row['variant']=='native-NM','invalid_rating_snapshot')
+        return storage_key(row['beatmap_id'], {'ruleset_id':2}, map_origin='catch-native-nm')
+    except ValueError:
+        require(False, 'invalid_rating_snapshot')
 
 
 def directory(path):
@@ -60,10 +79,13 @@ def directory(path):
 def validate_bundle(base,value):
     manifest(value);previous=0;result={}
     for entry in value['pages']:
-        rows=page(read_json(base/f"page-{entry['index']}.json",maximum=MAX_PAGE),entry)['rows']
+        body=page(read_json(base/f"page-{entry['index']}.json",maximum=MAX_PAGE),entry)
+        require(body['format']==value['format'],'invalid_rating_snapshot')
+        rows=body['rows']
         for row in rows:
-            require(row['beatmap_id']>previous,'invalid_rating_snapshot');previous=row['beatmap_id']
-            result[row['beatmap_id']]=(row['good'],row['bad'])
+            key=snapshot_key(row,value['format'])
+            require(key>previous,'invalid_rating_snapshot');previous=key
+            result[key]=(row['good'],row['bad'])
     return result
 
 
@@ -94,8 +116,9 @@ def prune(base,keep,*,marker=None):
 class Publisher:
     def __init__(self,repository):self.repository=repository;self.store=repository.store
 
-    def current(self):
-        base=directory(self.store.root/'ratings-snapshots')
+    def current(self, *, context=False):
+        # v1 stays byte-compatible for older hosts even after Catch votes exist.
+        base=directory(self.store.root/('ratings-snapshots-v2' if context else 'ratings-snapshots'))
         with file_lease(self.store.root/'ratings-snapshot.lock'),self.store.transaction() as db:
             policy,_=self.repository.policy.check(db)
             policy_watermark=policy['operations'][-1]['watermark'] if policy['operations'] else 0
@@ -108,14 +131,19 @@ class Publisher:
                 if old['watermark']==watermark and old['server_epoch']==epoch:
                     validate_bundle(_private(base/old['content_id'],directory=True),old);return old
             rows=[dict(row) for row in db.execute('SELECT beatmap_id,SUM(rating>0) good,SUM(rating<0) bad,SUM(rating=0) neutral '
-                  'FROM ratings_current WHERE suppressed=0 AND rating IS NOT NULL GROUP BY beatmap_id ORDER BY beatmap_id LIMIT ?',
-                  (MAX_MAPS+1,))]
+                  'FROM ratings_current WHERE suppressed=0 AND rating IS NOT NULL AND beatmap_id<? GROUP BY beatmap_id ORDER BY beatmap_id LIMIT ?',
+                  (2**63-1 if context else CATCH_KEY_BASE,MAX_MAPS+1))]
             require(len(rows)<=MAX_MAPS,'rating_snapshot_capacity_required',503)
+            context_format=context
+            format=2 if context_format else 1
+            if context_format:
+                for row in rows:
+                    row['beatmap_id'],row['ruleset_id'],row['variant']=public_key(row['beatmap_id'])
             pages=[];entries=[]
             for start in range(0,len(rows),PAGE_MAPS):
-                item={'ok':True,'format':1,'index':len(pages),'rows':rows[start:start+PAGE_MAPS]};pages.append(item)
+                item={'ok':True,'format':format,'index':len(pages),'rows':rows[start:start+PAGE_MAPS]};pages.append(item)
                 entries.append({'index':item['index'],'sha256':fingerprint(item),'bytes':len(canonical(item)),'maps':len(item['rows'])})
-            value={'ok':True,'format':1,'protocol_version':1,'scheme':SCHEME,'server_epoch':epoch,'watermark':watermark,
+            value={'ok':True,'format':format,'protocol_version':1,'scheme':CONTEXT_SCHEME if context_format else SCHEME,'server_epoch':epoch,'watermark':watermark,
                    'policy_watermark':policy_watermark,'generated_at':self.store.clock(),'maps':len(rows),'pages':entries}
             value['content_id']=fingerprint(value);manifest(value)
             target=base/value['content_id'];stage=Path(tempfile.mkdtemp(prefix='.snapshot-',dir=base))
@@ -134,10 +162,11 @@ class Publisher:
                 if stage.exists():shutil.rmtree(stage)
         return value
 
-    def read_page(self,content_id,index):
+    def read_page(self,content_id,index,*,context=False):
         digest(content_id);integer(index,0,199)
-        require(os.path.lexists(self.store.root/'ratings-snapshots'/content_id),'rating_snapshot_not_found',404)
-        base=_private(self.store.root/'ratings-snapshots'/content_id,directory=True)
+        directory_name='ratings-snapshots-v2' if context else 'ratings-snapshots'
+        require(os.path.lexists(self.store.root/directory_name/content_id),'rating_snapshot_not_found',404)
+        base=_private(self.store.root/directory_name/content_id,directory=True)
         value=manifest(read_json(base/'manifest.json'));require(value['content_id']==content_id and index<len(value['pages']),
                                                               'rating_snapshot_not_found',404)
         return page(read_json(base/f'page-{index}.json',maximum=MAX_PAGE),value['pages'][index])
@@ -196,10 +225,20 @@ class Cache:
             except (OSError,ValueError,NetworkError,ConfigError):continue
         return {},{'phase':'unavailable','watermark':0}
 
-    def download(self,transport,token,*,server_epoch,max_pages=2):
+    def download(self,transport,token,*,server_epoch,max_pages=2,context=None):
         integer(max_pages,1,10);identifier(server_epoch)
         with file_lease(contained(self.root,'state/ratings-snapshot.lock')):
-            value=manifest(transport.request('GET','/v1/ratings/snapshots/current',token=token))
+            if context is None:
+                context=any(r['preset']=='catch-fixed' for r in load(self.root)[1]['rooms'])
+            require(type(context) is bool,'invalid_snapshot_context')
+            route='/v2/ratings' if context else '/v1/ratings'
+            try:
+                reply=transport.request('GET',route+'/snapshots/current',token=token)
+            except NetworkError as exc:
+                if exc.status!=404 or not context:raise
+                route='/v1/ratings'
+                reply=transport.request('GET',route+'/snapshots/current',token=token)
+            value=manifest(reply)
             require(value['server_epoch']==server_epoch,'ratings_snapshot_epoch_requires_review',409)
             floor=self.floor_value()
             require(floor is None or (floor['server_epoch']==server_epoch
@@ -259,7 +298,7 @@ class Cache:
                     except (OSError,ValueError,NetworkError,ConfigError):pass
                 if downloaded>=max_pages:pending+=1;continue
                 require(shutil.disk_usage(base).free>16*1024**2+entry['bytes'],'rating_snapshot_disk_reserve_required',503)
-                body=transport.request('GET',f"/v1/ratings/snapshot-page?content_id={value['content_id']}&index={entry['index']}",token=token)
+                body=transport.request('GET',f"{route}/snapshot-page?content_id={value['content_id']}&index={entry['index']}",token=token)
                 page(body,entry);atomic_json(path,body);downloaded+=1
             if pending:
                 prune(base,{value['content_id'],*[old[k] for k in ('current','previous') if old and old[k] is not None]},marker=self.marker)

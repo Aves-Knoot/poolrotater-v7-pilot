@@ -130,11 +130,16 @@ class Policy:
         db.execute("UPDATE meta SET value=? WHERE key='ratings_policy_applied'",(str(op['sequence']),))
         db.execute("UPDATE meta SET value=? WHERE key='ratings_policy_sha256'",(fingerprint(value),))
 
-    def change(self,*,subject,effect,user_id=None,beatmap_id=None,host_id=None):
+    def change(self,*,subject,effect,user_id=None,beatmap_id=None,host_id=None,ruleset_id=None):
         require(subject in ('user','key','host') and effect in ('suppress','allow','delete')
                 and (effect!='delete' or subject=='user'),'invalid_ratings_policy')
         if subject in ('user','key'):integer(user_id)
-        if subject=='key':integer(beatmap_id)
+        require(ruleset_id is None or (subject=='key' and type(ruleset_id) is int and ruleset_id==2),
+                'invalid_ratings_policy')
+        if subject=='key':
+            integer(beatmap_id)
+            from bot.rating_outbox import map_key
+            beatmap_id=map_key(beatmap_id,ruleset_id)
         if subject=='host':identifier(host_id)
         require((subject=='host')==(host_id is not None) and (subject=='key')==(beatmap_id is not None)
                 and (subject!='host')==(user_id is not None),'invalid_ratings_policy')

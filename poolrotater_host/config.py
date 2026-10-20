@@ -10,7 +10,10 @@ PRESETS = {
     'standard-fixed': {'ruleset': 0, 'keys': None, 'auto_difficulty': False, 'sr_min': 3.5, 'sr_max': 4.5},
     'mania-4k': {'ruleset': 3, 'keys': 4, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
     'mania-7k': {'ruleset': 3, 'keys': 7, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
+    'catch-fixed': {'ruleset': 2, 'keys': None, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
 }
+# Catch is explicit opt-in; upgrades and fresh defaults retain the original topology.
+DEFAULT_PRESETS = ('standard-auto', 'standard-fixed', 'mania-4k', 'mania-7k')
 LANGUAGES = ('en', 'zh', 'ko', 'es', 'ru', 'ja', 'pl', 'id', 'fr', 'de')
 
 
@@ -85,7 +88,8 @@ def validate(config: dict) -> dict:
             raise ConfigError('unsupported room preset')
         if room['language'] not in LANGUAGES:
             raise ConfigError('unsupported language')
-        number(room['sr_min'], 0, 20, 'sr_min'); number(room['sr_max'], 0, 20, 'sr_max')
+        maximum = 100 if PRESETS[room['preset']]['ruleset'] == 2 else 20
+        number(room['sr_min'], 0, maximum, 'sr_min'); number(room['sr_max'], 0, maximum, 'sr_max')
         if room['sr_min'] >= room['sr_max']:
             raise ConfigError('star-rating minimum must be below maximum')
         path = relative_path(room['catalog'])
@@ -95,13 +99,14 @@ def validate(config: dict) -> dict:
 
 
 def defaults(presets: list[str] | None = None) -> dict:
-    presets = list(PRESETS) if presets is None else presets
+    presets = list(DEFAULT_PRESETS) if presets is None else presets
     rooms = []
     for index, name in enumerate(presets, 1):
         if name not in PRESETS:
             raise ConfigError('unsupported preset')
         spec = PRESETS[name]
-        filename = 'standard.db' if spec['ruleset'] == 0 else f'mania_{spec["keys"]}k.db'
+        filename = ('standard.db' if spec['ruleset'] == 0 else 'catch.db' if spec['ruleset'] == 2
+                    else f'mania_{spec["keys"]}k.db')
         rooms.append({'alias': f'room{index}', 'preset': name, 'sr_min': spec['sr_min'],
                       'sr_max': spec['sr_max'], 'language': 'en', 'catalog': f'catalogs/{filename}'})
     return validate({'schema_version': 1, 'execution': 'offline',

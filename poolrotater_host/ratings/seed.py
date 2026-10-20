@@ -13,7 +13,7 @@ from ..layout import contained, load
 from ..network.contracts import require,canonical,fingerprint
 from .migration import migration_record,_ledger_connection,_private,LEDGER,BACKUP
 from .contracts import event
-from bot.rating_outbox import validate
+from bot.rating_outbox import validate, public_key
 
 
 def seed_ledger(root):
@@ -43,21 +43,22 @@ def seed_ledger(root):
             policy=conn.execute('SELECT is_ignored,accept_after FROM rating_ignored_users WHERE user_id=?',(uid,)).fetchone()
             if policy is not None and (policy[0] or policy[1] is None or created<policy[1]):
                 counts['excluded']+=1;continue
+            public_bid, ruleset_id, variant = public_key(bid)
             seed_id=str(uuid.uuid5(namespace,marker['generation']+':'+digest+':'+str(bid)+':'+str(uid)))
             prior=conn.execute('SELECT payload FROM rating_outbox WHERE event_id=?',(seed_id,)).fetchone()
             if prior is not None:
                 item=json.loads(prior[0]);event(item)
                 require(item['kind']=='historical_seed' and item['rating']==rating
-                        and item['beatmap_id']==bid and item['user_id']==uid,'historical_seed_identity_mismatch')
+                        and item['beatmap_id']==public_bid and item['user_id']==uid,'historical_seed_identity_mismatch')
                 counts['already_seeded']+=1;continue
             # Any genuine post-boundary command wins, even if pending/conflicted.
             if conn.execute('SELECT 1 FROM rating_outbox WHERE beatmap_id=? AND user_id=? LIMIT 1',(bid,uid)).fetchone():
                 counts['post_boundary']+=1;continue
             sequence=validate(conn)[3]+1
-            item={'format':1,'event_id':seed_id,**{k:marker[k] for k in ('installation_id','generation')},
-                  'sequence':sequence,'kind':'historical_seed','beatmap_id':bid,'user_id':uid,'rating':rating,
+            item={'format':2 if ruleset_id==2 else 1,'event_id':seed_id,**{k:marker[k] for k in ('installation_id','generation')},
+                  'sequence':sequence,'kind':'historical_seed','beatmap_id':public_bid,'user_id':uid,'rating':rating,
                   'base_revision':None,'predecessor':None,'observed_at':created,'map_origin':origin,'key_count':keys,
-                  'context':{'ruleset_id':None,'room_id':None,'playlist_item_id':None,'required_mods':[]}}
+                  'context':{'ruleset_id':ruleset_id,'room_id':None,'playlist_item_id':None,'required_mods':[]}}
             event(item)
             conn.execute('INSERT INTO rating_outbox(event_id,sequence,beatmap_id,user_id,payload) VALUES(?,?,?,?,?)',
                          (seed_id,sequence,bid,uid,canonical(item).decode()))

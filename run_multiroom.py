@@ -136,6 +136,24 @@ def load_rooms(paths, universal=None):
 
 
 def make_pool(cfg):
+    if ruleset_id(cfg) == 2:
+        from bot.mode import validate_catch_mods
+        from bot.catch_pool import CatchPool, ProductionCatchPool
+        validate_catch_mods(cfg.get('allowed_mods', []), cfg.get('required_mods', []), cfg.get('freestyle', False))
+        if cfg.get('auto_difficulty', False):
+            raise ValueError('Catch requires fixed difficulty')
+        managed = cfg.get('_host_managed_catalogs') is True
+        if not managed and cfg.get('_host_offline') is not True:
+            raise ValueError('Catch requires a signed managed catalog or explicit offline research')
+        constructor = ProductionCatchPool if managed else CatchPool
+        pool = constructor(cfg['catch_catalog'], purpose='production' if managed else 'research',
+                         catch_include_loved=cfg.get('catch_include_loved', False),
+                         catch_min_length=cfg.get('catch_min_length', 0),
+                         **{k: cfg[k] for k in ('sr_min','sr_max','max_length','min_passcount','max_map_age_years','ratings_db') if k in cfg},
+                         limit=cfg.get('pool_limit', 200000))
+        from poolrotater_host.ratings.reader import for_settings
+        pool.ratings_reader = for_settings(cfg)
+        return pool
     mania = ruleset_id(cfg) == 3
     if mania:
         validate_mania_mods(cfg.get("allowed_mods", []), cfg.get("required_mods", []), cfg.get("freestyle", False))

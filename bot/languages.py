@@ -244,6 +244,14 @@ TEXT.update({
     "dt_disabled": ("DT已关闭，后续仅NoMod；当前DT比赛继续。", "DT 꺼짐, 이후 NoMod. 진행 중 DT 경기는 계속됩니다.", "DT desactivado; próximas selecciones NoMod. La partida DT actual termina.", "DT отключён; далее NoMod. Текущая DT-игра завершится."),
     "dt_fixed_mods": ("此房间固定模组不支持混合DT。", "이 로비의 고정 모드는 혼합 DT를 지원하지 않습니다.", "Los mods fijos del lobby no permiten DT mixto.", "Фиксированные моды лобби не поддерживают смешанный DT."),
 })
+# Catch remains a neutral fixed-range native NM selection until variants/styles
+# receive independent qualification. All prepared player languages explain this.
+TEXT.update({
+    "catch_nm_only": ("Catch 仅支持原生 NoMod，速率为 1.0。", "Catch는 네이티브 NoMod, 배속 1.0만 지원합니다.", "Catch solo admite mapas nativos NoMod a velocidad 1.0.", "Catch поддерживает только нативные карты NoMod со скоростью 1.0."),
+    "catch_fixed_difficulty": ("Catch 使用固定星级范围；自动难度尚未启用。", "Catch는 고정 별 난이도 범위를 사용하며 자동 난이도는 지원하지 않습니다.", "Catch usa un rango fijo de estrellas; la dificultad automática no está habilitada.", "Catch использует фиксированный диапазон сложности; автонастройка не включена."),
+    "catch_style_unavailable": ("Catch 风格和 Farm 筛选尚未验证；保持多样选图。", "Catch 패턴 및 Farm 필터는 아직 검증되지 않아 다양한 맵을 선택합니다.", "Los filtros de estilo y Farm de Catch aún no están validados; se mantiene la variedad.", "Фильтры стилей и Farm для Catch ещё не проверены; сохраняется разнообразный подбор."),
+    "catch_research_only": ("Catch 图池仅供离线研究，尚未获准公开分发或在线启用。", "Catch 카탈로그는 오프라인 연구용이며 공개 배포나 실시간 사용은 아직 허용되지 않습니다.", "El catálogo Catch es solo para investigación sin conexión; su distribución y activación en vivo no están autorizadas.", "Каталог Catch предназначен для офлайн-исследования; публикация и запуск онлайн ещё не разрешены."),
+})
 from .language_packs import CODES as _EXTRA_CODES, TEXT as _EXTRA_TEXT, HELP as _EXTRA_HELP
 for _key in TEXT:
     TEXT[_key] += _EXTRA_TEXT[_key]

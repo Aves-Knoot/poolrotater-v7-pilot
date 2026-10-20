@@ -17,6 +17,7 @@ SOURCE = Path(__file__).resolve().parent
 TARGETS = {
     'network_statistics.py': '/usr/local/lib/poolrotator-ops/network_statistics.py',
     'analytics_exporter.py': '/usr/local/sbin/poolrotator-wiki-analytics',
+    'script.js': '/srv/poolrotator-wiki/dokuwiki/lib/tpl/poolrotator/script.js',
     'analytics.php': '/srv/poolrotator-wiki/dokuwiki/lib/tpl/poolrotator/analytics.php',
 }
 

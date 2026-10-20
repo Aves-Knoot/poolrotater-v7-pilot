@@ -10,6 +10,7 @@ def simulate(root: Path, rounds=3, *, hub=None):
     if type(rounds) is not int or not 1 <= rounds <= 100:
         raise ConfigError('rounds must be an integer in 1..100')
     from bot.ratings import RatingStore
+    from bot.scoped_ratings import ScopedRatingStore
     _, config = load(root)
     hub = FakeReferee() if hub is None else hub
     results = []
@@ -21,13 +22,16 @@ def simulate(root: Path, rounds=3, *, hub=None):
         try:
             for room, pool in pools:
                 rid = hub.create(room['alias']); opened.append(rid)
+                catch = room['preset'] == 'catch-fixed'
+                room_ratings = (ScopedRatingStore(str(contained(root, 'state/simulation-ratings.db')),ruleset_id=2)
+                                if catch else ratings)
                 played = []
                 for _ in range(rounds):
                     item = pool.next_map()
                     if item is None: raise ConfigError('eligible pool exhausted')
                     hub.play(rid, item.beatmap_id)
                     pool.record_song_play(item); pool.record_round(item.beatmap_id)
-                    ratings.rate(item.beatmap_id, 101, 1)
+                    room_ratings.rate(item.beatmap_id, 101, 1, **({'map_origin':'catch-native-nm','context':{'ruleset_id':2,'required_mods':[]}} if catch else {}))
                     played.append(item.beatmap_id)
                 results.append({'alias': room['alias'], 'preset': room['preset'], 'played': played, 'state': 'closed'})
         finally:

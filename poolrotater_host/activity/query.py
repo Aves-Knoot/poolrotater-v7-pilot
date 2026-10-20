@@ -4,7 +4,7 @@ from ..network.contracts import require, fields, integer, text, base, verifier
 
 def contract(value):
     fields(value,('protocol_version','user_ids','usernames','ruleset_id'));base(value)
-    require(value['ruleset_id'] in (0,3) and type(value['ruleset_id']) is int,'invalid_activity_ruleset')
+    require(value['ruleset_id'] in (0,2,3) and type(value['ruleset_id']) is int,'invalid_activity_ruleset')
     require(type(value['user_ids']) is list and len(value['user_ids'])<=20,'activity_query_too_large')
     require(type(value['usernames']) is list and len(value['usernames'])<=10,'activity_query_too_large')
     for uid in value['user_ids']:integer(uid)
@@ -23,7 +23,8 @@ def union_seconds(intervals):
 def player(snapshot, uid, *, ruleset_id=0):
     """Full identity and public totals. A hidden marker contains no leaked totals/name."""
     if uid in set(snapshot['hidden_user_ids']):return {'user_id':uid,'hidden':True}
-    allowed=('standard',) if ruleset_id==0 else ('mania','mania4','mania7')
+    require(type(ruleset_id) is int and ruleset_id in (0,2,3),'invalid_activity_ruleset')
+    allowed={0:('standard',),2:('catch',),3:('mania','mania4','mania7')}[ruleset_id]
     result={'user_id':uid,'username':str(uid),'hidden':False,'total_gain':0.0,'achievement_count':0,
             'best_gain':0.0,'total_lobby_seconds':0.0,'visit_count':0,'map_plays':0,
             'first_gain_at':None,'last_gain_at':None,'first_join_at':None,'last_join_at':None,'last_leave_at':None,
@@ -44,13 +45,13 @@ def player(snapshot, uid, *, ruleset_id=0):
                 result[key]=row[key] if result[key] is None else (min if key=='first_join_at' else max)(result[key],row[key])
     for row in snapshot['presence']:
         if not eligible(row):continue
-        cutoff=cutoffs.get((row['host_id'],row['mode']),cutoffs.get((row['host_id'],'mania'),0))
+        cutoff=cutoffs.get((row['host_id'],row['mode']),cutoffs.get((row['host_id'],'mania'),0) if ruleset_id==3 else 0)
         start=max(row['started_at'],cutoff);end=row['ended_at']
         if end>start:intervals.append((start,end));hosts.add(row['host_id']);names.append((end,row['username']))
     result['total_lobby_seconds']+=union_seconds(intervals)
     for row in snapshot['joins']:
         if not eligible(row):continue
-        cutoff=cutoffs.get((row['host_id'],row['mode']),cutoffs.get((row['host_id'],'mania'),0))
+        cutoff=cutoffs.get((row['host_id'],row['mode']),cutoffs.get((row['host_id'],'mania'),0) if ruleset_id==3 else 0)
         if row['occurred_at']<cutoff:continue
         joins.add((row['room_id'],row['occurred_at']));names.append((row['occurred_at'],row['username']));hosts.add(row['host_id'])
     result['visit_count']+=len(joins)

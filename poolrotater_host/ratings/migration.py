@@ -137,6 +137,17 @@ def _ledger_connection(path):
     return conn
 
 
+def _configured_scopes(path, host):
+    # Explicit stopped preparation also runs before the first shared Catch
+    # worker. Capture readiness is not proof that optional Catch tables exist.
+    # Existing modes gain no schema/topology change from a runtime upgrade.
+    if not any(room['preset']=='catch-fixed' for room in host['rooms']):return
+    from bot.scoped_ratings import ScopedRatingStore
+    from bot.catch_ppstats import CatchPPStatsStore
+    ScopedRatingStore(str(path),ruleset_id=2)
+    CatchPPStatsStore(str(path),ruleset_id=2)
+
+
 def migrate_ledger(root):
     """Called only inside the administrator's verified stopped/owner lease.
 
@@ -146,7 +157,7 @@ def migrate_ledger(root):
     from ..layout import load, contained, atomic_json
     from bot.ratings import RatingStore
     from bot.rating_outbox import prepare, validate
-    marker, _ = load(root)
+    marker, host = load(root)
     path, backup = contained(root, LEDGER), contained(root, BACKUP)
     record = migration_record(root)
     if record is None:
@@ -166,6 +177,7 @@ def migrate_ledger(root):
             if tuple(meta[1:3]) != (marker['installation_id'], marker['generation']):
                 raise ValueError('rating_restored_identity_requires_review')
         finally: conn.close()
+        _configured_scopes(path,host)
         return local_status(root)
     if not os.path.lexists(backup):
         def journal(receipt):
@@ -193,6 +205,7 @@ def migrate_ledger(root):
     finally: conn.close()
     record['phase'] = 'complete'
     atomic_json(contained(root, RECORD), record)
+    _configured_scopes(path,host)
     return local_status(root)
 
 

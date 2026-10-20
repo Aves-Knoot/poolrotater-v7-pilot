@@ -66,7 +66,7 @@ def pin_mania_validation(cfg, release):
 
 def make_worker_pool(cfg):
     """Worker-local Ranked policy; shared v6.7.2 factory/contracts stay pinned."""
-    if ruleset_id(cfg) == 3 or cfg.get('loved_mode', False):
+    if ruleset_id(cfg) in (2, 3) or cfg.get('loved_mode', False):
         return _managed_policy(make_pool(cfg), cfg)
     validate_mods(cfg.get('allowed_mods', []), cfg.get('required_mods', []))
     if cfg.get('freestyle') and (cfg.get('allowed_mods') or cfg.get('required_mods')):
@@ -98,10 +98,12 @@ def make_worker_pool(cfg):
 
 def _managed_policy(pool, cfg):
     if cfg.get('_host_catalog_set'):
+        if ruleset_id(cfg) == 2 and getattr(pool,'research_only',True):
+            raise ValueError('Catch research has no signed managed catalog authority')
         from poolrotater_host.catalog_store import CatalogStore
         from poolrotater_host.catalog_exclusions import ExclusionPolicy, attach_policy
         store = CatalogStore.open(cfg['_host_root'])
-        mode = 'standard' if ruleset_id(cfg) == 0 else 'mania'+str(cfg['mania_keys'])
+        mode = 'standard' if ruleset_id(cfg) == 0 else 'catch' if ruleset_id(cfg)==2 else 'mania'+str(cfg['mania_keys'])
         reference = store._validate_reference(cfg['_host_catalog_reference'])
         if reference['set_id'] != cfg['_host_catalog_set']: raise ValueError('worker catalog reference/set mismatch')
         pool = attach_policy(pool, ExclusionPolicy(store, mode, reference['modes'][mode]))
@@ -288,7 +290,7 @@ def run(sock, release):
         pool = make_worker_pool(cfg)
         if cfg.get('_host_catalog_set'):
             from poolrotater_host.catalog_store import CatalogStore
-            mode = 'standard' if ruleset_id(cfg) == 0 else 'mania'+str(cfg['mania_keys'])
+            mode = 'standard' if ruleset_id(cfg) == 0 else 'catch' if ruleset_id(cfg)==2 else 'mania'+str(cfg['mania_keys'])
             catalog_pins.enter_context(CatalogStore.open(cfg['_host_root']).worker_pin(cfg['_host_catalog_reference'], modes=[mode]))
         peer.emit("prepared", {"version": manifest["version"], "maps": len(pool.maps)})
         while not lifecycle.activate.wait(.2):

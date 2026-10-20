@@ -12,7 +12,7 @@ class DiscordReports:
 
     def __init__(self, path: str, ruleset_id: int | None = None):
         self.path = str(path)
-        if ruleset_id not in (None, 0, 3):
+        if ruleset_id not in (None, 0, 2, 3):
             raise ValueError("Unsupported report ruleset")
         self.ruleset_id = ruleset_id
 
@@ -23,16 +23,41 @@ class DiscordReports:
         # Temporary views scope all existing report SQL without altering the
         # production schema or any stored rows. Legacy unlabelled rooms are osu.
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if self.ruleset_id == 2:
+            # Old/unlabelled ledgers are Standard evidence, never Catch data.
+            # Cold Catch reports must be empty instead of adopting old tables.
+            from .rating_outbox import CATCH_KEY_BASE, MAX_PROVIDER_MAP_ID
+            for table in ('autohost_matches','autohost_room_players'):
+                if table in tables:
+                    if 'autohost_room_rulesets' in tables:
+                        conn.execute(f'CREATE TEMP VIEW {table} AS SELECT t.* FROM main.{table} t JOIN main.autohost_room_rulesets rr ON rr.room_id=t.room_id WHERE rr.ruleset_id=2')
+                    else:
+                        conn.execute(f'CREATE TEMP VIEW {table} AS SELECT * FROM main.{table} WHERE 0')
+            for table in ('autohost_lobby_time','autohost_pp_achievements'):
+                if table+'_catch' in tables:
+                    conn.execute(f'CREATE TEMP VIEW {table} AS SELECT * FROM main.{table}_catch')
+                elif table in tables:
+                    conn.execute(f'CREATE TEMP VIEW {table} AS SELECT * FROM main.{table} WHERE 0')
+            if 'map_ratings_catch' in tables:
+                conn.execute(f'CREATE TEMP VIEW map_ratings AS SELECT beatmap_id-{CATCH_KEY_BASE} AS beatmap_id,user_id,rating,created_at,map_origin,key_count FROM main.map_ratings_catch WHERE beatmap_id>{CATCH_KEY_BASE} AND beatmap_id<={CATCH_KEY_BASE+MAX_PROVIDER_MAP_ID}')
+            elif 'map_ratings' in tables:
+                conn.execute('CREATE TEMP VIEW map_ratings AS SELECT * FROM main.map_ratings WHERE 0')
+            return conn
         if "autohost_room_rulesets" in tables:
             for table in ("autohost_matches", "autohost_room_players"):
                 if table in tables:
                     conn.execute(f"CREATE TEMP VIEW {table} AS SELECT t.* FROM main.{table} t LEFT JOIN main.autohost_room_rulesets rr ON rr.room_id=t.room_id WHERE COALESCE(rr.ruleset_id,0)={self.ruleset_id}")
-            if "map_ratings" in tables and "autohost_matches" in tables:
+            if self.ruleset_id == 2 and 'map_ratings' in tables:
+                from .rating_outbox import CATCH_KEY_BASE, MAX_PROVIDER_MAP_ID
+                conn.execute(f'CREATE TEMP VIEW map_ratings AS SELECT beatmap_id-{CATCH_KEY_BASE} AS beatmap_id,user_id,rating,created_at,map_origin,key_count FROM main.map_ratings WHERE beatmap_id>{CATCH_KEY_BASE} AND beatmap_id<={CATCH_KEY_BASE+MAX_PROVIDER_MAP_ID}')
+            elif "map_ratings" in tables and "autohost_matches" in tables:
                 if self.ruleset_id == 3:
                     conn.execute("CREATE TEMP VIEW map_ratings AS SELECT r.* FROM main.map_ratings r WHERE r.beatmap_id IN (SELECT beatmap_id FROM autohost_matches)")
                 else:
                     # Keep historical ratings predating the match ledger.
-                    conn.execute("CREATE TEMP VIEW map_ratings AS SELECT r.* FROM main.map_ratings r WHERE r.beatmap_id NOT IN (SELECT m.beatmap_id FROM main.autohost_matches m JOIN main.autohost_room_rulesets rr ON rr.room_id=m.room_id WHERE rr.ruleset_id=3 AND m.beatmap_id IS NOT NULL)")
+                    conn.execute("CREATE TEMP VIEW map_ratings AS SELECT r.* FROM main.map_ratings r WHERE r.beatmap_id NOT IN (SELECT m.beatmap_id FROM main.autohost_matches m JOIN main.autohost_room_rulesets rr ON rr.room_id=m.room_id WHERE rr.ruleset_id=3 AND m.beatmap_id IS NOT NULL) AND r.beatmap_id < 4503599627370496")
+        if self.ruleset_id == 2 and "autohost_lobby_time_catch" in tables:
+            conn.execute("CREATE TEMP VIEW autohost_lobby_time AS SELECT * FROM main.autohost_lobby_time_catch")
         if self.ruleset_id == 3 and "autohost_lobby_time_mania" in tables:
             conn.execute("CREATE TEMP VIEW autohost_lobby_time AS SELECT * FROM main.autohost_lobby_time_mania")
         return conn

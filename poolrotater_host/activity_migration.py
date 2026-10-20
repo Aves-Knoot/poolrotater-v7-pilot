@@ -318,6 +318,13 @@ def _initialize(root, marker):
         RatingStore(str(path))
         PPStatsStore(str(path), ruleset_id=0)
         PPStatsStore(str(path), ruleset_id=3)
+        # A fresh explicit Catch host prepares its namespace before workers can
+        # lock schemas. Existing Standard/Mania installations are unchanged.
+        if any(room['preset'] == 'catch-fixed' for room in load(root)[1]['rooms']):
+            from bot.catch_ppstats import CatchPPStatsStore
+            from bot.scoped_ratings import ScopedRatingStore
+            ScopedRatingStore(str(path),ruleset_id=2)
+            CatchPPStatsStore(str(path), ruleset_id=2)
     finally:
         os.umask(mask)
     _migrate(root, marker)

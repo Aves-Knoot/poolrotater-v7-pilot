@@ -1,0 +1,35 @@
+.pr-community {
+  margin: 28px 0; padding: 24px; border: 1px solid #49334f; border-radius: 16px;
+  background: radial-gradient(ellipse at top right, rgba(84, 50, 75, .33), transparent 60%), #241c31;
+  color: #f6edf9;
+}
+.pr-community .pr-community-heading { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 10px 24px; margin-bottom: 18px; }
+.pr-community .pr-community-eyebrow { display: block; margin-bottom: 6px; color: #d9b5cc; font-size: 10px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+.dokuwiki .pr-community h2 { margin: 0; padding: 0; border: 0; color: #fff; font-size: 24px; line-height: 1.25; letter-spacing: -.025em; }
+.pr-community .pr-community-intro { max-width: 360px; margin: 0; color: #c8b8d0; font-size: 12px; line-height: 1.6; }
+.pr-community [data-community-list] { display: grid; grid-template-columns: ~"repeat(auto-fit, minmax(min(100%, 290px), 1fr))"; gap: 14px; }
+.pr-community .pr-community-room { --community-accent: #ffacd0; display: flex; flex-direction: column; min-width: 0; padding: 18px; border: 1px solid rgba(255, 255, 255, .1); border-top: 3px solid var(--community-accent); border-radius: 12px; background: rgba(255, 255, 255, .025); }
+.pr-community .pr-community-room[data-preset="mania-4k"], .pr-community .pr-community-room[data-preset="mania-7k"] { --community-accent: #85ddcc; }
+.pr-community .pr-community-room:focus-within { border-color: var(--community-accent); }
+.pr-community .pr-community-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.pr-community .pr-community-mode { color: var(--community-accent); font-size: 10px; font-weight: 750; }
+.pr-community .pr-community-state { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid rgba(255, 255, 255, .08); border-radius: 20px; color: #d7c6de; font-size: 10px; white-space: nowrap; }
+.pr-community .pr-community-state::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #ab93ba; }
+.pr-community [data-state="playing"] .pr-community-state::before { background: #85ddcc; }
+.pr-community [data-state="starting"] .pr-community-state::before { background: #ffd38f; }
+.pr-community [data-state="unavailable"] { opacity: .75; }
+.dokuwiki .pr-community h3 { margin: 14px 0 8px; padding: 0; border: 0; color: #f6edf9; font-size: 14px; font-weight: 700; line-height: 1.55; overflow-wrap: anywhere; }
+.pr-community .pr-community-host { margin: 0; color: #bcacc6; font-size: 11px; overflow-wrap: anywhere; }
+.pr-community .pr-community-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; padding: 12px 0; border-top: 1px solid rgba(255, 255, 255, .07); border-bottom: 1px solid rgba(255, 255, 255, .07); }
+.pr-community .pr-community-fact { display: flex; flex-direction: column; gap: 5px; margin: 0; font-size: 13px; font-weight: 700; color: #eee2f3; }
+.pr-community .pr-community-fact span, .pr-community .pr-community-map-label { color: #bda9c9; font-size: 10px; font-weight: 400; }
+.pr-community .pr-community-map { flex: 1; margin: 0 0 18px; line-height: 1.6; overflow-wrap: anywhere; }
+.pr-community .pr-community-map-label { display: block; margin-bottom: 5px; }
+.pr-community .pr-community-map-title { display: block; color: #e2d2e9; font-size: 11px; }
+.pr-community .pr-community-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.dokuwiki .pr-community a.pr-community-join:link, .dokuwiki .pr-community a.pr-community-join:visited { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 14px; background: var(--community-accent); color: #302235; border-radius: 7px; font-size: 11px; font-weight: 800; text-decoration: none; }
+.dokuwiki .pr-community a.pr-community-view:link, .dokuwiki .pr-community a.pr-community-view:visited { display: inline-flex; align-items: center; min-height: 44px; color: #d6bddf; font-size: 11px; text-decoration: none; }
+.pr-community a:focus-visible { outline: 3px solid #ffacd0; outline-offset: 4px; }
+.pr-community [data-community-note] { margin: 16px 0 0; color: #bca6c9; font-size: 11px; line-height: 1.5; }
+@media (max-width: 480px) { .pr-community { padding: 18px 14px; }.pr-community .pr-community-room { padding: 16px; }.dokuwiki .pr-community h2 { font-size: 22px; } }
+@media print { .pr-community { background: #fff; color: #222; }.pr-community .pr-community-room { break-inside: avoid; background: #fff; border-color: #999; }.pr-community .pr-community-actions { display: none; }.dokuwiki .pr-community h2, .dokuwiki .pr-community h3, .pr-community p, .pr-community span { color: #222; } }

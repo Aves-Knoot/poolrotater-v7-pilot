@@ -30,6 +30,7 @@ def decide(current, event, predecessor=None):
             and predecessor['installation_id'] == event['installation_id']
             and predecessor['generation'] == event['generation']
             and predecessor['beatmap_id'] == event['beatmap_id']
+            and (predecessor.get('context', {}).get('ruleset_id') == 2) == (event.get('context', {}).get('ruleset_id') == 2)
             and predecessor['user_id'] == event['user_id']
             and predecessor['sequence'] < event['sequence']):
         return 'accepted', 'current_predecessor'

@@ -5,6 +5,7 @@ from pathlib import Path
 from ..layout import load,contained,read_json,atomic_json,file_lease
 from ..network.contracts import require,fields,identifier
 from .snapshots import Cache
+from bot.rating_outbox import map_key
 
 # Development shadow matrix and protected donor core checks precede this gate.
 # Candidate installation/agent qualification still gates technical acceptance.
@@ -53,14 +54,15 @@ def configure(sync,*,mode):
 
 class NetworkReader:
     source='network'
-    def __init__(self,root,*,server_epoch):
+    def __init__(self,root,*,server_epoch,ruleset_id=None):
+        self.ruleset_id=ruleset_id
         identifier(server_epoch);self.cache=Cache(root);self.epoch=server_epoch;self.status={'phase':'cold','watermark':0}
 
     def tallies(self,beatmap_ids):
         counts,status=self.cache.read();self.status=status
         if status.get('server_epoch') not in (None,self.epoch):
             self.status={'phase':'epoch-review-required','watermark':status['watermark']};return {}
-        return {int(bid):counts[int(bid)] for bid in set(beatmap_ids) if int(bid) in counts}
+        return {int(bid):counts[map_key(int(bid), self.ruleset_id)] for bid in set(beatmap_ids) if map_key(int(bid), self.ruleset_id) in counts}
 
 
 def for_settings(settings):
@@ -68,4 +70,4 @@ def for_settings(settings):
     require(mode in ('independent','network'),'invalid_ratings_reader_mode')
     if mode=='independent':return None
     require(NETWORK_CONSUMPTION_QUALIFIED,'ratings_shadow_qualification_required')
-    return NetworkReader(Path(settings['ratings_reader_root']),server_epoch=settings['ratings_reader_epoch'])
+    return NetworkReader(Path(settings['ratings_reader_root']),server_epoch=settings['ratings_reader_epoch'],ruleset_id=settings.get('ruleset_id'))

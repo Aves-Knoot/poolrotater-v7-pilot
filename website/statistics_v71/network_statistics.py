@@ -1,12 +1,14 @@
 """Private full-row owner/network merger; only allowlisted bounded rankings leave it.
 
 The owner ledger predates interval telemetry. Its cumulative connected time is
-kept separately: inventing historical intervals would overstate deduplication.
+included in recorded totals while retained separately as provenance. Exact
+interval telemetry remains a separate measure; old overlap is not invented.
 """
 from __future__ import annotations
 
 from collections import defaultdict
 from heapq import nsmallest
+from itertools import chain
 import json
 import math
 import os
@@ -15,8 +17,8 @@ import re
 import stat
 
 PERIODS = {"all": 0, "7d": 7 * 86400, "14d": 14 * 86400, "30d": 30 * 86400}
-SCOPES = ("all", "standard", "mania_7k", "mania_4k")
-MODES = {"standard": "standard", "mania4": "mania_4k", "mania7": "mania_7k",
+SCOPES = ("all", "standard", "mania_7k", "mania_4k", "catch")
+MODES = {"catch": "catch", "standard": "standard", "mania4": "mania_4k", "mania7": "mania_7k",
          "mania_4k": "mania_4k", "mania_7k": "mania_7k", "mania": "mania_other"}
 HOST = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}\Z")
 
@@ -97,6 +99,8 @@ def publish_group(rows, hidden, *, period, owner_time=False):
               "seconds": round(sum(p["seconds"] for p in rows.values())) if not owner_time or period == "all" else None,
               "legacy_owner_seconds": round(sum(p.get("legacy_owner_seconds", 0) for p in rows.values())) if period == "all" else None,
               "legacy_community_seconds": round(sum(p.get("legacy_community_seconds", 0) for p in rows.values())) if period == "all" else None}
+    if not owner_time:
+        totals["verified_seconds"] = round(sum(p.get("verified_seconds", 0) for p in rows.values()))
     visible = [(uid, raw) for uid, raw in rows.items() if uid not in hidden]
     # Rank the complete input before materializing bounded public rows. Native
     # unique-map/day sets can be large; copying them only to count and discard
@@ -133,14 +137,22 @@ def publish_groups(raw, hidden, *, owner_time=False):
                    for period, rows in periods.items()} for mode, periods in raw.items()}
 
 
-def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
+def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now, *, selection=None):
     """Return combined scopes plus owner/per-host views and coverage metadata.
 
     Stable osu! user IDs join owner and community rows before ranking truncation.
     Network duration is interval union per user, including overlapping hosts;
     same-room owner match records are excluded because the owner ledger already
-    contains them. Historical owner cumulative duration remains separate.
+    contains them. Historical owner duration contributes once to recorded totals; overlapping
+    modern owner telemetry is retained as a separate verified measure.
     """
+    selected_scopes = (selection[0],) if selection else SCOPES
+    selected_periods = {selection[1]: PERIODS[selection[1]]} if selection else PERIODS
+    def scope_targets(mode):
+        return (scope for scope in (("all", mode) if mode in SCOPES else ("all",))
+                if scope in selected_scopes)
+    def new_groups():
+        return {scope: {period: {} for period in selected_periods} for scope in selected_scopes}
     owner = {mode:{period:{uid:dict(p)for uid,p in rows.items()}
                    for period,rows in periods.items()}for mode,periods in owner_groups.items()}
     for periods in owner.values():
@@ -157,7 +169,7 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
             for p in rows.values():
                 p["legacy_owner_seconds"] = p["seconds"]
                 p["seconds"] = 0
-                p["time_by_type"] = {}
+                p["time_by_type"] = dict(p["time_by_type"])
     host_rows = {}
     host_meta = {}
     if snapshot:
@@ -168,10 +180,11 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
             consent = number(row.get("consent_at"), None)
             if consent is None or consent < 0 or consent > now:
                 continue
-            host_rows[hid] = groups()
+            host_rows[hid] = new_groups()
             host_meta[hid] = {"label": clean(row.get("label")) or "Community host", "consent_at": consent,
                               "updated_at": min(now, number(row.get("updated_at"), consent))}
     intervals = defaultdict(list)
+    additional_intervals = defaultdict(list)
     match_seen = defaultdict(set)
     joins_seen = defaultdict(set)
     achievement_seen = defaultdict(set)
@@ -181,7 +194,7 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
     owner_hosts = set(snapshot.get("owner_host_ids", [])) if snapshot else set()
     combined_owned_sets=set()
     if snapshot:
-        owner_hosts.update(row.get("host_id") for row in snapshot["presence"] + snapshot["matches"] if isinstance(row, dict) and row.get("room_id") in owner_room_ids)
+        owner_hosts.update(row.get("host_id") for row in chain(snapshot["presence"], snapshot["matches"]) if isinstance(row, dict) and row.get("room_id") in owner_room_ids)
     def player(target, mode, period, uid, username):
         rows = target[mode][period]
         if uid not in rows:
@@ -196,8 +209,8 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
         rows[uid]["username"] = names.get(uid) or clean(username) or rows[uid]["username"]
         return rows[uid]
     def targets(mode, at):
-        for scope in (("all", mode) if mode in SCOPES else ("all",)):
-            for period, seconds in PERIODS.items():
+        for scope in scope_targets(mode):
+            for period, seconds in selected_periods.items():
                 if seconds == 0 or at >= now - seconds:
                     yield scope, period
     def valid(row):
@@ -228,15 +241,21 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
             # never increments it, even following a database restore/import.
             if previous is None or cutoff > previous["cutoff"]:
                 baseline_rows[key] = {**row, "cutoff": cutoff}
+        owner_baseline_sources = {row["source_id"] for (hid, uid, mode), row in baseline_rows.items() if hid in owner_hosts}
         combined_baselines = {}
         for (hid, uid, mode), row in baseline_rows.items():
+            if hid not in owner_hosts and row["source_id"] in owner_baseline_sources:
+                continue  # A copied owner import belongs to the canonical owner.
             baseline_cutoffs[hid, uid, mode] = row["cutoff"]
-            for scope in (("all", mode) if mode in SCOPES else ("all",)):
+            for scope in (scope_targets(mode) if "all" in selected_periods else ()):
                 p = player(host_rows[hid], scope, "all", uid, row.get("username"))
                 p["legacy_community_seconds"] = p.get("legacy_community_seconds", 0) + row["total_seconds"]
+                if scope == "all":
+                    for kind in ((mode, "mania") if mode.startswith("mania_") and mode != "mania_other" else ("mania",) if mode == "mania_other" else (mode,)):
+                        p["time_by_type"][kind] = p["time_by_type"].get(kind, 0) + row["total_seconds"]
                 p["visits"] += row["visit_count"]
             historical_import_present = True
-            if hid in owner_hosts:
+            if hid in owner_hosts or row["source_id"] in owner_baseline_sources:
                 continue
             key = (row["source_id"], uid, mode)
             previous = combined_baselines.get(key)
@@ -244,9 +263,12 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
                 combined_baselines[key] = row
         for row in combined_baselines.values():
             hid, uid, mode = valid(row)
-            for scope in (("all", mode) if mode in SCOPES else ("all",)):
+            for scope in (scope_targets(mode) if "all" in selected_periods else ()):
                 p = player(combined, scope, "all", uid, row.get("username"))
                 p["legacy_community_seconds"] = p.get("legacy_community_seconds", 0) + row["total_seconds"]
+                if scope == "all":
+                    for kind in ((mode, "mania") if mode.startswith("mania_") and mode != "mania_other" else ("mania",) if mode == "mania_other" else (mode,)):
+                        p["time_by_type"][kind] = p["time_by_type"].get(kind, 0) + row["total_seconds"]
                 p["visits"] += row["visit_count"]
         for row in snapshot["presence"]:
             identity = valid(row)
@@ -257,19 +279,26 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
             stop = min(number(row.get("ended_at"), now), now)
             if start >= stop:
                 continue
-            for scope in (("all", mode) if mode in SCOPES else ("all",)):
-                for period, seconds in PERIODS.items():
+            for scope in scope_targets(mode):
+                for period, seconds in selected_periods.items():
                     clipped = max(start, now - seconds) if seconds else start
                     if clipped >= stop:
                         continue
                     for key, target in (("combined", combined), (hid, host_rows[hid])):
                         p = player(target, scope, period, uid, row.get("username"))
                         intervals[key, scope, period, uid].append((clipped, stop))
+                        additional = key == "combined" and period == "all" and hid not in owner_hosts and row.get("room_id") not in owner_room_ids
+                        if additional:
+                            additional_intervals[scope, uid].append((clipped, stop))
                         # Per-mode union also supplies the existing player Details.
-                        if scope == mode:
+                        if (scope == mode and "all" in selected_scopes) or (selection and scope == "all" and mode in SCOPES):
                             intervals[key, "type:" + mode, period, uid].append((clipped, stop))
+                            if additional:
+                                additional_intervals["type:" + mode, uid].append((clipped, stop))
                             if mode.startswith("mania_"):
                                 intervals[key, "type:mania", period, uid].append((clipped, stop))
+                                if additional:
+                                    additional_intervals["type:mania", uid].append((clipped, stop))
                         p["days"].update(range(int(clipped // 86400), int((stop - .00001) // 86400) + 1))
         for row in snapshot["joins"]:
             identity = valid(row)
@@ -287,7 +316,7 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
                         continue
                     joins_seen[key, scope, period].add(identity_key)
                     p = player(target, scope, period, uid, row.get("username"))
-                    if key != "combined" or row.get("room_id") not in owner_room_ids:
+                    if key != "combined" or (hid not in owner_hosts and row.get("room_id") not in owner_room_ids):
                         p["visits"] += 1
                     p["days"].add(int(at // 86400))
         for row in snapshot["matches"]:
@@ -302,7 +331,7 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
                 continue
             for scope, period in targets(mode, at):
                 for key, target in (("combined", combined), (hid, host_rows[hid])):
-                    if key == "combined" and row.get("room_id") in owner_room_ids:
+                    if key == "combined" and (hid in owner_hosts or row.get("room_id") in owner_room_ids):
                         continue
                     identity_key = (match, uid)
                     if identity_key in match_seen[key, scope, period]:
@@ -344,7 +373,7 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
                                "accuracy": number(row.get("accuracy"), None), "top_rank": rank, "at": at}
                 for scope, period in targets(mode, at):
                     for key, target in (("combined", combined), (hid, host_rows[hid])):
-                        if key == "combined" and room_id in owner_room_ids:
+                        if key == "combined" and (hid in owner_hosts or room_id in owner_room_ids):
                             continue
                         if identity_key in achievement_seen[key, scope, period]:
                             continue
@@ -362,21 +391,42 @@ def compose(owner_groups, names, hidden, snapshot, owner_room_ids, now):
         if scope.startswith("type:"):
             p = player(target, "all", period, uid, "")
             mode = scope[5:]
-            p["time_by_type"][mode] = round(union_seconds(spans), 1)
+            current = union_seconds(additional_intervals.get((scope, uid), [])) if key == "combined" and period == "all" else union_seconds(spans)
+            p["time_by_type"][mode] = round(p["time_by_type"].get(mode, 0) + current, 1)
         else:
             target[scope][period][uid]["seconds"] = union_seconds(spans)
+    # Use complete recorded time for ranking BEFORE top-50 truncation. Native
+    # owner telemetry is already in its cumulative ledger, so only community
+    # intervals are added to that history. Keep the all-host interval union as
+    # separate evidence, never describe historical sums as overlap-verified.
+    for key, target in [("combined", combined), *host_rows.items()]:
+        for scope, periods in target.items():
+            for period, rows in periods.items():
+                for uid, p in rows.items():
+                    p["verified_seconds"] = p["seconds"]
+                    if period == "all":
+                        current = union_seconds(additional_intervals.get((scope, uid), [])) if key == "combined" else p["seconds"]
+                        p["seconds"] = p.get("legacy_owner_seconds", 0) + p.get("legacy_community_seconds", 0) + current
     views = {"owner": {"label": "Owner lobbies", "kind": "owner", "scopes": publish_groups(owner, hidden, owner_time=True),
                         "coverage": {"time_basis": "legacy_owner_ledger", "pp_basis": "owner_recorded_achievements"}}}
-    for hid in sorted(host_rows):
+    for hid in sorted(set(host_rows) - owner_hosts):
         views[hid] = {**host_meta[hid], "kind": "community", "scopes": publish_groups(host_rows[hid], hidden),
-                      "coverage": {"time_basis": "verified_intervals", "maps_basis": "completed_participation", "pp_basis": "observed_tracked_achievements" if tracked_pp else "not_attributed"}}
+                      "coverage": {"time_basis": "recorded_connected_time", "maps_basis": "completed_participation", "pp_basis": "observed_tracked_achievements" if tracked_pp else "not_attributed"}}
     coverage = {"network_available": snapshot is not None, "network_generated_at": snapshot.get("generated_at") if snapshot else None,
-                "participating_hosts": len(host_rows), "time_basis": "verified_interval_union",
-                "legacy_owner_time_separate": True, "owner_maps_basis": "recorded_map_starts",
+                "participating_hosts": 1 + len(set(host_rows) - owner_hosts), "community_hosts": len(set(host_rows) - owner_hosts),
+                "time_basis": "recorded_connected_time", "verified_time_basis": "interval_union", "historical_time_included": True,
+                "legacy_owner_time_separate": False, "owner_maps_basis": "recorded_map_starts",
                 "community_maps_basis": "completed_participation", "pp_basis": "observed_tracked_achievements" if tracked_pp else "owner_recorded_achievements_only",
                 "tracked_pp_supported": tracked_pp,
                 "pre_opt_in_community_history": historical_import_present}
-    return publish_groups(combined, hidden), {"hosts": views, "coverage": coverage}
+    published = publish_groups(combined, hidden)
+    if snapshot is None:
+        for periods in published.values():
+            for period, group in periods.items():
+                if period != "all":
+                    group["time_available"] = False
+                    group["totals"]["seconds"] = None
+    return published, {"hosts": views, "host_aliases": {hid: "owner" for hid in sorted(owner_hosts & set(host_rows))}, "coverage": coverage}
 
 
 # Public occupancy observations, separate from personally identified statistics.
@@ -388,37 +438,42 @@ def live_occupancy(owner, community, now):
             and value['generated_at'] <= now+30
             and 0 < value['expires_at']-value['generated_at'] <= limit
             and now < value['expires_at'])
-    # Native owner observations can last longer than public directory heartbeats.
-    if not fresh(owner,600) or not fresh(community,60) or community.get('more_available'):
+    # Owner readings remain authoritative when the community directory is down.
+    # Missing/stale/unusable community observations contribute zero by policy.
+    if not fresh(owner,600):
         return None
-    rooms=owner.get('rooms');others=community.get('rooms')
-    if not isinstance(rooms,list) or len(rooms)!=4 or not isinstance(others,list) or len(others)>100:
+    rooms=owner.get('rooms')
+    others=community.get('rooms') if fresh(community,60) else []
+    if not isinstance(others,list) or len(others)>100:others=[]
+    if not isinstance(rooms,list) or len(rooms)!=4:
         return None
     count=0;seen=set();aliases=set()
+    service=owner.get('service')
+    offline=isinstance(service,dict) and service.get('online') is False
     for room in rooms:
         if not isinstance(room,dict) or room.get('alias') not in ('room1','room2','room3','room4') or room['alias'] in aliases:return None
         aliases.add(room['alias'])
-        if room.get('state')=='OFFLINE':continue
+        if offline or room.get('state')=='OFFLINE':continue
         n=room.get('players');rid=room.get('room_id')
         if type(n) is not int or not 0<=n<=128 or type(rid) is not int or rid<=0:return None
         if rid not in seen:seen.add(rid);count+=n
     community_count=0;room_count=0
     for room in others:
-        if not isinstance(room,dict):return None
+        if not isinstance(room,dict):continue
         if room.get('visibility','public')!='public':continue
         rid=room.get('room_id')
-        if type(rid) is not int or rid<=0:return None
+        if type(rid) is not int or rid<=0:continue
         if rid in seen:continue
-        seen.add(rid)
-        if room.get('state') not in ('playing','starting','idle','draining'):return None
+        if room.get('state') not in ('playing','starting','idle','draining'):continue
         n=room.get('players');until=room.get('fresh_until');hide=room.get('hide_at')
-        if (type(n) is not int or not 0<=n<=128 or any(type(t) not in (int,float) or not math.isfinite(t) or t<=now for t in (until,hide))):return None
+        if (type(n) is not int or not 0<=n<=128 or any(type(t) not in (int,float) or not math.isfinite(t) or t<=now for t in (until,hide))):continue
+        seen.add(rid)
         community_count+=n;room_count+=1
     return {'total':count+community_count,'owner':count,'community':community_count,'community_rooms':room_count}
 
 
 def merge_live_activity(activity, state, owner, community, now):
-    """Add complete network totals prospectively; never invent historical data."""
+    """Add available room totals prospectively; unavailable community counts as zero."""
     from pathlib import Path
     import json, os
     path=Path(state)/'network-occupancy.json'
