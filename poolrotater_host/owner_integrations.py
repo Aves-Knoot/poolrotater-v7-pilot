@@ -27,7 +27,8 @@ PATHS = {
     'map_pp_cache_dir':'state/controller-map-pp',
 }
 FLAGS=frozenset({'ai_enabled','discord_control_enabled','discord_modlog_enabled',
-    'discord_modlog_include_instance_name','discord_control_accept_untargeted','chat_websocket_enabled'})
+    'discord_modlog_include_instance_name','discord_control_accept_untargeted','chat_websocket_enabled',
+    'background_player_profiles'})
 ENV_KEYS=frozenset({'ai_api_key_env','discord_control_bot_token_env','discord_modlog_webhook_env'})
 ID_KEYS=frozenset({'discord_control_channel_id','discord_control_guild_id','discord_public_status_channel_id'})
 TEXT_KEYS=frozenset({'ai_model','ai_endpoint','discord_public_status_channel_name',

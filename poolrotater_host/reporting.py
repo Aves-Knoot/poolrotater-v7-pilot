@@ -25,6 +25,8 @@ def profile(root):
     require(type(value['format']) is int and value['format']==1,'invalid_reporting_profile')
     require(all(value[k]==marker[k] for k in ('installation_id','generation')),'foreign_reporting_profile')
     require(all(type(value[k]) is bool for k in CHOICES) and (value['operational_logs'] or not value['public_chat']),'invalid_reporting_profile')
+    from .managed_host.policy import enabled
+    if enabled(root):value={**value,**dict.fromkeys(CHOICES,True)}
     return value
 
 
@@ -68,6 +70,8 @@ def secrets(root, *, provider=False):
     for name in names:
         path=contained(Path(root),'secrets/'+name)
         if os.path.lexists(path):values.extend(secrets_from_mapping(read_json(path,maximum=65536)))
+    from .managed_host.secrets import values as managed_passwords
+    values.extend(managed_passwords(root))
     return tuple(values)
 
 
@@ -84,6 +88,7 @@ class CachedSecrets:
     def __call__(self):
         root=self.root
         paths=[root/'config/host.json',root/'config/integrations.json',root/'config/gameplay.json',root/'config/room-settings.json']
+        paths += [root/'state'/('managed-host.sqlite3'+suffix) for suffix in ('','-wal','-shm','-journal')]
         paths += sorted((root/'config/rooms').glob('*.json'))[:50]
         paths += [root/'secrets'/name for name in ('network.json','integrations.json','integrations.env',
             'provider-osu-token.json','provider-operator-client.json','provider-oauth-pending.json',
@@ -124,6 +129,8 @@ def configure(root,value):
     fields(value,CHOICES);require(all(type(value[k]) is bool for k in CHOICES),'explicit_reporting_choices_required')
     require(value['operational_logs'] or not value['public_chat'],'invalid_reporting_profile')
     root=Path(root)
+    from .managed_host.policy import require_enabled_settings
+    require_enabled_settings(root,value)
     with file_lease(root/'state/reporting.lock'):
         old=profile(root);new={**old,**value}
         # First persist conservative disabled choices before purging queues.
@@ -152,7 +159,7 @@ def support(root):
                 and state['provider_dispatch'] is False,'invalid_reporting_receipt')
         number(state['at']);require(type(state['capture_errors']) is list and len(state['capture_errors'])<=5,'invalid_reporting_receipt')
         # Never copy arbitrary mutable payloads to support output.
-        result['agent_phase']=state.get('phase') if state.get('phase') in ('disabled','synchronized','retrying','not-enrolled','consent-pending','partial') else 'local-review-required'
+        result['agent_phase']=state.get('phase') if state.get('phase') in ('disabled','synchronized','retrying','not-enrolled','consent-pending','policy-pending','partial') else 'local-review-required'
         result['last_attempt_at']=state.get('at')
         result['agent_observation_current']=0<=time.time()-state['at']<=120
         result['reporting_health']='stalled' if not result['agent_observation_current'] else (
@@ -179,6 +186,14 @@ class Reporter:
         from .activity.collector import Collector
         from .activity.reader import Reader
         root=self.root
+        # Initial mandatory migration configures these same stores under the
+        # reporting lease. Do not let a continuously draining reporter starve
+        # that migration (and therefore the independent administration agent).
+        # Existing unmanaged installations retain their reporting behaviour.
+        from .managed_host.policy import enabled,state
+        if enabled(root) and state(root).snapshot()['policy_version']!=1:
+            self.backlog=False
+            return self._receipt('policy-pending')
         with file_lease(root/'state/reporting.lock'):
             p=profile(root);collector=Collector(root)
             consent=collector.configure(share_statistics=p['share_statistics'])

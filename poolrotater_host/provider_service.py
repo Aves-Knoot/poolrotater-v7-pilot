@@ -79,6 +79,10 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
             selected = (private.alias,) if private is not None else tuple(supervisor.configs)
             for alias in selected:
                 if stop.is_set(): break
+                managed=getattr(supervisor,'managed',None)
+                if managed is not None and not managed.startup_allowed(alias):
+                    managed.park(alias)
+                    continue
                 worker = supervisor.prepare(alias, supervisor.start_release_for(alias))
                 workers.append(worker)
                 supervisor.activate(worker)

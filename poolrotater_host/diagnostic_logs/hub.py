@@ -11,6 +11,7 @@ from ..network.contracts import (canonical, identifier, integer, number, require
                                  text, verifier)
 from .common import digest, label, private_database, transaction, unpack
 from .redact import scrub
+from .archive import decode
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS consent(host TEXT PRIMARY KEY,installation TEXT NOT NULL,generation TEXT NOT NULL,
@@ -23,6 +24,7 @@ CREATE TABLE IF NOT EXISTS logs(sequence INTEGER PRIMARY KEY AUTOINCREMENT,host 
  epoch TEXT NOT NULL,start INTEGER NOT NULL,end INTEGER NOT NULL,bytes INTEGER NOT NULL,
  UNIQUE(host,event_id));
 CREATE INDEX IF NOT EXISTS logs_search ON logs(host,room,version,at);
+CREATE INDEX IF NOT EXISTS logs_archive_pending ON logs(received,sequence) WHERE typeof(text)='text';
 CREATE TABLE IF NOT EXISTS losses(host TEXT NOT NULL,reason TEXT NOT NULL,count INTEGER NOT NULL,
  at REAL NOT NULL,PRIMARY KEY(host,reason));
 '''
@@ -30,14 +32,14 @@ CREATE TABLE IF NOT EXISTS losses(host TEXT NOT NULL,reason TEXT NOT NULL,count 
 
 class HubLogs:
     def __init__(self, network_store, *, secret_provider=lambda: (), clock=None,
-                 retention_seconds=14*86400, host_quota_bytes=64*1024**2,
-                 quota_bytes=512*1024**2):
+                 retention_seconds=None, host_quota_bytes=None,
+                 quota_bytes=None):
         self.network = network_store
         self.clock = clock or network_store.clock
         self.secret_provider = secret_provider
-        require(type(retention_seconds) is int and 60 <= retention_seconds <= 90*86400, 'invalid_log_retention')
-        require(type(host_quota_bytes) is int and 65536 <= host_quota_bytes <= 512*1024**2, 'invalid_log_quota')
-        require(type(quota_bytes) is int and host_quota_bytes <= quota_bytes <= 2*1024**3, 'invalid_log_quota')
+        require(retention_seconds is None or type(retention_seconds) is int and 60 <= retention_seconds <= 90*86400, 'invalid_log_retention')
+        require(host_quota_bytes is None or type(host_quota_bytes) is int and 65536 <= host_quota_bytes <= 512*1024**2, 'invalid_log_quota')
+        require(quota_bytes is None or type(quota_bytes) is int and (host_quota_bytes or 65536) <= quota_bytes <= 2*1024**3, 'invalid_log_quota')
         self.retention, self.host_quota, self.quota = retention_seconds, host_quota_bytes, quota_bytes
         self.path = private_database(network_store.root, 'diagnostic-logs.sqlite3')
         with transaction(self.path) as db:
@@ -71,15 +73,20 @@ class HubLogs:
         db.execute('INSERT INTO losses VALUES(?,?,?,?) ON CONFLICT(host,reason) DO UPDATE SET count=count+excluded.count,at=excluded.at', (host, reason, count, self.clock()))
 
     def _prune(self, db):
-        expired = db.execute('SELECT host,count(*) n FROM logs WHERE received<? GROUP BY host', (self.clock()-self.retention,)).fetchall()
-        for row in expired: self._loss(db, row['host'], 'hub_retention_expired', row['n'])
-        db.execute('DELETE FROM logs WHERE received<?', (self.clock()-self.retention,))
-        db.execute('DELETE FROM chunks WHERE received<?', (self.clock()-self.retention,))
+        # Production defaults retain all accepted logs and receipts indefinitely.
+        # Explicit finite settings remain supported for bounded test deployments.
+        if self.retention is not None:
+            expired = db.execute('SELECT host,count(*) n FROM logs WHERE received<? GROUP BY host', (self.clock()-self.retention,)).fetchall()
+            for row in expired: self._loss(db, row['host'], 'hub_retention_expired', row['n'])
+            db.execute('DELETE FROM logs WHERE received<?', (self.clock()-self.retention,))
+            db.execute('DELETE FROM chunks WHERE received<?', (self.clock()-self.retention,))
+        if self.host_quota is None and self.quota is None:
+            return
         # Two bounded quotas, with durable explicit coverage loss counters.
         hosts = db.execute('SELECT host,sum(bytes) used FROM logs GROUP BY host').fetchall()
         for host in hosts:
             used, count = host['used'], 0
-            if used > self.host_quota:
+            if self.host_quota is not None and used > self.host_quota:
                 for row in db.execute('SELECT sequence,bytes FROM logs WHERE host=? ORDER BY sequence', (host['host'],)):
                     if used <= self.host_quota: break
                     db.execute('DELETE FROM logs WHERE sequence=?', (row['sequence'],))
@@ -87,7 +94,7 @@ class HubLogs:
             self._loss(db, host['host'], 'hub_host_quota_evicted_oldest', count)
         used = db.execute('SELECT COALESCE(sum(bytes),0) FROM logs').fetchone()[0]
         counts = {}
-        if used > self.quota:
+        if self.quota is not None and used > self.quota:
             for row in db.execute('SELECT sequence,host,bytes FROM logs ORDER BY sequence'):
                 if used <= self.quota: break
                 db.execute('DELETE FROM logs WHERE sequence=?', (row['sequence'],))
@@ -117,7 +124,7 @@ class HubLogs:
                 accepted, expired = 0, 0
                 for row in records:
                     require(row['at'] <= self.clock() + 300, 'future_log_observation')
-                    if row['at'] < self.clock() - self.retention:
+                    if self.retention is not None and row['at'] < self.clock() - self.retention:
                         expired += 1; continue
                     safe = scrub(row['text'], secrets)
                     old = db.execute('SELECT event_hash FROM logs WHERE host=? AND event_id=?', (host['id'], row['id'])).fetchone()
@@ -152,15 +159,16 @@ class HubLogs:
             if value is not None:
                 number(value); clauses.append('at' + comparison + '?'); params.append(value)
         if contains is not None:
-            text(contains, 200); clauses.append('instr(text,?)>0'); params.append(contains)
+            text(contains, 200); clauses.append('instr(log_text(text),?)>0'); params.append(contains)
         with self.network.transaction() as auth_db:
             eligible = [r[0] for r in auth_db.execute('SELECT id FROM hosts WHERE revoked=0')]
             if not eligible: return {'ok': True, 'records': [], 'next_cursor': None, 'losses': []}
             clauses.append('host IN (' + ','.join('?' for _ in eligible) + ')'); params.extend(eligible)
             with transaction(self.path) as db:
                 self._prune(db)
+                db.create_function('log_text', 1, decode, deterministic=True)
                 rows = db.execute('SELECT * FROM logs WHERE ' + ' AND '.join(clauses) + ' ORDER BY sequence LIMIT ?', params + [limit+1]).fetchall()
-                result = [dict(row) for row in rows[:limit]]
+                result = [{**dict(row), 'text': decode(row['text'])} for row in rows[:limit]]
                 losses = [dict(row) for row in db.execute('SELECT * FROM losses' + (' WHERE host=?' if host_id else ''), (host_id,) if host_id else ()) if row['host'] in eligible]
                 return {'ok': True, 'records': result, 'next_cursor': result[-1]['sequence'] if len(rows)>limit else None,
                         'losses': losses, 'retention_seconds': self.retention,
@@ -176,4 +184,7 @@ class HubLogs:
                 return {'ok': True, 'operational': bool(choice and choice['operational']), 'public_chat': bool(choice and choice['public_chat']),
                         'stored_records': count, 'stored_bytes': size, 'retention_seconds': self.retention,
                         'host_quota_bytes': self.host_quota, 'hub_quota_bytes': self.quota,
+                        'retention_policy': 'indefinite' if self.retention is None else 'bounded',
+                        'archive_compression': 'gzip', 'archive_level': 4,
+                        'compressed_records': db.execute("SELECT count(*) FROM logs WHERE host=? AND typeof(text)='blob'", (host['id'],)).fetchone()[0],
                         'losses': [dict(row) for row in db.execute('SELECT reason,count,at FROM losses WHERE host=?', (host['id'],))]}

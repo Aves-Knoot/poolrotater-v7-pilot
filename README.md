@@ -1,8 +1,11 @@
 # PoolRotater distributed host
 
-Current release: **v7.2.8**. Use the installer ZIP asset on the GitHub release.
+Current release: **v7.2.9**, managed-host rooms and private-lobby administration.
+Use the installer ZIP asset of an accepted GitHub release; source archives do
+not install a protected runtime.
 
-Matching owner/community Discord presentation and authenticated room controls, stable host slots,
-full signed catalogs and native Standard Loved hosting. Existing rooms/settings
-are preserved. See [Discord release notes](docs/V7_2_8_OWNER_DISCORD.md) and
-[Loved hosting](docs/LOVED_OPERATOR_GUIDE.md).
+Owner and community hosts share native map selection, ratings/statistics,
+reporting and authenticated administration. See [managed room administration](docs/MANAGED_HOST_ADMIN.md),
+[release notes](docs/V7_2_9_MANAGED_HOST.md), and the installer kit guides.
+Existing configuration, account authorization, catalogs and player history are
+retained. Private-room information never belongs in public directory panels.

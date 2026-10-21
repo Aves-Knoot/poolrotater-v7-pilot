@@ -480,6 +480,9 @@ class OAuthAuthority:
             account = VerifiedAccount(record['user_id'], '', tuple(hint['scopes']))
         return record['access_token'], account
 
+    def _prepare_owner_verification(self):
+        """Local-only startup seam, under the owner and OAuth leases."""
+
     @contextmanager
     def verified_owner(self):
         self.require_authorization_available()
@@ -496,6 +499,7 @@ class OAuthAuthority:
                         # An older ready token (or partially promoted new token)
                         # must not bypass explicit authorization recovery.
                         raise AuthError('unfinished_authorization_requires_resolution')
+                    self._prepare_owner_verification()
                     self._active = uid
                     _, account = self._ensure(verify=True)
                     self._verified = True

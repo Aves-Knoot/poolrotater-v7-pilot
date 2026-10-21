@@ -3,7 +3,7 @@ import random
 import time
 
 from ..config import ConfigError
-from ..layout import atomic_json, contained, file_lease
+from ..layout import atomic_json, contained, file_lease, LeaseBusy
 from .contracts import NetworkError
 
 
@@ -29,6 +29,11 @@ class Agent:
             elif status['credential_expires_at']<=now:phase='reenrollment-required';delay=300
             else:self.client.publish(self.observation());phase='connected'
             self.failures=0
+        except LeaseBusy:
+            # The managed agent and independent transfer workers share local
+            # client/profile leases. Brief contention is not corrupt data or
+            # a remote outage; retain state and retry without a five-minute gap.
+            phase='retrying';error=None;delay=5
         except NetworkError as exc:
             self.failures=min(self.failures+1,8)
             phase='reenrollment-required' if exc.code in ('host_revoked','credential_expired','credential_retired','credential_refused') else 'retrying'

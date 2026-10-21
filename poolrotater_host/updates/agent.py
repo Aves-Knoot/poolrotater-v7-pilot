@@ -191,7 +191,7 @@ class Agent:
                 return self.summary(state,consent)
             if action=='download' or not (action=='apply' or consent['automatic_install']):
                 return self.summary(state,consent)
-            if current.get('service_active')is False:
+            if current.get('service_active')is False and current.get('managed_stopped') is not True:
                 # Stopped hosts can still inspect/download. Applying a native
                 # controller requires the running empty-room admission protocol;
                 # this timer never starts rooms just to install a release.
@@ -205,6 +205,9 @@ class Agent:
                         'update_installed_version_downgrade')
             except ConfigError:
                 self._save(state,phase='held',error='update_installation_requires_review')
+                return self.summary(state,consent)
+            if current.get('service_active') is False and item['kind']!='controller':
+                self._save(state,error='update_stopped_host_requires_controller_release',next_check_at=now+60)
                 return self.summary(state,consent)
             if action!='apply' and item['sequence']<=state['reviewed_failure_sequence']:
                 self._save(state,phase='held',error='update_release_requires_manual_retry')

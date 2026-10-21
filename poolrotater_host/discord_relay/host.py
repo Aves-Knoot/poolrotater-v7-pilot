@@ -43,6 +43,8 @@ class HostRelay:
         finally:db.close()
 
     def enabled(self):
+        from ..managed_host.policy import enabled
+        if enabled(self.root):return True
         p=self.root/'config/discord-relay.json'
         if not os.path.lexists(p):return True
         value=read_json(p);fields(value,('format','enabled'))

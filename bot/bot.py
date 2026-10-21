@@ -1942,6 +1942,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             if name == "queue":
                 value = self._parse_admin_int(raw, 0, 8)
                 self.cfg["queue_ahead"] = value
+                self._managed_preserved_playlist_ids=set()
                 saved = self._persist_config_updates({"queue_ahead": value})
                 if self.state in (IDLE, SCORING):
                     self.reconcile_playlist(
@@ -2791,10 +2792,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 self.cfg[key] = data[key]
                 changed.append(f"{key}={data[key]!r}")
         if changed:
-            self._pending_soft_restart = True
-            log.info(
-                "hot-rebuilt map pool source; playlist will refresh at the next safe boundary"
-            )
+            if not getattr(self,'_managed_preserve_visible_queue',False):
+                self._pending_soft_restart = True
+            log.info("hot-rebuilt map pool source for future picks")
         return changed
 
     def _apply_hot_playlist_rules(self, data: dict) -> list[str]:
@@ -2829,7 +2829,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             if self.cfg.get(key) != value:
                 self.cfg[key] = value
                 changed.append(f"{key}={value!r}")
-        if changed:
+        if changed and not getattr(self,'_managed_preserve_visible_queue',False):
             if self.state in (IDLE, SCORING):
                 self.perform_soft_restart(announce=False)
             else:
@@ -2972,7 +2972,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                             self.update_room_name_for_range()
                             if self.state in (IDLE, SCORING):
                                 self.perform_soft_restart(announce=False)
-                            else:
+                            elif not getattr(self,'_managed_preserve_visible_queue',False):
                                 self._pending_soft_restart = True
             except (ValueError, TypeError) as exc:
                 log.warning("ignored invalid JSON baseline range: %s", exc)
@@ -2998,7 +2998,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                             self.update_room_name_for_range()
                             if self.state in (IDLE, SCORING):
                                 self.perform_soft_restart(announce=False)
-                            else:
+                            elif not getattr(self,'_managed_preserve_visible_queue',False):
                                 self._pending_soft_restart = True
                     except Exception as exc:
                         log.warning(
@@ -3210,7 +3210,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             self._auto_retune_pending = True
         if changed_min_players:
             self.cancel_start_if_too_few_players()
-        if changed_queue and self.state in (IDLE, SCORING):
+        if changed_queue and self.state in (IDLE, SCORING) and not getattr(self,'_managed_preserve_visible_queue',False):
             self.reconcile_playlist(
                 reason="config reload queue setting", fetch_remote=True,
                 ensure_depth=True, trim_extras=True,
@@ -3287,7 +3287,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     private_session=self.cfg.get('_host_private_pilot_session'))
                 if self._config_path != Path(room['config_path']):
                     raise ValueError('unexpected host-managed configuration path')
-                room_data = read_json(self._config_path)
+                from poolrotater_host.managed_host.settings import ROOM_JSON_LIMIT
+                room_data = read_json(self._config_path,maximum=ROOM_JSON_LIMIT)
                 validate_room_data(room_data, room['settings'])
                 if read_json(universal_path) != {}:
                     raise ValueError('shared room overrides are unavailable in the offline host')
@@ -3338,8 +3339,21 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         self._universal_config_mtime_ns = universal_mtime
         self.cfg["_universal_config_keys"] = sorted(universal_data)
 
-        changed = self._apply_live_config_from_disk(data)
-        changed.extend(self._apply_ai_config_from_disk(data))
+        # Managed default changes affect future picks. The ordinary file watcher
+        # may run before the explicit controller acknowledgement, so enforce
+        # visible-queue preservation here as well as on the command queue.
+        preserve_queue=(self.cfg.get('_host_root') and type(data.get('managed_revision')) is int
+                        and data['managed_revision']!=self.cfg.get('managed_revision'))
+        if preserve_queue:
+            previous=set(getattr(self,'_managed_preserved_playlist_ids',()))
+            previous.update(item_id for item_id,_ in self.queued if type(item_id) is int)
+            self._managed_preserved_playlist_ids=previous
+        previous_preservation=getattr(self,'_managed_preserve_visible_queue',False)
+        self._managed_preserve_visible_queue=bool(previous_preservation or preserve_queue)
+        try:
+            changed = self._apply_live_config_from_disk(data)
+            changed.extend(self._apply_ai_config_from_disk(data))
+        finally:self._managed_preserve_visible_queue=previous_preservation
         if changed:
             log.info("hot-reloaded effective config: %s", ", ".join(changed))
 
@@ -5693,6 +5707,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                         self.say(f"Usage: {p}queueahead <0-8> ({e})")
                     else:
                         self.cfg["queue_ahead"] = value
+                        self._managed_preserved_playlist_ids=set()
                         saved = self._persist_config_updates({"queue_ahead": value})
                         if self.state in (IDLE, SCORING):
                             self.reconcile_playlist(
@@ -6382,6 +6397,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         attempts to remove them. The public room snapshot is consulted first so
         a stale local index cannot make us edit/remove the wrong playlist item.
         """
+        if getattr(self,'_managed_preserve_visible_queue',False):
+            log.info('managed defaults applied to future picks; retaining the visible playlist')
+            return True
+        self._managed_preserved_playlist_ids=set()
         if not self.room_id:
             return False
         if self.state in (STARTING, PLAYING):
@@ -7846,6 +7865,14 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             self._maybe_announce_post_match_pp()
         return True
 
+    def _managed_visible_queue_depth(self,target):
+        """Let an already-visible queue drain before a smaller new target wins."""
+        protected=set(getattr(self,'_managed_preserved_playlist_ids',()))
+        protected.intersection_update(item_id for item_id,_ in self.queued)
+        self._managed_preserved_playlist_ids=protected
+        retained=max((index+1 for index,(item_id,_) in enumerate(self.queued) if item_id in protected),default=0)
+        return max(target,retained)
+
     def reconcile_playlist(
             self, reason: str, fetch_remote: bool = False,
             ensure_depth: bool = True, trim_extras: bool = True) -> bool:
@@ -7975,7 +8002,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
         if not self._refresh_full_dt_playlist():
             return False
-        target_ahead = max(0, int(self.cfg.get("queue_ahead", 2)))
+        target_ahead = self._managed_visible_queue_depth(max(0, int(self.cfg.get("queue_ahead", 2))))
 
         # If a bug/old restart left too many future UNPLAYED entries, trim only
         # the tail. Never touch the active current item or played history.

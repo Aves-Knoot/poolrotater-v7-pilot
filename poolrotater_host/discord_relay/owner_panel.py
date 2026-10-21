@@ -11,8 +11,20 @@ from .model import channel_name,room_kind
 FEED=Path('/srv/poolrotator-wiki/public/status.json')
 
 
+def presentation(cfg,runtime=None):
+    """Only active broker-owned room fields can override presentation defaults."""
+    result=dict(cfg)
+    if (type(runtime) is dict and set(runtime)=={'ruleset_id','mania_keys','auto_difficulty','loved_mode'}
+            and type(runtime['ruleset_id']) is int and runtime['ruleset_id'] in (0,2,3)
+            and type(runtime['mania_keys']) is int and runtime['mania_keys'] in (4,7)
+            and type(runtime['auto_difficulty']) is bool and type(runtime['loved_mode']) is bool):
+        result.update(runtime)
+    return result
+
+
 def preset(cfg):
-    return ('catch-fixed' if cfg.get('ruleset_id')==2 else
+    return ('standard-loved' if cfg.get('ruleset_id',0)==0 and cfg.get('loved_mode') is True else
+            'catch-fixed' if cfg.get('ruleset_id')==2 else
             'mania-4k' if cfg.get('ruleset_id')==3 and cfg.get('mania_keys')==4 else
             'mania-7k' if cfg.get('ruleset_id')==3 and cfg.get('mania_keys')==7 else 'standard-fixed')
 
@@ -51,18 +63,12 @@ def decorate(cfg,values,*,path=FEED,now=None):
         if type(freestyle)is bool and finite(count,0,600):
             details.append(('Room settings',f"Freemod: {'on'if freestyle else'off'} · Countdown: {count:g}s · Minimum players: {settings.get('min_players',1)}"))
         current=room.get('current_map')or{};bid=current.get('beatmap_id');setid=current.get('beatmapset_id')
-        # Prevent the previous map's artwork/progress from decorating a new pick.
+        # Prevent the previous map's artwork from decorating a new pick.
         match=re.fullmatch(r'https://osu\.ppy\.sh/(?:b/|beatmaps/)([1-9][0-9]*)',str(values.get('map_url','')))
         if not match or type(bid)is not int or int(match[1])!=bid:
             result['extra_fields']=tuple(details);return result
         if type(setid)is int and 0<setid<=10**7:
             result['image_url']=f'https://assets.ppy.sh/beatmaps/{setid}/covers/cover.jpg'
-        playback=room.get('playback')
-        if room.get('state')=='PLAYING' and str(values.get('lifecycle','')).casefold()=='playing' and isinstance(playback,dict):
-            duration=playback.get('duration_seconds');start=playback.get('started_at')
-            if finite(duration,.001,86400)and finite(start,0,2**53)and 0<=now-start<=duration+30:
-                elapsed=min(duration,now-start)
-                details.append(('Map progress',f'{int(elapsed)//60}:{int(elapsed)%60:02d} / {int(duration)//60}:{int(duration)%60:02d} · approximately {max(0,int(duration-elapsed))}s left'))
         queue=room.get('queue')
         if room.get('queue_known')is True and isinstance(queue,list)and queue and isinstance(queue[0],dict):
             label=queue[0].get('label')or queue[0].get('title')

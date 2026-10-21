@@ -22,7 +22,10 @@ def require_registered_workers(parent, rows):
     from ..worker_releases import validate_candidate
     directory=Path(parent['prefix'])/'worker-releases'/parent['installation_id']
     approved={parent['release']}
-    for row in rows.values():
+    from ..managed_host.admission import closed_aliases
+    closed=closed_aliases({'root':Path(parent['host_root'])},parent,rows) if parent.get('host_root') else frozenset()
+    for alias,row in rows.items():
+        if alias in closed:continue
         release=row.get('release')
         if release in approved:continue
         found=False
@@ -70,6 +73,11 @@ class Backend:
         # status files during that interval. Native ownership/emptiness checks
         # still independently govern every queued mutation.
         active=bool(observation and observation.get('phase')=='running')
+        managed_stopped=False
+        if not active and service.get('MainPID')==0 and service.get('ActiveState') in ('inactive','failed'):
+            from ..managed_host.admission import stopped_host
+            try:managed_stopped=stopped_host(target,parent) is not None
+            except Exception:pass  # Missing/uncertain evidence cannot authorize a stopped update.
         snapshot=_control(target['root']/'state/rolling/status.json',parent['service_uid'],optional=True)or{}
         rows=snapshot.get('rooms',{})
         controller_job=_control(target['prefix']/'controller-update.json',optional=True)
@@ -94,7 +102,7 @@ class Backend:
             versions=[version]+[r['version']for r in rows.values()if r.get('version')]
             version=max(versions,key=version_tuple)
         return {'controller_sha256':parent['bundle_sha256'],'effective_sha256':effective,
-                'version':version,'deployment_busy':busy,'service_active':active}
+                'version':version,'deployment_busy':busy,'service_active':active,'managed_stopped':managed_stopped}
 
     def stage(self, path, item):
         target,marker,parent=self.binding()

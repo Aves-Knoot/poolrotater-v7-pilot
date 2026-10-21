@@ -1,6 +1,7 @@
 """Release identity and compatibility. No migrations execute in this module."""
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -22,8 +23,26 @@ SHARED += ("poolrotater_host/oauth.py", "poolrotater_host/oauth_callback.py")
 SHARED += ("poolrotater_host/runtime_package.py", "poolrotater_host/provisioning.py", "check_protected_runtime.py")
 SHARED += ("deployment/sqlite_readonly.py",)
 SHARED += ("poolrotater_host/runtime_lifecycle.py", "poolrotater_host/service_bootstrap.py")
+SHARED += ("poolrotater_host/managed_host/__init__.py", "poolrotater_host/managed_host/admission.py",
+           "poolrotater_host/managed_host/agent.py", "poolrotater_host/managed_host/contracts.py",
+           "poolrotater_host/managed_host/engine.py", "poolrotater_host/managed_host/hub.py",
+           "poolrotater_host/managed_host/details.py",
+           "poolrotater_host/managed_host/catalogs.py", "poolrotater_host/managed_host/catalog_source.py",
+           "poolrotater_host/managed_host/upgrade.py", "poolrotater_host/managed_host/topology.py",
+           "poolrotater_host/managed_host/migration.py", "poolrotater_host/managed_host/native.py",
+           "poolrotater_host/managed_host/operations.py", "poolrotater_host/managed_host/policy.py",
+           "poolrotater_host/managed_host/projection.py", "poolrotater_host/managed_host/secrets.py",
+           "poolrotater_host/managed_host/settings.py", "poolrotater_host/managed_host/state.py",
+           "poolrotater_host/managed_bootstrap.py")
+SHARED += ("poolrotater_host/discord_relay/fleet.py",)
 STORES = ("bot/ratings.py", "bot/ppstats.py", "bot/player_preferences.py",
           "bot/process_control.py", "bot/config_lock.py")
+
+
+# Exact manifest inventory emitted by immutable v7.2.6/7/8 stagers. This is
+# only a read-format compatibility rule; every file is still checked, and the
+# returned fingerprint covers the complete candidate-declared shared contract.
+LEGACY_STAGER_SHARED = ('rolling/protocol.py', 'rolling/broker.py', 'rolling/supervisor.py', 'rolling/release.py', 'rolling/state.py', 'rolling/storage.py', 'rolling/adapters.py', 'run_rolling.py', 'run_multiroom.py', 'run_bot.py', 'bot/multiroom.py', 'bot/hub.py', 'bot/auth.py', 'bot/api.py', 'bot/chat_websocket.py', 'bot/discord_control.py', 'poolrotater_host/config.py', 'poolrotater_host/layout.py', 'poolrotater_host/runtime_config.py', 'poolrotater_host/catalogs.py', 'poolrotater_host/__init__.py', 'offline_host_controller.py', 'poolrotater_host/oauth.py', 'poolrotater_host/oauth_callback.py', 'poolrotater_host/runtime_package.py', 'poolrotater_host/provisioning.py', 'check_protected_runtime.py', 'deployment/sqlite_readonly.py', 'poolrotater_host/runtime_lifecycle.py', 'poolrotater_host/service_bootstrap.py')
 
 
 class IncompatibleRelease(ValueError):
@@ -110,13 +129,54 @@ def build_manifest(root, version, python):
         if path.is_symlink() or not path.resolve().is_relative_to(root):
             raise ValueError("release code must be local immutable files")
         files[name] = file_hash(path)
+    # A protected predecessor may stage a coordinated successor whose literal
+    # shared inventory has grown. Build that successor's contract, not the
+    # already-imported predecessor module's globals. Parse only verified local
+    # bytes; never execute the candidate to discover its contract.
+    contract = declared_contract(root, files)
     return {"format": 1, "version": version, "protocol": PROTOCOL,
             "python": str(Path(python).absolute()), "python_hash": file_hash(Path(python).resolve()), "files": files,
             "environment_hash": environment_hash(python),
-            "shared": {k: files[k] for k in SHARED},
-            "storage": {k: files[k] for k in STORES},
+            "shared": {k: files[k] for k in contract['SHARED']},
+            "storage": {k: files[k] for k in contract['STORES']},
             "storage_epoch": "poolrotater-6.7-v1", "migrations": [],
             "requirements": files["requirements.txt"]}
+
+
+def declared_contract(root, expected):
+    """Read a verified release's literal contract, without executing its code.
+
+    A controller successor may add shared modules that do not exist in an old
+    protected release. Using the successor's module globals to validate that
+    predecessor would make every such coordinated upgrade impossible. Complete
+    file hashes are checked first; stopped upgrade admission still requires an
+    exact reviewed before/after pair, and worker promotion remains stricter.
+    """
+    name='rolling/release.py';path=Path(root)/name
+    if name not in expected or path.stat().st_size>256*1024 or file_hash(path)!=expected[name]:
+        raise IncompatibleRelease('release contract source changed')
+    try:
+        values={}
+        for node in ast.parse(path.read_bytes()).body:
+            if isinstance(node,ast.Assign):
+                names=[n.id for n in node.targets if isinstance(n,ast.Name) and n.id in ('SHARED','STORES')]
+                if names:
+                    if len(node.targets)!=1 or len(names)!=1 or names[0] in values:raise ValueError()
+                    value=ast.literal_eval(node.value)
+                    if type(value) is not tuple:raise ValueError()
+                    values[names[0]]=value
+            elif isinstance(node,ast.AugAssign) and isinstance(node.target,ast.Name) and node.target.id in ('SHARED','STORES'):
+                name=node.target.id;value=ast.literal_eval(node.value)
+                if not isinstance(node.op,ast.Add) or name not in values or type(value) is not tuple:raise ValueError()
+                values[name]+=value
+        if set(values)!={'SHARED','STORES'}:raise ValueError()
+        for names in values.values():
+            if not 1<=len(names)<=128 or any(type(n) is not str or n not in expected for n in names) or len(set(names))!=len(names):raise ValueError()
+        if not {'rolling/release.py','rolling/protocol.py'}<=set(values['SHARED']):raise ValueError()
+        if not {'bot/ratings.py','bot/ppstats.py'}<=set(values['STORES']):raise ValueError()
+    except (SyntaxError,ValueError,TypeError,UnicodeError,RecursionError):
+        raise IncompatibleRelease('invalid declared release contract') from None
+    return values
 
 
 def load_release(root):
@@ -137,9 +197,23 @@ def load_release(root):
         path = root / name
         if path.is_symlink() or not path.resolve().is_relative_to(root) or file_hash(path) != digest:
             raise IncompatibleRelease(f"release changed after sealing: {name}")
-    for key, names in (("shared", SHARED), ("storage", STORES)):
-        if manifest.get(key) != {n: expected[n] for n in names}:
-            raise IncompatibleRelease(f"invalid {key} contract fingerprint")
+    contract=declared_contract(root,expected)
+    shared = {n: expected[n] for n in contract['SHARED']}
+    if manifest.get('shared') != shared:
+        # Old protected stagers seal the full file inventory but populate this
+        # derived field using their own 30-key table. Recognize ONLY that exact
+        # known table, with matching hashes and a declared superset, then derive
+        # the full fingerprint in memory. No sealed file is rewritten. Missing
+        # keys, altered hashes, unknown subsets and storage changes still fail.
+        release_version = tuple(map(int, manifest['version'][1:].split('.')))
+        legacy = ({n: expected[n] for n in LEGACY_STAGER_SHARED}
+                  if set(LEGACY_STAGER_SHARED) <= set(contract['SHARED']) else None)
+        if (release_version[0] != 7 or release_version < (7, 2, 9)
+                or legacy is None or manifest.get('shared') != legacy):
+            raise IncompatibleRelease('invalid shared contract fingerprint')
+        manifest['shared'] = shared
+    if manifest.get('storage') != {n: expected[n] for n in contract['STORES']}:
+        raise IncompatibleRelease('invalid storage contract fingerprint')
     python = Path(manifest["python"])
     if not python.is_absolute() or not os.access(python, os.X_OK):
         raise IncompatibleRelease("release interpreter is unavailable")

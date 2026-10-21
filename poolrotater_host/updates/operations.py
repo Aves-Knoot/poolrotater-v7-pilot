@@ -16,6 +16,15 @@ from .native import Backend
 ACTIONS=('configure','check','download','apply','pause','resume','status','tick','recover',
          'unit','start','stop','cleanup')
 
+def require_managed_choices(target,parent,choices):
+    from ..managed_host.policy import NAME,require_enabled_settings
+    # Legacy configurations have no managed declaration. The production
+    # administrative binding always supplies root/UID; isolated legacy policy
+    # fixtures need no fabricated installed host merely to validate trust.
+    if 'root' not in target or not os.path.lexists(target['root']/NAME):return
+    from ..ratings.operations import _identity
+    with _identity(parent['service_uid']):require_enabled_settings(target['root'],choices)
+
 
 def binding(instance):
     from ..network.operations import command
@@ -48,6 +57,9 @@ def command(instance,action,stream=None,operation_id=None,decision=None):
     if action in ('unit','start','stop'):return unit(instance,action)
     if action=='configure':
         return configure_instance(instance,decode(stream.read(256*1024+1)))
+    if action=='pause':
+        target,_,parent=binding(instance)
+        require_managed_choices(target,parent,{'automatic_updates':False})
     configured=client(instance)
     if action=='cleanup':
         from .retention import cleanup
@@ -111,6 +123,9 @@ def validate_configuration(data,bound):
 def configure_instance(instance,data):
     target,parent,bound=binding(instance)
     choices,ca=validate_configuration(data,bound)
+    require_managed_choices(target,parent,{k:choices[k] for k in (
+        'automatic_download','automatic_install','controller_updates','report_to_hub')}
+        |{'automatic_updates_unpaused':not choices['paused']})
     expected={'format':1,'binding':bound,'origin':data['origin'],
               'ca_sha256':data['ca_sha256'],'bootstrap_sha256':data['bootstrap_sha256']}
     directory=target['prefix']/'updates';directory.mkdir(mode=0o700,exist_ok=True);protected(directory)

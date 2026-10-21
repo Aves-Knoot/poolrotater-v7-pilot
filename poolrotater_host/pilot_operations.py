@@ -451,16 +451,29 @@ def _startup_private_profile(target, record):
         return load_profile(target['root'])
 
 
+def _startup_managed_intent(target,record):
+    from .managed_host.policy import NAME,startup_intent
+    if not os.path.lexists(target['root']/NAME):return None
+    from .ratings.operations import _identity
+    with _identity(record['service_uid']):return startup_intent(target['root'])
+
+
 def _wait_ready(target, record, *, timeout=None):
     from .config import validate
     configuration = validate(_control(target['root'] / 'config/host.json', record['service_uid'], private=True))
     expected_rooms = configuration['rooms']
+    managed_intent=_startup_managed_intent(target,record)
     private_profile = _startup_private_profile(target, record)
-    expected_room_count = 1 if private_profile is not None else len(expected_rooms)
+    expected_room_count = 1 if private_profile is not None else len(managed_intent['aliases']) if managed_intent is not None else len(expected_rooms)
     if timeout is None:
         # The cold full-catalog load and several checked provider handshakes per
         # room must fit the explicit owner four-room startup observation too.
-        timeout = 120 + 90 * (expected_room_count - 1)
+        # Managed startup still validates/materializes every configured slot,
+        # including dormant ones. Intent controls which workers may create
+        # rooms, not the cost of cold full-catalog preparation. Observation must
+        # not fence a healthy one-active-slot/four-configured-slot startup early.
+        cold_room_count = len(expected_rooms) if managed_intent is not None and private_profile is None else expected_room_count
+        timeout = 120 + 90 * max(0,cold_room_count - 1)
         # Native Catch validates the full identity/PP projection in the parent
         # and again in its independent worker. A cold one-room install must not
         # time out before the unchanged 180s worker preparation deadline. This
@@ -494,26 +507,61 @@ def _wait_ready(target, record, *, timeout=None):
             if observed['phase'] == 'recovery_required':
                 raise ConfigError('pilot startup requires stopped ownership review')
             if observed['phase'] == 'running':
-                if type(observed.get('room_count')) is not int or observed['room_count'] != expected_room_count:
+                if managed_intent is not None and private_profile is None:
+                    # Remote operations may legitimately open/close a slot after
+                    # initial service readiness. Its one-time room_count is not
+                    # current authority. Prove active workers OR positively
+                    # closed intentional/capacity slots using the native guards.
+                    from .updates.recovery import _fresh_running
+                    from .updates.contracts import UpdateError
+                    try:_fresh_running(target,record)
+                    except UpdateError as exc:
+                        if str(exc)!='update_recovery_fresh_workers_required':raise
+                        time.sleep(.2)
+                        continue
+                elif type(observed.get('room_count')) is not int or observed['room_count'] != expected_room_count:
                     raise ConfigError('pilot service did not observe the exact configured room count')
                 if validate(_control(target['root'] / 'config/host.json', record['service_uid'], private=True))['rooms'] != expected_rooms:
                     raise ConfigError('pilot room configuration changed during startup observation')
                 if _startup_private_profile(target, record) != private_profile:
                     raise ConfigError('private pilot profile changed during startup observation')
+                current_intent=_startup_managed_intent(target,record)
+                if current_intent!=managed_intent and private_profile is not None:
+                    raise ConfigError('managed room intent changed during startup observation')
                 return state
         time.sleep(.2)
     raise ConfigError('pilot startup observation timed out; inspect existing service without retry')
 
 
-def lifecycle(instance, action):
+def automatic_start(instance,root):
+    """Admitted updater/reconciler start preserves deliberately stopped rooms.
+
+    Lifecycle performs the protected binding and detects managed policy as the
+    registered service UID. For legacy hosts these intent flags are inert.
+    """
+    return lifecycle(instance,'start',preserve_managed_intent=True,admission_held=True)
+
+
+def lifecycle(instance, action, *, preserve_managed_intent=False, admission_held=False):
     if action not in ('start', 'stop'): raise ConfigError('invalid pilot service action')
     target, _, record = administrative_binding(instance)
+    from .managed_host import policy as managed
+    is_managed=managed.administrative_enabled(target['root'],record['service_uid'])
+    if is_managed and not admission_held:
+        from .layout import file_lease
+        # Re-read registration after acquiring admission: an updater may have
+        # switched the verified release while this operator waited.
+        with file_lease(target['prefix']/'deployment-admission.lock'):
+            return lifecycle(instance,action,preserve_managed_intent=preserve_managed_intent,admission_held=True)
     _unit(instance)
     if action == 'stop':
         # Explicit operator shutdown wins over a queued remote continuation.
         # Native update shutdown uses its separate admitted systemd path.
         from .rescue.operations import pause
         pause(instance)
+        if is_managed:
+            from .ratings.operations import _identity
+            with _identity(record['service_uid']):managed.operator_intent(target['root'],'stop')
     if action == 'start':
         from .provider_contract import require_live_provider
         from .live_release import policy_bytes, POLICY_NAME
@@ -521,7 +569,18 @@ def lifecycle(instance, action):
         if (record['execution'] != LIVE
                 or (Path(record['release']) / POLICY_NAME).read_bytes() != policy_bytes()):
             require_live_provider()
+        if is_managed:
+            observed=_service_state(instance)
+            if observed['MainPID']==0 and observed['ActiveState'] in ('inactive','failed'):
+                from .managed_host.topology import initialize
+                initialize(target,record,instance)
         check(instance)
+        if is_managed and not preserve_managed_intent:
+            observed=_service_state(instance)
+            if observed['MainPID']==0 and observed['ActiveState'] in ('inactive','failed'):
+                from .ratings.operations import _identity
+                with _stopped(target['root'],record['service_uid']):
+                    with _identity(record['service_uid']):managed.operator_intent(target['root'],'start')
     _systemctl(action, target['unit'], timeout=100)
     state = _wait_ready(target, record) if action == 'start' else _service_state(instance)
     if action == 'stop':

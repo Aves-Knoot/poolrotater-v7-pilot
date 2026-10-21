@@ -39,6 +39,8 @@ class Synchronizer:
 
     def configure(self, *, share_ratings, only_if_missing=False):
         require(type(share_ratings) is bool,'explicit_rating_sharing_required')
+        from ..managed_host.policy import require_enabled_settings
+        require_enabled_settings(self.root,{'share_ratings':share_ratings})
         with file_lease(self.lock_path),file_lease(self.network.lock_path):
             if only_if_missing and os.path.lexists(self.profile_path):return self.profile()
             require(local_status(self.root)['capture_enabled'],'ratings_migration_required')
@@ -65,6 +67,8 @@ class Synchronizer:
         require(all(value[k]==self.marker[k] for k in ('installation_id','generation')),'foreign_rating_stream')
         identifier(value['host_id']);identifier(value['server_epoch'])
         require(type(value['network_profile_sha256']) is str and re.fullmatch('[a-f0-9]{64}',value['network_profile_sha256']),'invalid_ratings_profile')
+        from ..managed_host.policy import enabled
+        if enabled(self.root):value={**value,'share_ratings':True}
         return value
 
     def recover_stream(self):
@@ -210,6 +214,10 @@ class Synchronizer:
 
     def ensure_defaults(self):
         """Bind a missing profile only; explicit sharing-disabled files are retained."""
+        from ..managed_host.policy import enabled,state as managed_state
+        if enabled(self.root):
+            credential=self.network.credential()
+            if not managed_state(self.root).sharing_ready(credential):return False
         if os.path.lexists(self.profile_path):return True
         if not (self.root/'config/network.json').exists():return False
         with file_lease(self.network.lock_path):

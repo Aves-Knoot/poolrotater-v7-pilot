@@ -63,7 +63,12 @@ def install_guard(cfg):
         # independent reporting agent. Workers may enqueue lookups, never create
         # arbitrary databases or run migrations through the rolling guard.
         allowed.add(str((Path(cfg['_host_root'])/'state/activity-cache.sqlite3').resolve()))
+        # Diagnostic redaction reads only recognized private password fields.
+        # Workers never write command intent, revisions or capacity authority.
+        managed=str((Path(cfg['_host_root'])/'state/managed-host.sqlite3').resolve())
+        allowed.add(managed)
     readonly = {str(Path(cfg[key]).resolve()) for key in ("farm_db", "loved_db", "mania_db", "mania_farm_db", "catch_catalog")
                 if cfg.get(key)}
+    if cfg.get('_host_root'):readonly.add(managed)
     sqlite3.connect = lambda database, *a, **kw: guarded_connect(
         database, *a, allowed_paths=allowed, readonly_paths=readonly, **kw)

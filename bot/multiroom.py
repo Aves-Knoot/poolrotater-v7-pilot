@@ -584,6 +584,10 @@ class DiscordRoomView(DiscordControl):
         super().__init__(cfg, start=False)
         self.transport = transport
 
+    def _is_supervisor_command(self,content):
+        if self.cfg.get('managed_preset') and self._command_name(content)=='close':return True
+        return super()._is_supervisor_command(content)
+
     def send_to_channel(self, content, channel_id=None, **kwargs):
         relay = getattr(self.transport, "remote_relay", None)
         if relay and channel_id and int(channel_id) in relay.channels(self._instance_name()):
@@ -604,12 +608,16 @@ class DiscordRoomView(DiscordControl):
         return name[1] if name else super()._public_status_display_name()
 
     def update_public_status(self, **kwargs):
-        from poolrotater_host.discord_relay.owner_panel import decorate
-        kwargs = decorate(self.cfg, kwargs)
+        from poolrotater_host.discord_relay.owner_panel import decorate,identity,presentation
+        # The supervisor view may outlive a target-room recreation. Keep its
+        # channel/permissions fixed, while naming the active worker's mode.
+        current=presentation(self.cfg,kwargs.pop('_runtime_settings',None))
+        name=identity(current)
+        kwargs = decorate(current, kwargs)
         kwargs.update(
             channel_id=self._public_status_channel_id(),
-            channel_base_name=self._public_status_channel_name(),
-            display_name=self._public_status_display_name(),
+            channel_base_name=name[0] if name else self._public_status_channel_name(),
+            display_name=name[1] if name else self._public_status_display_name(),
             instance=self._instance_name(),
         )
         return self.transport.update_public_status(**kwargs)
@@ -708,6 +716,10 @@ class SharedDiscord(DiscordControl):
         return self.supervisor_commands.get_nowait()
 
     def command_targets(self, content, channel_id):
+        # The independent hub bridge owns staff fleet administration even when
+        # this supervisor is offline. Do not also relay it as a player command.
+        parts=content.split(maxsplit=1)
+        if parts and parts[0].casefold()=='.fleet':return []
         results = []
         with self._view_lock:
             for view in self.views:

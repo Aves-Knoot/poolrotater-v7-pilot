@@ -264,9 +264,11 @@ class Backend:
                 if network_active:
                     network.unit(self.instance,'stop')
                 wait_stopped(self.target['root'],current['service_uid'])
+                preserve=(['--preserve-managed-intent'] if 'poolrotater_host/managed_host/policy.py'
+                          in runtime['manifest']['files'] else [])
                 result=subprocess.run(['/usr/bin/python3.12','-I','-S','-B',
                     str(runtime['release']/'poolrotater_host/pilot_admin_entry.py'),
-                    '--instance',self.instance,'start'],cwd='/tmp',stdin=subprocess.DEVNULL,
+                    '--instance',self.instance,'start',*preserve],cwd='/tmp',stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=180,
                     env={'PATH':'/usr/sbin:/usr/bin:/bin','LANG':'C.UTF-8','PYTHONDONTWRITEBYTECODE':'1'})
                 require(result.returncode == 0,'rescue_update_requires_review')

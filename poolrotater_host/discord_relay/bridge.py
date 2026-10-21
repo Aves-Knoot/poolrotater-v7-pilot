@@ -23,22 +23,60 @@ from .model import COMMANDS, channel_name
 
 log=logging.getLogger('community_discord')
 
+def is_fleet(content):
+    parts=content.split(maxsplit=1)
+    return bool(parts and parts[0].casefold()=='.fleet')
+
 
 class CommunityDiscord(DiscordControl):
     def __init__(self,cfg):
-        super().__init__(cfg,start=False);self.routes={};self.route_lock=threading.Lock()
+        super().__init__(cfg,start=False);self.routes={};self.route_lock=threading.Lock();self.fleet_channel=0
 
     def _channel_ids(self):
-        with self.route_lock:return set(self.routes)
+        with self.route_lock:return set(self.routes)|({self.fleet_channel} if self.fleet_channel else set())
 
     def command_targets(self,content,channel_id):
+        if is_fleet(content):
+            return [(self,content)] if channel_id==self.fleet_channel and self.fleet_channel and len(content)<=1000 else []
         with self.route_lock:known=channel_id in self.routes
         if not known or not content.startswith('.') or len(content)>1000:return []
         return [(self,content)]
 
     def _role_allows_command(self,role,content):
         parts=content[1:].split(maxsplit=1) if content.startswith('.') else []
+        if parts and parts[0].casefold()=='fleet':return bool(self.fleet_channel and role=='ADMIN')
         return bool(parts and parts[0].casefold() in COMMANDS and super()._role_allows_command(role,content))
+
+    def _private_fleet_channel(self,channel):
+        if int(getattr(channel,'id',0))!=self.fleet_channel:return True
+        try:
+            guild=channel.guild
+            if not guild or int(guild.id)!=self._guild_id():return False
+            staff=self._role_names(self.cfg.get('discord_control_admin_role_names',['Top dev']))
+            staff|=self._role_names(self.cfg.get('discord_control_moderator_role_names',['mods']))
+            roles=list(guild.roles)
+            if not roles:return False
+            own_bot_id=int(guild.me.id)
+            for role in roles:
+                # Discord's own managed bot role needs access too. Qualify its
+                # platform binding, never a matching display name or another bot.
+                own_bot_role=(getattr(role,'managed',False) is True
+                              and getattr(getattr(role,'tags',None),'bot_id',None)==own_bot_id)
+                if (channel.permissions_for(role).view_channel and not role.permissions.administrator
+                        and str(role.name).casefold() not in staff and not own_bot_role):return False
+            # Role checks do not include individual member overrides. Do not
+            # infer staff membership from an incomplete member cache: use staff
+            # roles for viewing grants, except the guild owner and this bot.
+            role_ids={int(role.id) for role in roles}
+            implicit_staff={int(guild.owner_id),int(guild.me.id)}
+            for subject,permissions in channel.overwrites.items():
+                if (permissions.view_channel is True and int(subject.id) not in role_ids
+                        and int(subject.id) not in implicit_staff):return False
+            return True
+        except (AttributeError,TypeError,ValueError):return False
+
+    def _channel_allows_command(self,channel):return self._private_fleet_channel(channel)
+    def _channel_allows_outbound(self,channel):return self._private_fleet_channel(channel)
 
 
 def card(room,slot,feed=None,*,now=None):
@@ -50,15 +88,10 @@ def card(room,slot,feed=None,*,now=None):
     if settings:
         details.append(('Room settings',f"Freemod: {'on' if settings.get('freestyle') else 'off'} · Style: {settings.get('selection_style','variety')} · Countdown: {settings.get('countdown_seconds',0):g}s"))
     image=''
-    # Public website projection supplies central qualified metadata/timing.
+    # Reuse website artwork; playback progress belongs on the live website.
     if isinstance(feed,dict) and feed.get('room_id')==room['osu_room_id'] and feed.get('fresh_until',0)>now:
         m=feed.get('current_map') or {};u=m.get('cover_url','')
         if re.fullmatch(r'https://assets\.ppy\.sh/beatmaps/[1-9][0-9]*/covers/cover\.jpg',u):image=u
-        playback=feed.get('playback')
-        if fresh and room['state']=='playing' and isinstance(playback,dict) and playback.get('beatmap_id')==current.get('beatmap_id'):
-            duration=playback.get('duration_seconds');start=playback.get('started_at')
-            if type(duration)in(int,float) and type(start)in(int,float) and duration>0 and 0<=now-start<=duration+30:
-                elapsed=max(0,min(duration,now-start));details.append(('Map progress',f'{int(elapsed)//60}:{int(elapsed)%60:02d} / {int(duration)//60}:{int(duration)%60:02d} · approximately {max(0,int(duration-elapsed))}s left'))
     lifecycle=room['state'].title() if fresh else 'Status delayed'
     return {'is_open':fresh,'lifecycle':lifecycle,'room_id':room['osu_room_id'] if fresh else 0,
             'room_name':room['title'],'player_count':room.get('occupants') or 0,
@@ -76,6 +109,12 @@ class Bridge:
                 and len(set(self.channels.values()))==len(self.channels),'invalid_channel_configuration')
         self.owner_host=cfg['owner_host_id'];self.reserved=set(cfg['owner_channels'])
         require(not self.reserved.intersection(self.channels.values()),'owner_channel_conflict')
+        fleet_channel=cfg.get('fleet_channel_id',0)
+        require(type(fleet_channel) is int and 0<=fleet_channel<2**63,'invalid_channel_configuration')
+        require(not fleet_channel or fleet_channel not in self.reserved|set(self.channels.values()),'fleet_channel_must_be_separate')
+        self.discord.fleet_channel=fleet_channel
+        from .fleet import Fleet
+        self.fleet=Fleet(store,channel=fleet_channel,owner_host=self.owner_host) if fleet_channel else None
         self.next_discovery=0;self.last_rooms={};self.last_cards={};self.stop=threading.Event()
         self.observation_path=store.root/'discord-bridge-observations.json'
         if self.observation_path.exists():
@@ -101,6 +140,7 @@ class Bridge:
             slot=int(match[1]);channel=int(row['id'])
             if slot<5:continue
             require(channel not in self.reserved,'owner_channel_conflict')
+            require(channel!=self.discord.fleet_channel,'fleet_channel_must_be_separate')
             require(slot not in proposed or proposed[slot]==channel,'discord_slot_conflict')
             require(channel not in proposed.values() or proposed.get(slot)==channel,'discord_channel_conflict')
             proposed[slot]=channel
@@ -139,7 +179,7 @@ class Bridge:
             if room and room['freshness']=='fresh' and room['age_seconds']<120:routes[channel]=key
             values=card(last,row['slot'],feed.get(last['osu_room_id']),now=now)
             values['channel_id']=channel
-            # Progress is refreshed every20s, unchanged idle cards are coalesced.
+            # Publish changed panels only; unchanged cards are coalesced.
             signature=json.dumps(values,sort_keys=True)
             if self.last_cards.get(channel)!=signature:
                 if self.discord.update_public_status(**values):self.last_cards[channel]=signature
@@ -147,6 +187,10 @@ class Bridge:
         for _ in range(32):
             try:cmd=self.discord.get_command_nowait()
             except queue.Empty:break
+            if is_fleet(cmd.content):
+                if self.fleet is not None:
+                    for message in self.fleet.handle(cmd):self.discord.send_to_channel(message,self.fleet.channel)
+                continue
             key=routes.get(cmd.channel_id)
             if key is None:self.discord.send_to_channel('This room is unavailable; no command was sent.',cmd.channel_id);continue
             try:
@@ -154,7 +198,13 @@ class Bridge:
             except Exception:
                 self.discord.send_to_channel('Command not sent: the host is updating, disconnected, or not yet on the Discord relay release.',cmd.channel_id)
         for reply in self.repo.take_replies()+self.repo.take_notices():self.discord.send_to_channel(reply['content'],int(reply['channel']))
+        self.fleet_notices()
         return {'ok':True,'assigned':len(slots),'available_channels':len(self.channels),'routable':len(routes),'waiting':len(set(current)-{(s['host'],s['alias'])for s in slots})}
+
+    def fleet_notices(self):
+        if self.fleet is None:return
+        for value in self.fleet.notices():
+            if self.discord.send_to_channel(value['content'],value['channel']):self.fleet.acknowledge_notice(value)
 
     def run(self):
         self.discord.start();next_panels=0
@@ -167,6 +217,7 @@ class Bridge:
                         atomic_json(self.store.root/'discord-bridge-health.json',{**result,'at':self.clock()})
                     else:
                         for reply in self.repo.take_replies()+self.repo.take_notices():self.discord.send_to_channel(reply['content'],int(reply['channel']))
+                        self.fleet_notices()
                 except Exception:log.warning('Discord bridge refresh delayed; gameplay unaffected')
         finally:self.discord.stop()
 

@@ -56,6 +56,8 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
     lease = authentication.verified_owner() if authentication is not None else owner_lease(root, account_id=account_id)
     with lease as account:
         if authentication is not None: account_id = account.user_id
+        from poolrotater_host.managed_host.policy import prepare_runtime
+        prepare_runtime(root)
         from poolrotater_host.ownership_recovery import require_settled
         require_settled(root)
         if before_start is not None: before_start(account)
@@ -105,6 +107,8 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
         if runtime_validator is not None:
             supervisor.protected_parent = load_provisioned(root, prepared=prepared)['registration']
         supervisor.private_pilot = private_pilot
+        from poolrotater_host.managed_host.native import attach as attach_managed
+        supervisor.managed=attach_managed(supervisor)
         from poolrotater_host.runtime_registry import PrivateRegistry
         supervisor.registry = PrivateRegistry(supervisor.registry)
         hub.shared = supervisor.shared
@@ -119,6 +123,8 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
             supervisor.stopping.set()
             if supervisor.rollout_thread:
                 supervisor.rollout_thread.join(timeout=35)
+            if supervisor.managed is not None and supervisor.managed.thread is not None:
+                supervisor.managed.thread.join(timeout=35)
             supervisor.shared.begin_shutdown(45)
             api.cancel_pending.set()
             errors = []

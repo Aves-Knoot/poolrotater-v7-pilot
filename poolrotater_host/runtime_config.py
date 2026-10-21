@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import copy
+import threading
 from pathlib import Path
 
 from . import __version__
 from .catalogs import make_pool
+from bot.custom_greetings import DEFAULT_JOIN_GREETINGS
 from .config import ConfigError, PRESETS, contained
 from .layout import atomic_json, checked_root, file_lease, load, read_json
 from .layout import DIRECTORIES
@@ -25,6 +27,7 @@ EDITABLE_BASE = {'sr_min', 'sr_max', 'auto_difficulty', 'default_response_langua
 EDITABLE_STAFF = frozenset({'admins', 'moderators'})
 STATE_FILE = 'state/runtime-config.json'
 ROOM_DIRECTORY = 'config/rooms'
+from .managed_host.settings import ROOM_JSON_LIMIT,HOST_JSON_LIMIT
 
 
 def default_room_title(preset):
@@ -33,9 +36,31 @@ def default_room_title(preset):
             'catch-fixed':'PoolRotater | Catch', 'standard-loved':'AutoHost Loved|Type .help|'}[preset]
 
 
-def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=None) -> dict:
+def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=None, _preparation=None) -> dict:
     root = checked_root(root)
-    marker, config = load(root)
+    marker, original_config = load(root)
+    from .managed_host.projection import configuration as managed_configuration,read as managed_projection,validate_document
+    if _preparation is None:
+        shadow=managed_projection(root,marker)
+        gameplay=load_overrides(root,marker,original_config)
+        integrations=owner_integrations.load(root,marker,original_config)
+    else:
+        # Pure planning of a stopped, root-pinned topology transaction. No CLI
+        # or network operation accepts this internal render context.
+        from .config import validate as validate_host
+        from .owner_settings import validate_record
+        if type(_preparation) is not dict or set(_preparation)!={'host','gameplay','integrations','managed'}:
+            raise ConfigError('invalid topology preparation context')
+        planned=validate_host(copy.deepcopy(_preparation['host']))
+        if any(planned[k]!=original_config[k] for k in original_config if k!='rooms'):
+            raise ConfigError('topology preparation changed host authority')
+        original_config=planned
+        gameplay=(validate_record(_preparation['gameplay'],marker,planned)['rooms']
+                  if _preparation['gameplay'] is not None else {})
+        integrations=(owner_integrations.validate_record(_preparation['integrations'],marker,planned)
+                      if _preparation['integrations'] is not None else None)
+        shadow=validate_document(_preparation['managed'],marker)
+    config = managed_configuration(root,marker,original_config,shadow=shadow)
     expected = config['account']['expected_user_id']
     if account_id is not None:
         if type(account_id) is not int or account_id <= 0:
@@ -45,14 +70,24 @@ def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=No
     account = account_id if account_id is not None else expected
     if room_alias is not None and room_alias not in {room['alias'] for room in config['rooms']}:
         raise ConfigError('unknown configured room')
-    resolved = resolved_catalogs(root, room_alias=room_alias, reference=catalog_reference)
+    if _preparation is None:
+        resolved = resolved_catalogs(root, room_alias=room_alias, reference=catalog_reference, configuration=config)
+    else:
+        # The future topology is not on disk yet. Resolve the sealed complete
+        # catalog reference against the current host first, then require every
+        # planned mode. Normal runtime alias checks remain unchanged.
+        if room_alias is not None or catalog_reference is not None:
+            raise ConfigError('topology preparation requires complete host catalogs')
+        resolved = resolved_catalogs(root)
+        if resolved is not None:
+            from .catalog_store import mode_for
+            if not {mode_for(r) for r in config['rooms']} <= set(resolved['bundles']):
+                raise ConfigError('managed catalog set is incomplete; stopped import required')
     live = config['execution'] == 'pilot-live'
     from .ratings.migration import capture_enabled
     prepared_ratings = capture_enabled(root)
     from .ratings.reader import profile as rating_profile
     reader=rating_profile(root)
-    gameplay = load_overrides(root, marker, config)
-    integrations = owner_integrations.load(root, marker, config)
     rooms = []
     for room in config['rooms']:
         alias = room['alias']
@@ -105,18 +140,31 @@ def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=No
             'discord_invite_url': '', 'discord_invite_reminder_seconds': 0,
             'ai_enabled': False, 'ai_api_key_env': 'POOLROTATER_DISABLED_AI',
             'ai_context_file': '', 'map_pp_display_enabled': False,
+            'custom_join_greetings': copy.deepcopy(DEFAULT_JOIN_GREETINGS),
             'allowed_mods': [], 'required_mods': [], 'freestyle': False,
         }
         if spec['ruleset'] == 2:
             from .gameplay_defaults import settings_for as research_defaults
             settings.update(research_defaults('catch-fixed'))
         from .runtime_defaults import settings_for as default_gameplay
+        from .managed_host.settings import DISALLOWED_GAMEPLAY
+        # Operational defaults belong to the host, not to a map-pool mode.
+        # Catch's smaller gameplay profile must not drop shutdown/reload/
+        # transport settings when an existing room changes ruleset. Explicit
+        # retained owner overlays below continue to take precedence.
+        settings.update({k:v for k,v in default_gameplay(root,marker,'standard-auto').items()
+                         if k in DISALLOWED_GAMEPLAY})
         settings.update(default_gameplay(root,marker,room['preset']))
         if resolved is not None:
             settings.update(settings_for(room, resolved))
         if room['alias'] in gameplay:
             settings.update(gameplay[room['alias']]['settings'])
         settings.update(owner_integrations.settings(root, integrations, room['alias']))
+        managed=copy.deepcopy(shadow['rooms'][alias]['settings']) if shadow else {}
+        settings.update({k:v for k,v in managed.items() if k not in ('preset','visibility','password')})
+        if managed:
+            revision=shadow['rooms'][alias]['revision']
+            settings.update(managed_visibility=managed.get('visibility','public'),managed_preset=room['preset'],managed_revision=revision)
         rooms.append({'alias': alias, 'preset': room['preset'],
                       'config_path': str(contained(root, f'{ROOM_DIRECTORY}/{alias}.json')),
                       'settings': settings})
@@ -126,7 +174,7 @@ def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=No
             'catalog_set': resolved['set_id'] if resolved is not None else None,
             'catalog_reference': resolved['reference'] if resolved is not None else None,
             'binding': {'account': config['account'],
-                        'rooms': [{k: r[k] for k in ('alias', 'preset', 'catalog')} for r in config['rooms']]}}
+                        'rooms': [{k: r[k] for k in ('alias', 'preset', 'catalog')} for r in original_config['rooms']]}}
 
 
 def render_room(root: Path, alias, *, account_id=None, catalog_reference=None, catalog_set=None, private_session=None):
@@ -147,7 +195,7 @@ def render_room(root: Path, alias, *, account_id=None, catalog_reference=None, c
 
 def pinned_keys(settings):
     # Installation/account/transport paths remain pinned; gameplay tuning does not.
-    return set(settings) - EDITABLE_BASE - EDITABLE_STAFF - GAMEPLAY_KEYS - {
+    return set(settings) - EDITABLE_BASE - EDITABLE_STAFF - GAMEPLAY_KEYS - {'selection_style','selection_styles','custom_join_greetings','managed_revision'} - {
         'max_length', 'min_passcount', 'pool_limit', 'max_map_age_years',
     }
 
@@ -157,6 +205,9 @@ def validate_room_data(data: dict, base: dict):
         raise ConfigError('runtime room configuration must be an object')
     if not set(base) <= set(data):
         raise ConfigError('runtime room configuration is missing managed fields')
+    if 'managed_revision' in base and (type(data.get('managed_revision')) is not int
+            or data['managed_revision']!=base['managed_revision']):
+        raise ConfigError('managed runtime revision differs from committed defaults')
     # Native files are flat. Legacy nested Mania overrides could otherwise mask
     # host-controlled catalog/account settings and a new native difficulty band.
     if 'mania_settings' in data or 'catch_settings' in data:
@@ -201,11 +252,16 @@ class RuntimeConfigBridge:
         self.initial = render(self.root, account_id=account_id)
         self._cached_configs = None
         self._cached_stamp = None
+        # Native maintenance and fleet application share this bridge. Serialize
+        # both materialization and its cache; the file lease additionally fences
+        # other processes and is deliberately nonblocking.
+        self._configuration_lock = threading.RLock()
 
     def stamp(self):
         names = ['.poolrotater-host.json', 'config/host.json', STATE_FILE, GAMEPLAY_RECORD,
                  owner_integrations.RECORD, owner_integrations.ENVIRONMENT_FILE,
-                 f'{ROOM_DIRECTORY}/universal.json', 'state/rating-migration.json']
+                 f'{ROOM_DIRECTORY}/universal.json', 'state/rating-migration.json',
+                 'config/managed-rooms.json','state/managed-host-policy.json']
         names += [f'{ROOM_DIRECTORY}/{r["alias"]}.json' for r in self.initial['rooms']]
         paths = [contained(self.root, n) for n in names]
         paths += [Path(r['settings'].get('catch_catalog') or r['settings'].get('loved_db') or r['settings']['farm_db'] or r['settings']['mania_db']) for r in self.initial['rooms']]
@@ -237,7 +293,13 @@ class RuntimeConfigBridge:
                 result.append(None)
         return tuple(result)
 
-    def materialize(self) -> list[dict]:
+    def materialize(self, *, preview=False) -> list[dict] | dict:
+        with self._configuration_lock:
+            return self._materialize(preview=preview)
+
+    def _materialize(self, *, preview=False) -> list[dict] | dict:
+        if type(preview) is not bool:
+            raise ConfigError('invalid runtime materialization preview')
         from .owner_migration import admission as owner_admission
         owner_admission(self.root)
         current = render(self.root, account_id=self.account_id)
@@ -260,7 +322,7 @@ class RuntimeConfigBridge:
             raise ConfigError('runtime configuration directory must be private')
         state_path = contained(self.root, STATE_FILE)
         with file_lease(contained(self.root, 'state/runtime-config.lock')), ExitStack() as locks:
-            previous = read_json(state_path) if state_path.exists() else None
+            previous = read_json(state_path,maximum=HOST_JSON_LIMIT) if state_path.exists() else None
             if previous is not None:
                 if (not isinstance(previous, dict) or set(previous) != {'format', 'identity', 'bases'}
                         or type(previous['format']) is not int or previous['format'] != 1
@@ -271,12 +333,13 @@ class RuntimeConfigBridge:
             plans = []
             for room in current['rooms']:
                 path = contained(self.root, f'{ROOM_DIRECTORY}/{room["alias"]}.json')
-                locks.enter_context(file_lease(path.with_name(path.name + '.lock')))
+                if not preview:
+                    locks.enter_context(file_lease(path.with_name(path.name + '.lock')))
                 base = room['settings']
                 old = previous['bases'].get(room['alias']) if previous else None
                 if path.exists() and old is None:
                     raise ConfigError('refusing unrecognized existing runtime room configuration')
-                data = read_json(path) if path.exists() else copy.deepcopy(base)
+                data = read_json(path,maximum=ROOM_JSON_LIMIT) if path.exists() else copy.deepcopy(base)
                 if old is not None:
                     # v7.1.13 added this managed execution setting. A retained
                     # v7.1.11/12 base legitimately lacks it. Admit only this
@@ -293,6 +356,13 @@ class RuntimeConfigBridge:
                                  'mania_convert_validation_db'} if current['catalog_set'] else set()
                     if profile_addition:
                         additions.add('background_player_profiles')
+                    from .managed_host.policy import enabled as managed_enabled
+                    if managed_enabled(self.root):
+                        additions.update(('managed_visibility','managed_preset','managed_revision'))
+                        from .managed_host.settings import FIELDS
+                        additions.update(FIELDS-{'preset','visibility','password'})
+                        from .managed_host.settings import DISALLOWED_GAMEPLAY
+                        additions.update(DISALLOWED_GAMEPLAY)
                     if room['alias'] in load_overrides(self.root, *load(self.root)):
                         additions.update(GAMEPLAY_KEYS)
                     if owner_integrations.load(self.root, *load(self.root)) is not None:
@@ -314,10 +384,34 @@ class RuntimeConfigBridge:
                             raise ConfigError('obsolete pilot field changed; coordinated review required')
                         old=copy.deepcopy(old);old.pop('hard_restart_interval_minutes')
                         data.pop('hard_restart_interval_minutes')
-                    if (not isinstance(old, dict) or set(old) - set(base)
+                    retired=set()
+                    if managed_enabled(self.root):
+                        retired=(set(old)-set(base))&{'selection_style','selection_styles'}
+                        if (old.get('managed_preset') and old.get('managed_preset')!=base.get('managed_preset')):
+                            from .catalog_store import CATALOG_KEYS
+                            from .managed_host.settings import FIELDS
+                            additions.update(CATALOG_KEYS)
+                            # A mode's renderer may add defaults that do not
+                            # exist in the next mode (for example Catch-only
+                            # length settings). Drop only declared gameplay/
+                            # catalog keys absent from the new desired base.
+                            # Credential, account and arbitrary path fields
+                            # remain outside this retirement allowlist.
+                            retired|=(set(old)-set(base))&(set(CATALOG_KEYS)|FIELDS)
+                    if (not isinstance(old, dict) or set(old) - set(base) - retired
                             or set(base) - set(old) - additions):
                         raise ConfigError('runtime base schema changed; coordinated reconfiguration required')
-                    validate_room_data(data, old)
+                    try:validate_room_data(data, old)
+                    except ConfigError:
+                        # A managed change can write a room file and then lose
+                        # power before publishing the shared bases file. Admit
+                        # that completed room only if its revision AND every
+                        # pinned field validate against the current rendered
+                        # desired base. A revision stamp alone is no authority.
+                        if (not managed_enabled(self.root) or type(base.get('managed_revision')) is not int
+                                or data.get('managed_revision')!=base['managed_revision']):raise
+                        validate_room_data(data,base)
+                    for key in retired:data.pop(key,None)
                     explicit = load_overrides(self.root, *load(self.root)).get(room['alias'], {}).get('settings', {})
                     for key, value in base.items():
                         # New-install title defaults are not a rename request for
@@ -336,12 +430,20 @@ class RuntimeConfigBridge:
             # Mark identity first, making an interrupted initial materialization resumable.
             state = {'format': 1, 'identity': {k: current[k] for k in identity},
                      'bases': {r['alias']: r['settings'] for r in current['rooms']}}
+            if preview:
+                # A stopped root upgrader pins these exact outputs before the
+                # first configuration replacement. Preview never writes room
+                # data, shared overrides, bases or per-room lock files.
+                return {'rooms': copy.deepcopy(current['rooms']), 'state': state,
+                        'writes': {path.relative_to(self.root).as_posix(): data
+                                   for path, data, _ in plans}
+                                  | {shared.relative_to(self.root).as_posix(): {}}}
             if previous is None:
                 atomic_json(state_path, state)
             if not shared.exists():
                 atomic_json(shared, {})
             for path, data, _ in plans:
-                if not path.exists() or read_json(path) != data:
+                if not path.exists() or read_json(path,maximum=ROOM_JSON_LIMIT) != data:
                     atomic_json(path, data)
             if previous is not None and previous != state:
                 atomic_json(state_path, state)
@@ -350,6 +452,10 @@ class RuntimeConfigBridge:
         return current['rooms']
 
     def load_rooms(self) -> list[dict]:
+        with self._configuration_lock:
+            return self._load_rooms()
+
+    def _load_rooms(self) -> list[dict]:
         from .owner_migration import admission as owner_admission
         owner_admission(self.root)
         marker, host = load(self.root)

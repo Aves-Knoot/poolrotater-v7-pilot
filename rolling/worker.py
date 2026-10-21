@@ -96,6 +96,12 @@ def make_worker_pool(cfg):
     return _managed_policy(pool, cfg)
 
 
+def managed_catalog_mode(cfg):
+    rule = ruleset_id(cfg)
+    return ('loved' if rule == 0 and cfg.get('loved_mode') else 'standard' if rule == 0
+            else 'catch' if rule == 2 else 'mania'+str(cfg['mania_keys']))
+
+
 def _managed_policy(pool, cfg):
     if cfg.get('_host_catalog_set'):
         if ruleset_id(cfg) == 2 and getattr(pool,'research_only',True):
@@ -103,10 +109,12 @@ def _managed_policy(pool, cfg):
         from poolrotater_host.catalog_store import CatalogStore
         from poolrotater_host.catalog_exclusions import ExclusionPolicy, attach_policy
         store = CatalogStore.open(cfg['_host_root'])
-        mode = 'standard' if ruleset_id(cfg) == 0 else 'catch' if ruleset_id(cfg)==2 else 'mania'+str(cfg['mania_keys'])
+        mode = managed_catalog_mode(cfg)
         reference = store._validate_reference(cfg['_host_catalog_reference'])
         if reference['set_id'] != cfg['_host_catalog_set']: raise ValueError('worker catalog reference/set mismatch')
         pool = attach_policy(pool, ExclusionPolicy(store, mode, reference['modes'][mode]))
+    from poolrotater_host.managed_host.native import apply_pool_styles
+    apply_pool_styles(pool,cfg)
     return pool
 
 
@@ -136,6 +144,13 @@ class Lifecycle:
             if self.bot:
                 self.bot.cfg["close_room_on_exit"] = False
                 self.bot.running = False
+            return True
+        if method == 'managed-settings':
+            request_id,patch=args
+            from poolrotater_host.managed_host.settings import FIELDS,RECREATE
+            if type(patch) is not dict or not patch or set(patch)-FIELDS or set(patch)&RECREATE:
+                raise ValueError('invalid managed worker patch')
+            self.commands.put_nowait((method,(request_id,patch)))
             return True
         if method == 'maintenance':
             from poolrotater_host.operator_maintenance import validate
@@ -189,7 +204,7 @@ class Lifecycle:
             "ready": bool(bot._room_ready), "running": bool(bot.running),
             "state": bot.state, "players": len(bot.players),
             "paused": self.paused or self.maintenance.locked or self.maintenance.uncertain or self.operator_maintenance.phase=='ready',
-            "maintenance": self.maintenance.status(), "control": self.last_control,
+            "maintenance": self.maintenance.status(), "managed_control_version": 1, "control": self.last_control,
             "operator_maintenance": self.operator_maintenance.status(),
             "reopenable": bool(bot._supervisor_reopenable_stop),
             "auto": bool(bot.cfg.get("auto_difficulty", True) and not bot.manual_range),
@@ -218,7 +233,14 @@ class Lifecycle:
             command, request_id = self.commands.get_nowait()
         except queue.Empty:
             command = None
-        if command == "maintenance":
+        if command == 'managed-settings':
+            id,patch=request_id
+            try:
+                from poolrotater_host.managed_host.native import apply_worker_settings
+                ok=apply_worker_settings(bot,patch)
+            except Exception:ok=False
+            self.last_control={'id':id,'command':command,'ok':ok}
+        elif command == "maintenance":
             self.operator_maintenance.command(request_id)
         elif command == "prepare":
             self.paused = bool(bot._room_ready and bot.state == IDLE and not bot.players
@@ -290,7 +312,7 @@ def run(sock, release):
         pool = make_worker_pool(cfg)
         if cfg.get('_host_catalog_set'):
             from poolrotater_host.catalog_store import CatalogStore
-            mode = 'standard' if ruleset_id(cfg) == 0 else 'catch' if ruleset_id(cfg)==2 else 'mania'+str(cfg['mania_keys'])
+            mode = managed_catalog_mode(cfg)
             catalog_pins.enter_context(CatalogStore.open(cfg['_host_root']).worker_pin(cfg['_host_catalog_reference'], modes=[mode]))
         peer.emit("prepared", {"version": manifest["version"], "maps": len(pool.maps)})
         while not lifecycle.activate.wait(.2):

@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import importlib.machinery,importlib.util
 import os
 import re
 import sqlite3
@@ -46,6 +47,15 @@ def room_descriptors():
     return result
 
 
+def managed_mask():
+    if not SOURCE.owner:return None
+    path=Path(__file__).with_name('analytics.py')
+    loader=importlib.machinery.SourceFileLoader('wiki_lobbies_privacy',str(path if path.is_file() else '/usr/local/sbin/poolrotator-wiki-analytics'))
+    spec=importlib.util.spec_from_loader(loader.name,loader);module=importlib.util.module_from_spec(spec);loader.exec_module(module)
+    module.APP=SOURCE.root
+    return module.managed_public_mask()
+
+
 def build(snapshot, invite, ledger, *, now=None, service_active=False):
     """Fail closed for stale, stopped, invalid, or ledger-closed rooms."""
     now = time.time() if now is None else now
@@ -60,9 +70,12 @@ def build(snapshot, invite, ledger, *, now=None, service_active=False):
              and service.get('sub_state') == 'running')
     raw_rooms = snapshot.get('rooms', [])
     observed = {r.get('alias'): r.get('room_id') for r in raw_rooms if isinstance(r, dict)}
+    mask=managed_mask()
     rooms = []
     for alias, label, guide in room_descriptors():
-        room_id = observed.get(alias)
+        hidden=mask.get(alias,{}) if mask is not None else {}
+        room_id = None if hidden.get('private') or hidden.get('intentionally_stopped') else observed.get(alias)
+        if hidden.get('private'):label,guide='Lobby '+alias[-1],''
         if not fresh or type(room_id) is not int or not 0 < room_id <= 9223372036854775807:
             room_id = None
         if room_id is not None:

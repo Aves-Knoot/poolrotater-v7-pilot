@@ -27,7 +27,7 @@ def main():
     if value['path'].startswith('/v1/activity/replica/'):
         headers['Accept-Encoding']='gzip'
     if value['token'] is not None:headers['Authorization']='Bearer '+value['token']
-    body=None if value['body'] is None else json.dumps(value['body'],separators=(',',':'),allow_nan=False).encode()
+    body=None if value['body'] is None else json.dumps(value['body'],separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()
     try:
         connection.request(value['method'],value['path'],body=body,headers=headers);response=connection.getresponse()
         raw=response.read(maximum+1)

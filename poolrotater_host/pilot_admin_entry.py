@@ -85,6 +85,7 @@ def main():
         'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
         'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch',
         'room-settings-configure','room-settings-status',
+        'managed-status','managed-limit','managed-request',
         'catch-pilot-prepare','catch-pilot-status','catch-pilot-resume','catch-pilot-rollback',
         'worker-stage','worker-queue','worker-cancel','worker-status',
         'maintenance-request','maintenance-cancel','maintenance-status',
@@ -92,6 +93,11 @@ def main():
         'update-status','update-tick','update-recover','update-unit','update-start','update-stop','update-cleanup',
         'release-init','release-publish','release-promote','release-renew','release-resume','release-status'))
     args, rest = parser.parse_known_args()
+    if args.action=='start' and rest not in ([],['--preserve-managed-intent']):
+        raise ValueError('start arguments refused')
+    if args.action.startswith('managed-'):
+        expected=['--managed-stdin'] if args.action in ('managed-limit','managed-request') else []
+        if rest!=expected:raise ValueError('managed arguments refused; private settings require stdin')
     if args.action.startswith('private-test-'):
         expected = ['--private-test-stdin'] if args.action == 'private-test-configure' else []
         if rest != expected:

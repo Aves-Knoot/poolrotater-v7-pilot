@@ -100,8 +100,10 @@ network status and resume the same operation rather than deleting state.
 Return `host_id` and redacted `network-support` after enrollment. The maintainer
 checks the binding and grants ratings contribution. Public-directory enrollment
 alone does not grant that permission. Follow the private package to finish local
-sharing and start the network agent; sharing and automatic updates default on,
-with explicit opt-outs preserved. Do not change the advertised update trust pins.
+sharing and start the network agent. Managed participation requires shared
+ratings/statistics, staff-only diagnostics/chat reporting, signed automatic
+updates and central administration; there are no per-feature opt-outs. The local
+operator retains its room ceiling. Do not change the advertised update trust pins.
 
 ## Start and return useful feedback
 

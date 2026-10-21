@@ -180,6 +180,10 @@ def run(public=a.PUBLIC,cache_path=CACHE,now=None,peak_path=PEAK):
     room['players']=parsed['players'] if valid else None
     if valid and current and parsed.get('match_started_at'):
      match=dict(result='playing',ended_at=None,beatmap_id=current['beatmap_id'],started_at=parsed['match_started_at'])
+   if runtime is not None and parsed.get('private'):
+    room.update(label='Lobby '+str(i+1),type='unknown',settings={},guide='',players=0)
+   elif runtime is not None and parsed.get('intentionally_stopped'):
+    room['players']=0;room['intentionally_stopped']=True
    room['playback']=playback(room,match,now);data['rooms'].append(room)
   data['available']=True
  except (OSError,sqlite3.Error,ValueError,TypeError,KeyError):
@@ -189,6 +193,16 @@ def run(public=a.PUBLIC,cache_path=CACHE,now=None,peak_path=PEAK):
    alias='room'+str(i+1);cfg=a.read_json(a.SOURCE.config(alias),{})
    catch=isinstance(cfg,dict) and cfg.get('ruleset_id')==2
    data['rooms'].append(dict(alias=alias,label='Catch fixed' if catch else a.LABELS[i],type='catch' if catch else a.TYPES[i],room_id=None,state='STALE',players=None,observed_at=None,current_map=None,queue=[],queue_known=False,settings={},guide='lobbies:'+('catch' if catch else a.GUIDES[i]),playback=None))
+ # Repeat the saved-intent privacy boundary after every fallback path. Even a
+ # failed ledger read must not decorate a private slot from native settings.
+ mask=a.managed_public_mask()
+ if mask is not None:
+  for room in data['rooms']:
+   hidden=mask.get(room['alias'],{'private':True})
+   if hidden.get('private') or hidden.get('intentionally_stopped'):
+    room.update(room_id=None,state='OFFLINE',players=0,observed_at=None,current_map=None,queue=[],queue_known=False,playback=None)
+    if hidden.get('private'):room.update(label='Lobby '+room['alias'][-1],type='unknown',settings={},guide='')
+    else:room['intentionally_stopped']=True
  data['peak_players']=tracked_peak(peak_path,samples,data['rooms'] if data['available'] else [],now)
  a.atomic(public/'status.json',data)
  cached=dict(sorted(cached.items(),key=lambda p:p[1].get('cached_at',0),reverse=True)[:256]);a.atomic(cache_path,cached,0o600)

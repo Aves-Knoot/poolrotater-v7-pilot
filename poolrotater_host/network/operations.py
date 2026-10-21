@@ -112,7 +112,11 @@ def unit(instance,action):
             if ensure(pilot.UNIT_BASE):pilot._systemctl('daemon-reload')
         path=_checked_unit(instance,optional=action in ('unit','remove'))
         state=_state(instance)
-        if state['UnitFileState'] not in ('','disabled','not-found'):
+        from ..provisioning import _control
+        from ..managed_host.policy import NAME
+        managed=_control(target['root']/NAME,record['service_uid'],private=True,optional=True) is not None
+        permitted=('','disabled','not-found','enabled') if managed else ('','disabled','not-found')
+        if state['UnitFileState'] not in permitted:
             raise ConfigError('network pilot agent must remain disabled for explicit testing')
         if action=='unit':
             if state['MainPID'] or state['ActiveState'] not in ('inactive','failed'):
@@ -157,5 +161,8 @@ def unit(instance,action):
         initialize_updates(instance)
         from ..rescue.operations import ensure
         ensure(instance,record)
+        if managed:
+            from ..managed_host.operations import ensure as ensure_managed
+            ensure_managed(instance,record)
     return {'ok':True,'network_service_installed':action!='remove','network_service_state':state['ActiveState'],
-            'network_service_enabled':False,'live_rooms_affected':False,'production_deployed':False}
+            'network_service_enabled':state.get('UnitFileState')=='enabled','live_rooms_affected':False,'production_deployed':False}

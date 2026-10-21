@@ -324,6 +324,36 @@ class PersistentRequestGate:
                 'requires_recovery': value['phase'] != 'idle' or not clock_matches(value['clock'], self._now()),
                 'live_ready': False}
 
+    def _rebase_idle_boot(self):
+        """Managed owner-entry only: rebase an idle ledger after a real reboot.
+
+        Caller holds the lifetime account/owner and OAuth leases. This is not
+        reservation recovery: unknown dispatches and same-boot clock changes
+        remain fenced. Preserve the entire stored relative wait, including any
+        backoff; elapsed wall time cannot shorten it. Never alter a halt or
+        establish token, account or room authority.
+        """
+        with self._lease(0):
+            value = self._read()
+            now = self._now()
+            if value['clock']['boot_id'] == now['boot_id']:
+                return False
+            if value['phase'] != 'idle':
+                raise AuthError('provider_pacing_recovery_required')
+            if now['wall'] < value['clock']['wall']:
+                raise AuthError('provider_pacing_clock_changed')
+            self._held = deepcopy(value)
+            try:
+                previous = value['clock']['monotonic']
+                interval = max(value['interval'], self.interval)
+                value.update(clock=now, interval=interval,
+                             next=now['monotonic'] + max(interval, value['next'] - previous),
+                             blocked=now['monotonic'] + max(0., value['blocked'] - previous))
+                self._save(value)
+            finally:
+                self._held = None
+        return True
+
     def recover(self, *, expected_state_sha256, local_guard=None):
         """Explicit stopped rate-reservation/clock recovery; no token/room writes.
 

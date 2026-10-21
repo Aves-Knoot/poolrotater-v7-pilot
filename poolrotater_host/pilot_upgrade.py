@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import stat
 import tempfile
+import time
 import uuid
 
 from .config import ConfigError
@@ -55,7 +56,7 @@ def require_repair_compatible(before, after):
     independently before this check.
     """
     v71 = after.get('version')=='v7.1.0' and before.get('version') in ('v7.0.6','v7.0.7','v7.0.8')
-    if not v71 and (before.get('version'), after.get('version')) not in (('v7.2.6','v7.2.8'),('v7.2.8','v7.2.6'),('v7.2.7','v7.2.8'),('v7.2.8','v7.2.7'),('v7.2.6','v7.2.7'),('v7.2.7','v7.2.6'),('v7.2.5','v7.2.6'),('v7.2.6','v7.2.5'),('v7.2.3','v7.2.5'),('v7.2.5','v7.2.3'),('v7.2.4','v7.2.5'),('v7.2.5','v7.2.4'),('v7.2.3','v7.2.4'),('v7.2.4','v7.2.3'),('v7.2.2','v7.2.3'),('v7.2.3','v7.2.2'),('v7.2.1','v7.2.2'),('v7.2.2','v7.2.1'),('v7.1.20','v7.2.1'),('v7.2.0','v7.2.1'),('v7.2.1','v7.2.0'),('v7.2.1','v7.1.20'),('v7.1.20','v7.2.0'),('v7.2.0','v7.1.20'),('v7.1.16','v7.1.19'),('v7.1.17','v7.1.19'),('v7.1.11','v7.1.17'),('v7.1.15','v7.1.17'),('v7.1.16','v7.1.17'),('v7.1.13','v7.1.16'),
+    if not v71 and (before.get('version'), after.get('version')) not in (('v7.2.6','v7.2.9'),('v7.2.7','v7.2.9'),('v7.2.8','v7.2.9'),('v7.2.6','v7.2.8'),('v7.2.8','v7.2.6'),('v7.2.7','v7.2.8'),('v7.2.8','v7.2.7'),('v7.2.6','v7.2.7'),('v7.2.7','v7.2.6'),('v7.2.5','v7.2.6'),('v7.2.6','v7.2.5'),('v7.2.3','v7.2.5'),('v7.2.5','v7.2.3'),('v7.2.4','v7.2.5'),('v7.2.5','v7.2.4'),('v7.2.3','v7.2.4'),('v7.2.4','v7.2.3'),('v7.2.2','v7.2.3'),('v7.2.3','v7.2.2'),('v7.2.1','v7.2.2'),('v7.2.2','v7.2.1'),('v7.1.20','v7.2.1'),('v7.2.0','v7.2.1'),('v7.2.1','v7.2.0'),('v7.2.1','v7.1.20'),('v7.1.20','v7.2.0'),('v7.2.0','v7.1.20'),('v7.1.16','v7.1.19'),('v7.1.17','v7.1.19'),('v7.1.11','v7.1.17'),('v7.1.15','v7.1.17'),('v7.1.16','v7.1.17'),('v7.1.13','v7.1.16'),
             ('v7.0.1','v7.0.1'), ('v7.0.1','v7.0.2'), ('v7.0.2','v7.0.2'),
             ('v7.0.2','v7.0.5'), ('v7.0.5','v7.0.5'), ('v7.0.1','v7.0.6'),
             ('v7.0.5','v7.0.6'), ('v7.0.6','v7.0.6'), ('v7.1.0','v7.1.1'),
@@ -233,12 +234,37 @@ def _binding(instance):
 
 
 @contextmanager
+def _admission_guard(root, uid, *, seconds=20, monotonic=time.monotonic, sleep=time.sleep):
+    """Wait only before admission; never replay a yielded upgrade transaction.
+
+    Independent read-only helpers can briefly assume the dedicated UID after a
+    controller has closed. Retain the actual owner lease and process census;
+    only positively identified cleanup contention is eligible for a bounded wait.
+    """
+    from .pilot_installation import CleanupPending
+    deadline = monotonic() + seconds
+    while True:
+        admitted = False
+        try:
+            with _quiescent(root, uid):
+                require_no_service_processes(uid)
+                admitted = True
+                yield
+            return
+        except CleanupPending as error:
+            if admitted or error.code not in ('update_owner_lock_busy', 'update_children_still_running'):
+                raise
+            if monotonic() >= deadline:
+                raise ConfigError('update_cleanup_timeout') from error
+            sleep(min(.5, max(0, deadline - monotonic())))
+
+
+@contextmanager
 def _locked(instance):
     _admin()
     target, marker, path, current = _binding(instance)
     _unit_state(target)
-    with file_lease(target['prefix'].parent / '.install.lock'), _quiescent(target['root'], current['service_uid']):
-        require_no_service_processes(current['service_uid'])
+    with file_lease(target['prefix'].parent / '.install.lock'), _admission_guard(target['root'], current['service_uid']):
         target, marker, path, current = _binding(instance)
         _unit_state(target)
         yield target, marker, path, current
@@ -339,6 +365,8 @@ def _finish(target, marker, path, value, decision):
         from .runtime_defaults import prepare as prepare_defaults
         prepare_defaults(target['root'],marker,uid=value['before']['service_uid'],
                          previous_release=value['before']['release'])
+        from .managed_host.policy import prepare_data
+        prepare_data(target['root'],marker,uid=value['before']['service_uid'],owner_lease_held=True)
         if manifests['after'].get('version')=='v7.1.0':
             from .activity_migration import prepare as prepare_activity
             prepare_activity(target['root'],marker,uid=value['before']['service_uid'],owner_lease_held=True)
@@ -359,6 +387,11 @@ def _finish(target, marker, path, value, decision):
         # The new bootstrap checks the upgrade fence until the final write.
         _write(transition_path(prefix, marker['installation_id']), _transition(value, chosen_phase))
         _write(prefix / NAME, {**value, 'phase':chosen_phase})
+        from .managed_host.policy import prepare as prepare_managed
+        prepare_managed(target['root'],marker,uid=value['after']['service_uid'])
+        if os.path.lexists(prefix/'updates/configuration.json'):
+            from .managed_host.operations import ensure as ensure_managed
+            ensure_managed(target['root'].name,value['after'])
     else:
         # The old bootstrap knows the transition fence; release it last.
         _write(prefix / NAME, {**value, 'phase':chosen_phase})

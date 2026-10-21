@@ -82,6 +82,8 @@ class Client:
 
     def configure(self,*,url,trust,operator_id,account_id,directory=True):
         require(type(trust) is TrustSnapshot,'explicit_hub_trust_required');trust.context()
+        from ..managed_host.policy import require_enabled_settings
+        require_enabled_settings(self.root,{'directory':directory})
         value={'format':1,**self.marker,'operator_id':operator_id,'account_id':account_id,'directory':directory,
                'origin':origin(url),'ca_pem':trust.pem.decode('ascii'),'ca_sha256':hashlib.sha256(trust.pem).hexdigest()}
         identity(value)
@@ -117,7 +119,8 @@ class Client:
             return self._resume(profile,pending)
 
     def leave(self):
-        with file_lease(self.lock_path):
+        from ..managed_host.policy import network_detachment
+        with network_detachment(self.root),file_lease(self.lock_path):
             profile=self.profile();pending=self.pending(profile)
             if pending is not None:require(pending['kind']=='leave','network_pending_requires_resume')
             else:
@@ -129,13 +132,17 @@ class Client:
     def resume(self):
         with file_lease(self.lock_path):
             profile=self.profile();pending=self.pending(profile);require(pending is not None,'network_no_pending_operation')
+            if pending['kind'] in ('leave','reset'):
+                from ..managed_host.policy import network_detachment
+                with network_detachment(self.root):return self._resume(profile,pending)
             return self._resume(profile,pending)
 
     def reset(self,*,expected_host_id,acknowledge_central_revocation_required=False):
         """Explicit local abandonment. Does not claim remote revocation succeeded."""
         require(acknowledge_central_revocation_required is True,'central_revocation_acknowledgement_required')
         if expected_host_id is not None:identifier(expected_host_id)
-        with file_lease(self.lock_path):
+        from ..managed_host.policy import network_detachment
+        with network_detachment(self.root),file_lease(self.lock_path):
             profile=self.profile();credential=self.credential();pending=self.pending(profile)
             host_id=credential['host_id'] if credential else (pending['host_id'] if pending else None)
             require(host_id==expected_host_id,'network_reset_host_mismatch')

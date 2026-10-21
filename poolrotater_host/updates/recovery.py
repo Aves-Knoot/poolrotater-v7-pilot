@@ -29,6 +29,10 @@ def _configuration_matches(target,job,*,before_version=None,after_version=None):
     existing transactions need no schema migration or added snapshots.
     """
     from ..controller_update import _config_hashes
+    if 'id' in job:
+        from ..managed_host.upgrade import matches as managed_configuration_matches
+        witnessed=managed_configuration_matches(target,job)
+        if witnessed is not None:return witnessed
     actual=_config_hashes(target['root']);expected=job['configuration']
     if actual==expected:return True
     if (type(before_version)is not str or type(after_version)is not str
@@ -86,7 +90,10 @@ def _fresh_running(target,parent):
             'update_recovery_fresh_workers_required')
     rows=observation.get('rooms',{})
     require(set(rows)=={r['alias']for r in host['rooms']},'update_recovery_room_topology_changed')
-    for row in rows.values():
+    from ..managed_host.admission import closed_aliases
+    closed=closed_aliases(target,parent,rows)
+    for alias,row in rows.items():
+        if alias in closed:continue
         age=row.get('heartbeat_age');status=row.get('status',{})
         require(row.get('phase')=='running' and row.get('healthy')is True
             and row.get('operation')=='owned' and row.get('ownership_unknown')is False and not row.get('error')
@@ -150,18 +157,20 @@ def _restore_services(instance,target,current,job,*,save=None,automatic=False):
         from ..update_lifecycle import wait_stopped,checkpoint
         wait_stopped(target['root'],current['service_uid'],save=save or (lambda **values:None))
         if save:checkpoint(save,'controller_start',startup_attempted_at=time.time())
-        started=pilot.lifecycle(instance,'start')
+        started=pilot.automatic_start(instance,target['root'])
         require(started.get('ok')is True,'update_recovery_start_requires_review')
     wait_for_workers(instance,target,current)
     _restore_integrations(instance,target,job)
 
 
 def _restore_integrations(instance,target,job):
-    """Restore saved service intent without starting/stopping the bot."""
+    """Restore saved service intent and enforced managed participation."""
     from .. import pilot_operations as pilot
     from ..network import operations as network
+    from ..managed_host.policy import administrative_enabled as managed_enabled
+    managed=managed_enabled(target['root'],job['after']['service_uid'])
     pilot._systemctl('enable'if job['service_enabled']else'disable',target['unit'])
-    if job['network_active']:
+    if job['network_active'] or managed:
         state=network._state(instance)
         if not state['MainPID']:
             require(state['ActiveState']in('inactive','failed'),'update_existing_network_agent_requires_review')
@@ -170,8 +179,8 @@ def _restore_integrations(instance,target,job):
     # Inactive network services are never stopped as a side effect of recovery.
     # A separately manually started agent is retained; only original enablement
     # is restored for the checked unit when that unit exists.
-    if network._checked_unit(instance,optional=not job['network_active'])is not None:
-        pilot._systemctl('enable'if job['network_enabled']else'disable',network.name(instance))
+    if network._checked_unit(instance,optional=not (job['network_active'] or managed))is not None:
+        pilot._systemctl('enable'if job['network_enabled'] or managed else'disable',network.name(instance))
 
 
 def controller(instance,operation_id,decision='review',*,automatic=False):
@@ -321,6 +330,17 @@ def _controller(instance,operation_id,decision='review',*,automatic=False):
         upgrade=_upgrade(target,job,current)
         require(upgrade is not None and upgrade['phase']=='committed','update_recovery_committed_upgrade_required')
         _approval(target,job,recovering=True)
+        # The staged successor owns this root path even when the predecessor's
+        # polling agent armed it. Complete fixed managed preparation before any
+        # start; an already-running successor must have its complete witness.
+        from ..managed_host.upgrade import prepare as prepare_managed_configuration,matches as managed_matches
+        if not service['MainPID']:
+            checkpoint(save,'configuration')
+            prepare_managed_configuration(target,current,job)
+        else:
+            from ..managed_host.policy import administrative_enabled as managed_enabled
+            if managed_enabled(target['root'],current['service_uid']):
+                require(managed_matches(target,job,require_complete=True) is True,'update_recovery_configuration_changed')
         checkpoint(save,'readiness')
         _restore_services(instance,target,current,job,save=save,automatic=automatic)
         # The successor may have materialized its own version after a previous

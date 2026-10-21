@@ -663,7 +663,7 @@ def _administrator(root, prefix):
         raise ConfigError('catalog administrative writes require disposable provisioning mounts')
 
 
-def resolved_catalogs(root, *, room_alias=None, reference=None):
+def resolved_catalogs(root, *, room_alias=None, reference=None, configuration=None):
     """Verify a complete reference, inspecting only an explicitly scoped room.
 
     Host preflight still inspects every bundle. A guarded worker retains its
@@ -678,6 +678,13 @@ def resolved_catalogs(root, *, room_alias=None, reference=None):
     store = CatalogStore.open(root); current = store.current()
     ref = store._validate_reference(reference) if reference is not None else current
     _, config = load(root)
+    if configuration is not None:
+        if {r['alias'] for r in configuration['rooms']}!={r['alias'] for r in config['rooms']}:
+            raise ConfigError('managed catalog aliases changed')
+        config=configuration
+    elif (root/'config/managed-rooms.json').exists():
+        from .managed_host.projection import configuration as managed_configuration
+        marker,original=load(root);config=managed_configuration(root,marker,original)
     if not {mode_for(r) for r in config['rooms']} <= set(ref['modes']):
         raise ConfigError('managed catalog set is incomplete; stopped import required')
     modes = set(ref['modes'])

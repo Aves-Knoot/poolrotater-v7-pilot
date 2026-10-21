@@ -69,7 +69,9 @@ def run(root,release,action,stream=None):
 
 
 def observation(root,code_version):
-    _,config=load(root)
+    marker,config=load(root)
+    from ..managed_host.projection import configuration
+    config=configuration(root,marker,config)
     try:snapshot=read_status(root)
     except (OSError,ConfigError,NetworkError):snapshot={}
     # Actual workers report their pinned set; do not pretend desired catalog
@@ -85,9 +87,11 @@ def serve(root,release):
     sync=Synchronizer(root,network=client)
     from ..reporting import start
     reporting_thread=start(client,stop)
+    from ..managed_host.agent import start as start_administration
+    administration_thread=start_administration(client,stop)
     try:run_combined(Agent(client,lambda:observation(root,__version__)),Scheduler(sync),stop,snapshots=FetchScheduler(sync))
     finally:
-        stop.set();reporting_thread.join(timeout=6)
+        stop.set();reporting_thread.join(timeout=6);administration_thread.join(timeout=6)
         for sig,handler in previous.items():signal.signal(sig,handler)
 
 
@@ -112,6 +116,14 @@ def diagnostics(client):
     elif summary.get('agent_phase') in ('reenrollment-required','local-review-required','operator-recovery-required'):
         next_action='retain-state-and-review-network-recovery'
     else:next_action='inspect-network-service-and-last-heartbeat; ratings-sharing-is-separate'
+    from ..managed_host.policy import enabled as managed_enabled
+    if managed_enabled(client.root):
+        from ..managed_host.agent import diagnostics as managed_diagnostics
+        try:summary['managed_administration']=managed_diagnostics(client.root)
+        except (NetworkError,OSError,ConfigError,ValueError,TypeError,KeyError):
+            summary['managed_administration']={'phase':'requires-review','error':'local-state-refused'}
+        if next_action.startswith('inspect-network-service'):
+            next_action='inspect-managed-administration-and-network-service; managed-sharing-is-required'
     summary.update(next_action=next_action,
         enrollment_does_not_grant_contribution=True,
         directory_listing_verified=False,

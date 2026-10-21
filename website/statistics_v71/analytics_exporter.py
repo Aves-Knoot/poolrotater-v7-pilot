@@ -57,10 +57,41 @@ def configured_room_aliases():
             or len(set(aliases))!=len(aliases)):return None
     return set(aliases)
 
+def managed_public_mask():
+    """Saved private/off intent wins even over a fresh, older public feed.
+
+    Missing or damaged managed metadata must never enable legacy log fallback.
+    No private password, title, chat or room ID is returned to the exporter.
+    """
+    projection=APP/'config/managed-rooms.json'
+    policy=APP/'state/managed-host-policy.json'
+    if not os.path.lexists(policy) and not os.path.lexists(projection):return None
+    denied={a:{'private':True,'intentionally_stopped':False} for a in ('room1','room2','room3','room4')}
+    value=read_json(projection,{})
+    if not isinstance(value,dict) or type(value.get('format')) is not int or value['format']!=1 or type(value.get('rooms')) is not dict:return denied
+    marker=read_json(APP/'.poolrotater-host.json',{})
+    if (not isinstance(marker,dict) or any(not isinstance(marker.get(k),str)
+            or value.get(k)!=marker[k] for k in ('installation_id','generation'))):return denied
+    configured=configured_room_aliases()
+    if configured is None or set(value['rooms'])!=configured:return denied
+    for alias,row in value['rooms'].items():
+        if (not isinstance(row,dict) or row.get('desired') not in ('running','stopped')
+                or not isinstance(row.get('settings'),dict) or row['settings'].get('visibility') not in ('public','private')):return denied
+    result={}
+    for alias in denied:
+        row=value['rooms'].get(alias)
+        if row is None:result[alias]={'private':False,'intentionally_stopped':True};continue
+        settings=read_json(APP/('config/rooms/'+alias+'.json'),{})
+        private=(row['settings']['visibility']=='private' or not isinstance(settings,dict)
+                 or settings.get('managed_visibility')!='public')
+        result[alias]={'private':private,'intentionally_stopped':row['desired']=='stopped'}
+    return result
+
 def runtime_rooms(now, service):
     """Prefer version-pinned worker observations; never infer health from a PID."""
     path=APP/'state/rolling/public-status.json'
-    if not path.exists():return None  # Legacy service fallback only.
+    mask=managed_public_mask()
+    if not path.exists() and mask is None:return None  # Legacy service fallback only.
     data=read_json(path,{})
     if not isinstance(data,dict):data={}
     fresh=-5<=now-number(data.get('generated_at'))<=20
@@ -73,14 +104,16 @@ def runtime_rooms(now, service):
     for i in range(4):
         alias='room'+str(i+1);row=rows.get(alias,{})
         if not isinstance(row,dict):row={}
-        valid=bool(service.get('online') and fresh and row.get('healthy') is True and
+        hidden=mask.get(alias,{}) if mask is not None else {}
+        suppressed=hidden.get('private') or hidden.get('intentionally_stopped')
+        valid=bool(not suppressed and service.get('online') and fresh and row.get('healthy') is True and
                    type(row.get('room_id')) is int and row['room_id']>0 and
                    row.get('state') in ('IDLE','STARTING','PLAYING','SCORING') and
                    -5<=now-number(row.get('observed_at'))<=20 and
                    type(row.get('players')) is int and 0<=row['players']<=512)
         unconfigured=bool(fresh and configured is not None and alias not in configured and alias not in rows)
-        offline=service.get('online') is False or (fresh and row.get('state')=='OFFLINE') or unconfigured
-        result[alias]=dict(valid=valid,room_id=row.get('room_id') if valid else None,
+        offline=suppressed or service.get('online') is False or (fresh and row.get('state')=='OFFLINE') or unconfigured
+        result[alias]=dict(**hidden,valid=valid,room_id=row.get('room_id') if valid else None,
             state=row['state'] if valid else 'OFFLINE' if offline else 'STALE',
             players=row['players'] if valid else None,observed_at=row.get('observed_at') if valid else None,
             current_map=public_map(row.get('current_map')) if valid else None,

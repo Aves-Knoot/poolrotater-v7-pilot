@@ -84,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
             # Enrolled data transfers have no requests/minute or bandwidth cap.
             # Public/control routes retain admission protection and all requests
             # retain bounded size, concurrency, deadlines and authentication.
-            bulk=path.startswith(('/v1/activity/','/v1/logs/','/v1/ratings/','/v2/ratings/','/v2/activity/')) or path in ('/v1/events/batches','/v1/transfers/capabilities')
+            bulk=path.startswith(('/v1/activity/','/v1/logs/','/v1/ratings/','/v2/ratings/','/v2/activity/')) or path in ('/v1/events/batches','/v1/transfers/capabilities','/v1/hosts/self/managed-settings')
             if bulk:
                 with store.transaction() as db:store._authenticate(db,verifier(self.token()),'heartbeat')
             else:self.server.admission()
@@ -135,6 +135,12 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=='/v1/hosts/self/token-rotation':result=store.rotate(self.token(),self.body())
                 elif path=='/v1/hosts/self/leave':
                     token=self.token();value=self.body();fields(value,('protocol_version',));base(value);result=store.leave(token)
+                elif path=='/v1/hosts/self/managed-rooms':
+                    from ..managed_host.hub import Repository
+                    result=Repository(store).accept(self.token(),self.body())
+                elif path=='/v1/hosts/self/managed-settings':
+                    from ..managed_host.details import Repository
+                    result=Repository(store).accept(self.token(),self.body())
                 elif path=='/v1/hosts/self/discord':
                     from ..discord_relay.repository import Repository
                     result=Repository(store).accept(self.token(),self.body())

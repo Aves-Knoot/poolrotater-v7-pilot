@@ -276,6 +276,9 @@ def _provision(root, prefix, bundle, expected_sha256, *, uid, execution, reserve
             if current is None:
                 from .runtime_defaults import prepare as prepare_defaults
                 prepare_defaults(root,marker,uid=uid)
+                if execution in ('pilot-candidate','pilot-live'):
+                    from .managed_host.policy import prepare as prepare_managed
+                    prepare_managed(root,marker,uid=uid)
                 _write(installation_path,proposal)
             if pointer is None: _write(pointer_path,expected_pointer,owner=uid,private=True)
             return {'status':'existing' if current else 'installed','release':str(release),

@@ -1,6 +1,8 @@
 """Closed diagnostic vocabulary; never forward private exception text."""
 import re
-FAILURE_CODES = frozenset(('invalid_provider_budget_loader', 'provider_budget_requires_review',
+FAILURE_CODES = frozenset(('managed_host_enrollment_required','managed_policy_migration_busy',
+    'managed_policy_migration_requires_review','managed_root_policy_required',
+    'invalid_provider_budget_loader', 'provider_budget_requires_review',
     'provider_budget_changed', 'owner_provider_budget_required', 'owner_provider_budget_mismatch',
     'owner_provider_budget_requires_completed_adoption', 'referee_snapshot_requires_review',
     'referee_room_owner_requires_review', 'referee_generation_changed',

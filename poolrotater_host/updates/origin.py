@@ -26,7 +26,10 @@ BOOTSTRAP=catalog.BOOTSTRAP.replace('from poolrotater_host.catalog_service impor
 def units(*,prefix=PREFIX,state=STATE,user=USER,custody=CUSTODY,served=SERVED):
     old=catalog.units(prefix=prefix,state=state,user=user,custody=custody,served=served)
     mapping={catalog.UNIT:UNIT,catalog.REFRESH:REFRESH,catalog.TIMER:TIMER};result={}
-    for name,text in old.items():
+    # Catalog-only background jobs are not executable-release authority. Select
+    # the reviewed listener/renewal trio explicitly when catalog assets grow.
+    for name in mapping:
+        text=old[name]
         text=text.replace('Unit='+catalog.REFRESH,'Unit='+REFRESH)
         text=text.replace('signed read-only catalog HTTPS origin','signed read-only executable-release HTTPS origin')
         text=text.replace('sealed catalog metadata refresh','sealed release metadata renewal').replace('signed catalog metadata renewal','signed release metadata renewal')
@@ -40,7 +43,7 @@ def prepare(destination,*,wheel_cache):
     runtime=destination/'runtime';(runtime/'bootstrap.py').write_text(BOOTSTRAP)
     inventory={p.relative_to(runtime).as_posix():sha256(p)for p in sorted(runtime.rglob('*'))if p.is_file()and p!=runtime/'inventory.json'}
     atomic_json(runtime/'inventory.json',{'format':1,'files':inventory});(runtime/'inventory.json').chmod(0o644)
-    for name in(catalog.UNIT,catalog.REFRESH,catalog.TIMER):(destination/name).unlink()
+    for name in catalog.units():(destination/name).unlink()
     for name,text in units().items():(destination/name).write_text(text)
     return {'ok':True,'inventory_sha256':sha256(runtime/'inventory.json'),'runtime_files':len(inventory),
             'service_installed':False,'listener_started':False,'signing_authority_created':False}

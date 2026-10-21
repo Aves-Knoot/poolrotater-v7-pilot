@@ -113,7 +113,7 @@ def main(argv=None):
     parser.add_argument('action',choices=('initialize','invite','revoke','inspect','backup','restore','serve',
                                        'ratings-prepare','ratings-grant','ratings-inspect','ratings-link-replacement','ratings-grant-seed',
                                        'ratings-policy','ratings-policy-recover','updates-inspect','activity-export','logs-search',
-                                       'recovery-inspect','recovery-request'))
+                                       'managed-inspect','managed-request','recovery-inspect','recovery-request'))
     parser.add_argument('--cert',type=Path);parser.add_argument('--key',type=Path)
     parser.add_argument('--bind',default='127.0.0.1');parser.add_argument('--port',type=int,default=9444)
     args=parser.parse_args(argv)
@@ -165,6 +165,16 @@ def main(argv=None):
             elif args.action=='updates-inspect':
                 from ..updates.telemetry import Reports
                 value=input_body();fields(value,('host_id',));result=Reports(store).local(value['host_id'])
+            elif args.action in ('managed-inspect','managed-request'):
+                from ..managed_host.hub import Repository
+                repository=Repository(store);value=input_body()
+                if args.action=='managed-inspect':
+                    fields(value,('host_id',));result=repository.inspect(value['host_id'])
+                else:
+                    required={'host_id','alias','action'}
+                    optional={'patch','timing','actor','role','expected_revision','expected_room_generation','expires_seconds','cancel_operation_id'}
+                    require(type(value) is dict and required<=set(value)<=required|optional,'unexpected_fields')
+                    result=repository.queue(**value)
             elif args.action in ('recovery-inspect','recovery-request'):
                 from ..rescue.repository import Repository
                 repository=Repository(store);value=input_body()

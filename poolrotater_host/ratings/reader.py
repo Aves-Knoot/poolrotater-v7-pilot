@@ -31,11 +31,19 @@ def profile(root):
             and value['mode'] in ('independent','network'),'invalid_ratings_reader_profile')
     if value['mode']=='network':identifier(value['server_epoch'])
     else:require(value['server_epoch'] is None,'invalid_ratings_reader_profile')
+    from ..managed_host.policy import enabled
+    if enabled(root) and value['mode']=='independent':
+        from .sync import Synchronizer
+        sync=Synchronizer(root);credential=sync.network.credential()
+        if credential is not None and sync.ensure_defaults():
+            value={**value,'mode':'network','server_epoch':sync.profile()['server_epoch']}
     return value
 
 
 def configure(sync,*,mode):
     require(mode in ('independent','network'),'invalid_ratings_reader_mode')
+    from ..managed_host.policy import require_enabled_settings
+    require_enabled_settings(sync.root,{'consume_ratings':mode=='network'})
     with file_lease(contained(sync.root,'state/ratings-reader.lock')):
         epoch=None
         if mode=='network':

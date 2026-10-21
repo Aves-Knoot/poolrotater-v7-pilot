@@ -46,6 +46,7 @@ def main(argv=None):
                    'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
                    'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch',
                    'room-settings-configure','room-settings-status',
+                   'managed-status','managed-limit','managed-request',
                    'catch-pilot-prepare','catch-pilot-status','catch-pilot-resume','catch-pilot-rollback',
                    'worker-stage','worker-queue','worker-cancel','worker-status',
                    'maintenance-request','maintenance-cancel','maintenance-status',
@@ -54,6 +55,8 @@ def main(argv=None):
         'release-init','release-publish','release-promote','release-renew','release-resume','release-status'):
         command = commands.add_parser('pilot-' + action, help='explicit protected pilot ' + action)
         command.add_argument('--instance', required=True)
+        if action in ('managed-limit','managed-request'):
+            command.add_argument('--managed-stdin',required=True,action='store_true')
         if action in ('maintenance-request','maintenance-cancel'):
             command.add_argument('--operation-id',required=True)
         if action == 'maintenance-request':
@@ -81,6 +84,8 @@ def main(argv=None):
             command.add_argument('--updates-stdin', required=True, action='store_true')
         if action == 'private-test-configure':
             command.add_argument('--private-test-stdin', required=True, action='store_true')
+        if action == 'start':
+            command.add_argument('--preserve-managed-intent',action='store_true',help=argparse.SUPPRESS)
         if action == 'owner-import':
             command.add_argument('--owner-review-stdin', required=True, action='store_true')
             command.add_argument('--snapshot-sha256', required=True)
@@ -166,6 +171,10 @@ def main(argv=None):
                 from .catch_pilot_operations import command as catch_command
                 result=catch_command(args.instance,action.removeprefix('catch-pilot-'),
                     stream=sys.stdin.buffer if action=='catch-pilot-prepare' else None)
+            elif action.startswith('managed-'):
+                from .managed_host.operations import command as managed_command
+                result=managed_command(args.instance,action.removeprefix('managed-'),
+                    stream=sys.stdin.buffer if action in ('managed-limit','managed-request') else None)
             elif action.startswith('room-settings-'):
                 from .room_settings_operations import command as settings_command
                 result=settings_command(args.instance,action.removeprefix('room-settings-'),
@@ -187,7 +196,10 @@ def main(argv=None):
                     alias=getattr(args, 'room_alias', None), room_id=getattr(args, 'created_room_id', None),
                     confirm_lost_creation=getattr(args, 'confirm_lost_creation', False),
                     transaction_id=getattr(args, 'transaction_id', None), decision=getattr(args, 'decision', None))
-            elif action in ('start', 'stop'): result = pilot.lifecycle(args.instance, action)
+            elif action in ('start', 'stop'):
+                if getattr(args,'preserve_managed_intent',False):
+                    result=pilot.lifecycle(args.instance,action,preserve_managed_intent=True)
+                else:result=pilot.lifecycle(args.instance,action)
             elif action.startswith('private-test-'):
                 from .private_pilot_operations import command as private_test_command
                 result = private_test_command(args.instance, action.removeprefix('private-test-'),

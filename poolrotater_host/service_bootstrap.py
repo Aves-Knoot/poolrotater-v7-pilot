@@ -111,6 +111,8 @@ def main():
     mode.add_argument('--network-action', choices=('configure','enroll','resume','rotate','leave','reset','status','support','update-report','reporting-configure','reporting-support','reporting-sync'),
                       help='independent installed network operation; never provider authorization')
     mode.add_argument('--network-agent',action='store_true',help='independent optional heartbeat agent')
+    mode.add_argument('--managed-action',choices=('status','limit','request'))
+    parser.add_argument('--managed-input',action='store_true',help='bounded private managed JSON on stdin')
     mode.add_argument('--ratings-action',choices=('configure','sync','fetch','status','support'))
     parser.add_argument('--ratings-input',action='store_true',help='explicit bounded ratings JSON on stdin')
     parser.add_argument('--network-input',action='store_true',help='explicit bounded network JSON on stdin')
@@ -149,7 +151,9 @@ def main():
     parser.add_argument('--verified-stage', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     prepared = bool(args.operator_authorization or args.provider_service or args.pilot_check or args.ownership_recovery or args.ownership_local_status
-                    or args.network_action or args.network_agent or args.ratings_action)
+                    or args.network_action or args.network_agent or args.ratings_action or args.managed_action)
+    if args.managed_input != (args.managed_action in ('limit','request')):
+        raise ValueError('managed private input requires explicit action')
     if args.ratings_input != (args.ratings_action=='configure'):
         raise ValueError('ratings private input requires explicit configure action')
     if args.network_input != (args.network_action in ('configure','enroll','reset','update-report','reporting-configure')):
@@ -220,6 +224,9 @@ def main():
         if args.service: command += ['--service']
         elif args.provider_service: command += ['--provider-service']
         elif args.network_agent:command += ['--network-agent']
+        elif args.managed_action:
+            command += ['--managed-action',args.managed_action]
+            if args.managed_input:command += ['--managed-input']
         elif args.ratings_action:
             command += ['--ratings-action',args.ratings_action]
             if args.ratings_input:command += ['--ratings-input']
@@ -259,6 +266,11 @@ def main():
                 command += ['--pacing-state-sha256', args.pacing_state_sha256]
         else: command += ['--probe-candidate', str(args.probe_candidate)]
         os.execve(command[0], command, env)
+    if args.managed_action:
+        from poolrotater_host.managed_host.operations import installed
+        print(json.dumps(installed(args.root,runtime['release'],args.managed_action,
+                         stream=sys.stdin.buffer if args.managed_input else None)))
+        return
     if args.network_action:
         from poolrotater_host.network.installed import run as network_action
         print(json.dumps(network_action(args.root,runtime['release'],args.network_action,

@@ -23,6 +23,8 @@ USER='poolrotater-catalog'
 UNIT='poolrotater-v7-catalog.service'
 REFRESH='poolrotater-v7-catalog-refresh.service'
 TIMER='poolrotater-v7-catalog-refresh.timer'
+EXCLUSIONS='poolrotater-v7-catalog-exclusions.service'
+EXCLUSIONS_TIMER='poolrotater-v7-catalog-exclusions.timer'
 BOOTSTRAP=HUB_BOOTSTRAP.replace('hub code','catalog code').replace('1048576','67108864').replace(
     "hashlib.sha256(p.read_bytes()).hexdigest()", "hashlib.file_digest(p.open('rb'),'sha256').hexdigest()").replace(
     'protected_hub_runtime_refused','protected_catalog_runtime_refused').replace(
@@ -122,6 +124,11 @@ InaccessiblePaths={custody}
 [Install]
 WantedBy=multi-user.target
 '''
+    # The operator's source remains0600 beneath0700 service-owned parents.
+    # Only offline root publishers need read/search; the HTTPS listener keeps
+    # an empty capability set and cannot traverse private operator state.
+    publisher_common=common.replace('CapabilityBoundingSet=\n',
+                                  'CapabilityBoundingSet=CAP_DAC_READ_SEARCH\n')
     refresh=f'''[Unit]
 Description=PoolRotater owner sealed catalog metadata refresh
 After=local-fs.target
@@ -137,7 +144,7 @@ TimeoutStopSec=20
 PrivateNetwork=yes
 RestrictAddressFamilies=AF_UNIX
 ReadWritePaths={custody} {served}
-{common}'''
+{publisher_common}'''
     timer=f'''[Unit]
 Description=PoolRotater daily signed catalog metadata renewal
 
@@ -150,7 +157,20 @@ Unit={REFRESH}
 [Install]
 WantedBy=timers.target
 '''
-    return {UNIT:listener,REFRESH:refresh,TIMER:timer}
+    exclusions=refresh.replace('owner sealed catalog metadata refresh','owner signed chart exclusion synchronization').replace(' refresh\n',' sync-exclusions\n')
+    exclusions_timer=f'''[Unit]
+Description=PoolRotater signed operator exclusion synchronization
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=15
+Unit={EXCLUSIONS}
+
+[Install]
+WantedBy=timers.target
+'''
+    return {UNIT:listener,REFRESH:refresh,TIMER:timer,EXCLUSIONS:exclusions,EXCLUSIONS_TIMER:exclusions_timer}
 
 
 def freeze_dependencies(cache,destination):
@@ -229,7 +249,7 @@ def install_assets(kit,*,expected_inventory_sha256,cert,key,served,custody,
                    prefix=PREFIX,state=STATE,user=USER,bind='127.0.0.1',port=9445):
     return _install_assets(kit,expected_inventory_sha256=expected_inventory_sha256,cert=cert,key=key,
         served=served,custody=custody,prefix=prefix,state=state,user=user,bind=bind,port=port,
-        bootstrap=BOOTSTRAP,unit_factory=units,unit_names=(UNIT,REFRESH,TIMER))
+        bootstrap=BOOTSTRAP,unit_factory=units,unit_names=(UNIT,REFRESH,TIMER,EXCLUSIONS,EXCLUSIONS_TIMER))
 
 
 def _install_assets(kit,*,expected_inventory_sha256,cert,key,served,custody,
@@ -290,7 +310,7 @@ def _install_assets(kit,*,expected_inventory_sha256,cert,key,served,custody,
         raise
 
 
-def configure_refresh(state,*,custody,bundles,exclusions=None,allow_expired_pending_renewal=False):
+def configure_refresh(state,*,custody,bundles,exclusions=None,allow_expired_pending_renewal=False,operator_exclusions=None):
     """Admin pins explicit settled all-mode inputs; no collector is invoked."""
     require(os.geteuid()==0,'catalog_administrator_required')
     protected(state,directory=True);protected(custody,directory=True,private=True)
@@ -308,18 +328,30 @@ def configure_refresh(state,*,custody,bundles,exclusions=None,allow_expired_pend
         exclusions=path_word(exclusions);protected(exclusions,maximum=65536)
         from .catalog_exclusions import validate_feed
         validate_feed(public_json(exclusions,maximum=65536));feed={'path':str(exclusions),'sha256':sha256(exclusions)}
+    operator=None
+    if operator_exclusions is not None:
+        from .catalog_operator_exclusions import read_policy
+        path=path_word(operator_exclusions);uid=path.lstat().st_uid
+        read_policy(path,uid);operator={'path':str(path),'uid':uid}
     config={'format':1,'custody':str(custody),'repository_id':publisher.state['repository_id'],
             'bootstrap_sha256':publisher.state['bootstrap_sha256'],'served':str(publisher.served),'inputs':inputs,
-            'exclusions':feed,'allow_expired_pending_renewal':allow_expired_pending_renewal}
+            'exclusions':feed,'allow_expired_pending_renewal':allow_expired_pending_renewal,
+            'operator_exclusions':operator}
     atomic_json(Path(state)/'refresh.json',config)
     return {'ok':True,'refresh_configured':True,'timer_enabled':False,'research_collection_or_analysis':False}
 
 
-def refresh(state,*,dry_run=False):
+def refresh(state,*,dry_run=False,only_exclusions=False):
     require(os.geteuid()==0,'catalog_administrator_required')
     protected(state,directory=True);protected(Path(state)/'refresh.json',private=True)
-    config=read_json(Path(state)/'refresh.json');fields(config,('format','custody','repository_id','bootstrap_sha256',
-                  'served','inputs','exclusions','allow_expired_pending_renewal'))
+    config=read_json(Path(state)/'refresh.json')
+    # Existing sealed refresh profiles remain readable until explicitly bound
+    # to the owner-maintained source. No source path is inferred from chat.
+    config.setdefault('operator_exclusions',None)
+    fields(config,('format','custody','repository_id','bootstrap_sha256',
+                  'served','inputs','exclusions','allow_expired_pending_renewal','operator_exclusions'))
+    require(type(only_exclusions) is bool,'catalog_refresh_configuration_refused')
+    if only_exclusions:require(config['operator_exclusions'] is not None,'catalog_operator_exclusions_not_configured')
     require(type(config['format']) is int and config['format']==1 and type(config['allow_expired_pending_renewal']) is bool
             and complete_modes(config['inputs']),'catalog_refresh_configuration_refused')
     from .catalog_publication import Publisher
@@ -347,21 +379,42 @@ def refresh(state,*,dry_run=False):
         if config['exclusions'] is not None:
             item=config['exclusions'];fields(item,('path','sha256'));path=protected(item['path'],maximum=65536)
             require(sha256(path)==item['sha256'],'catalog_refresh_inputs_changed');feed=public_json(path,maximum=65536)
+        operator=None
+        if config['operator_exclusions'] is not None:
+            from .catalog_operator_exclusions import read_policy,merge_policy
+            from .catalog_publication import _cumulative,_default_feed
+            item=config['operator_exclusions'];fields(item,('path','uid'))
+            operator=read_policy(path_word(item['path']),item['uid'])
+            current=publisher.state['exclusions'] or _default_feed()
+            if feed is not None:
+                from .catalog_exclusions import validate_feed
+                validate_feed(feed)
+                # An immutable optional seed can predate a previously mirrored
+                # publication. Never lower its revision or resurrect exclusions
+                # deliberately reversed by a newer signed policy.
+                if feed['revision']>=current['revision']:current=_cumulative(publisher.state['exclusions'],feed)
+            feed=merge_policy(current,operator['ids'])
         if dry_run:
             for mode,path in bundles.items():require(inspect_bundle(path)['mode']==mode,'catalog_refresh_mode_refused')
             return {'ok':True,'refresh_configuration_valid':True,'dependencies_verified':True,
-                    'catalogs_published':False,'research_collection_or_analysis':False}
+                    'catalogs_published':False,'research_collection_or_analysis':False,
+                    'operator_exclusions_count':len(operator['ids']) if operator is not None else None}
+        if only_exclusions and feed==publisher.state['exclusions']:
+            return {'ok':True,'operator_exclusions_synchronized':True,'operator_exclusions_count':len(operator['ids']),
+                    'catalogs_published':False,'scheduled_refresh':True,'research_collection_or_analysis':False}
         result=publisher.publish(bundles,exclusions=feed)
-        return {**result,'scheduled_refresh':True,'research_collection_or_analysis':False}
+        return {**result,'scheduled_refresh':True,'research_collection_or_analysis':False,
+                **({'operator_exclusions_synchronized':True,'operator_exclusions_count':len(operator['ids'])} if operator is not None else {})}
 
 
 def main(argv=None):
     import argparse,json
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--state',type=Path,required=True)
-    parser.add_argument('action',choices=('check','serve','refresh','check-refresh','initialize','configure-refresh'))
+    parser.add_argument('action',choices=('check','serve','refresh','sync-exclusions','check-refresh','initialize','configure-refresh'))
     parser.add_argument('--custody',type=Path);parser.add_argument('--served',type=Path)
     for mode in MODES:parser.add_argument('--'+mode,type=Path)
     parser.add_argument('--exclusions',type=Path);parser.add_argument('--allow-expired-pending-renewal',action='store_true')
+    parser.add_argument('--operator-exclusions',type=Path)
     args=parser.parse_args(argv)
     try:
         if args.action=='initialize':
@@ -372,8 +425,10 @@ def main(argv=None):
         elif args.action=='configure-refresh':
             require(args.custody is not None and all(getattr(args,mode) is not None for mode in CORE_MODES),'catalog_refresh_configuration_refused')
             result=configure_refresh(args.state,custody=args.custody,bundles={mode:getattr(args,mode) for mode in MODES if getattr(args,mode) is not None},
-                exclusions=args.exclusions,allow_expired_pending_renewal=args.allow_expired_pending_renewal)
-        elif args.action in ('refresh','check-refresh'):result=refresh(args.state,dry_run=args.action=='check-refresh')
+                exclusions=args.exclusions,allow_expired_pending_renewal=args.allow_expired_pending_renewal,
+                operator_exclusions=args.operator_exclusions)
+        elif args.action in ('refresh','check-refresh','sync-exclusions'):
+            result=refresh(args.state,dry_run=args.action=='check-refresh',**({'only_exclusions':True} if args.action=='sync-exclusions' else {}))
         else:
             protected(args.state,directory=True);protected(args.state/'listener.json')
             config=listener_settings(public_json(args.state/'listener.json'))

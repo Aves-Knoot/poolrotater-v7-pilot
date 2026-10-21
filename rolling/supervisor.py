@@ -708,6 +708,8 @@ class RollingSupervisor:
         self._protected_requests()
         from poolrotater_host.operator_maintenance import poll as maintenance_poll
         maintenance_poll(self)
+        managed=getattr(self,'managed',None)
+        if managed is not None:managed.tick()
         now = time.monotonic()
         for alias, worker in list(self.workers.items()):
             if alias == self.rollout_alias:
@@ -783,6 +785,38 @@ class RollingSupervisor:
             prefix = str(self.configs[alias].get("command_prefix", ".") or ".")
             content = command.content.removeprefix(prefix).strip().split()
             name = content[0].casefold() if content else ""
+            managed=getattr(self,'managed',None)
+            if managed is not None and (name in ('open','reopen','close') or
+                    name=='shutdown' and [v.casefold() for v in content[1:]]==['all']):
+                if command.role!='ADMIN':
+                    self.discord.send_to_channel('Room administration requires an administrator.',command.channel_id)
+                    continue
+                if name=='shutdown':
+                    from poolrotater_host.managed_host.projection import export
+                    from poolrotater_host.discord_relay.fleet import operation_identity
+                    try:
+                        fresh=managed.state.operator_stop(operation_id=operation_identity(command.channel_id,command.message_id),
+                                                          actor='discord:'+str(command.discord_user_id))
+                    except Exception:
+                        self.discord.send_to_channel('Room shutdown refused; inspect fleet status.',command.channel_id)
+                        continue
+                    if not fresh:
+                        self.discord.send_to_channel('That shutdown request was already processed; no new shutdown was sent.',command.channel_id)
+                        continue
+                    export(managed.state)
+                    self.discord.send_to_channel('Stopping all rooms; their stopped intent is saved.',command.channel_id)
+                    self.request_shutdown();continue
+                try:
+                    from poolrotater_host.discord_relay.fleet import operation_identity
+                    message=getattr(command,'message_id',0)
+                    if type(message) is not int or message<=0 or len(content)!=1:raise ValueError('invalid_lifecycle_request')
+                    action='close' if name=='close' else 'open';operation_id=operation_identity(command.channel_id,message)
+                    receipt=managed.state.local_lifecycle(alias,action,operation_id=operation_id,actor='discord:'+str(command.discord_user_id))
+                    self.discord.send_to_channel('Room '+action+': '+receipt['phase']+
+                        '; operation '+operation_id+'. Closure waits for the room to be empty.',command.channel_id)
+                except Exception:
+                    self.discord.send_to_channel('Room operation refused; inspect the current fleet status before retrying.',command.channel_id)
+                continue
             if name == "shutdown" and [v.casefold() for v in content[1:]] == ["all"]:
                 self.discord.send_to_channel("Shutting down all lobby rooms and the supervisor.", command.channel_id)
                 self.request_shutdown()
@@ -836,6 +870,12 @@ class RollingSupervisor:
         public = {"generated_at": state["generated_at"], "supervisor_version": self.manifest["version"], "rooms": {}}
         for alias, row in state["rooms"].items():
             worker = self.workers.get(alias)
+            if (getattr(worker,'broker',None) is not None
+                    and worker.broker.cfg.get('managed_visibility')=='private'):
+                continue
+            managed=getattr(self,'managed',None)
+            if managed is not None and managed.state.room(alias)['config'].get('visibility')=='private':
+                continue
             fresh = bool(worker and worker.fresh() and worker.status.get("ready")
                          and worker.status.get("running") and row.get("room_id")
                          and row.get("room_id") == worker.status.get("room_id"))
@@ -887,6 +927,10 @@ class RollingSupervisor:
             if self.chat_websocket:
                 self.chat_websocket.start()
             for alias in self.configs:
+                managed=getattr(self,'managed',None)
+                if managed is not None and not managed.startup_allowed(alias):
+                    managed.park(alias)
+                    continue
                 try:
                     pinned = self.start_release_for(alias)
                     self.activate(self.prepare(alias, pinned))

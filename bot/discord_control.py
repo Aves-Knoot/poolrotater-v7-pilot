@@ -84,6 +84,7 @@ class DiscordCommand:
     role: str
     content: str
     channel_id: int
+    message_id: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,6 +411,13 @@ class DiscordControl:
         routed = self._route_command(content, channel_id=channel_id)
         return [(self, routed)] if routed is not None else []
 
+    def _channel_allows_command(self,channel) -> bool:
+        """Specialized staff surfaces may require private-channel evidence."""
+        return True
+
+    def _channel_allows_outbound(self,channel) -> bool:
+        return True
+
     def send_to_channel(
         self,
         content: str,
@@ -681,6 +689,8 @@ class DiscordControl:
                         channel = self.get_channel(outbound.channel_id)
                         if channel is None:
                             channel = await self.fetch_channel(outbound.channel_id)
+                        if not parent._channel_allows_outbound(channel):
+                            continue
                         if outbound.reaction:
                             map_post = map_messages.get(
                                 (outbound.channel_id, outbound.map_key)
@@ -921,6 +931,8 @@ class DiscordControl:
                     return
                 if int(message.channel.id) not in parent._channel_ids():
                     return
+                if not parent._channel_allows_command(message.channel):
+                    return
                 original_content = str(message.content or "").strip()
                 targets = parent.command_targets(original_content, int(message.channel.id))
                 if not targets:
@@ -957,6 +969,7 @@ class DiscordControl:
                             role=role,
                             content=content[:1000],
                             channel_id=int(message.channel.id),
+                            message_id=int(message.id),
                         )
                     )
                     try:

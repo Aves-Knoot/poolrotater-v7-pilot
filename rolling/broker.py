@@ -161,6 +161,8 @@ class Broker:
         value={'format':1,'room_id':room_id,'connection_generation':connection_generation,
                'observed_at':time.time()}
         self.journal(creation_candidate=value)
+        managed=getattr(self.owner,'managed',None)
+        if managed is not None:managed.creation_candidate(self,room_id)
         self._creation_candidate=value
         log.warning('room creation candidate recorded before owner verification: alias=%s room_id=%d',self.alias,room_id)
 
@@ -207,6 +209,15 @@ class Broker:
                     self.journal(operation='owned', ownership_unknown=False)
                     self.uncertain = False
                 return scrub(result)
+            managed=getattr(self.owner,'managed',None)
+            if managed is not None and self.cfg.get('managed_visibility')=='private':
+                desired=managed.state.room(self.alias,private=True)['config'].get('password')
+                if desired and desired!=self.password:
+                    self.uncertain=True
+                    self.hub.change_room_settings(int(result['room_id']),password=desired)
+                    self.password=desired;result['password']=desired
+                    self.journal(operation='owned',ownership_unknown=False)
+                    self.uncertain=False
             return result
 
     def creation_begin(self):
@@ -215,6 +226,8 @@ class Broker:
             raise HubDisconnected('worker lost authority before room creation')
         if self.hub.owned or self.uncertain:
             raise HubInvocationUncertain('previous room ownership unresolved')
+        managed=getattr(self.owner,'managed',None)
+        if managed is not None:managed.creation_begin(self)
         self.journal(operation='make_pending', ownership_unknown=True,
                      creation_candidate=None, creation_verification_failure=None)
         self.uncertain = True
@@ -232,6 +245,8 @@ class Broker:
                      creation_candidate=None, creation_verification_failure=None)
         self.uncertain = False
         self._creation_candidate = None
+        managed=getattr(self.owner,'managed',None)
+        if managed is not None:managed.owned(self,int(result['room_id']))
 
     def close_room(self, rid, *, require_empty=True):
         with self.owner.shared.lock:
@@ -248,11 +263,13 @@ class Broker:
             self.known = False
             self.reporting_visibility(public=False,room_id=rid)
             self.owner.room_closed(self.alias, rid)
+            managed=getattr(self.owner,'managed',None)
+            if managed is not None:managed.closed(self,rid)
             return result
 
     def publish(self):
         with self.owner.shared.lock:
-            if self.private_pilot is not None:
+            if self.private_pilot is not None or self.cfg.get('managed_visibility')=='private':
                 self.pending_public = False
                 return
             if self.pending_public and self.hub.owned:
@@ -321,8 +338,17 @@ class Broker:
                 if operation == 'ChangeRoomSettings' and self.private_pilot is not None and 'password' in values[1]:
                     values = [values[0], {k:v for k,v in values[1].items() if k != 'password'}]
                     if not values[1]:return None
+                if (operation=='ChangeRoomSettings' and self.cfg.get('managed_visibility')=='private'
+                        and values[1].get('password')==''):
+                    managed=getattr(self.owner,'managed',None)
+                    password=managed.state.room(self.alias,private=True)['config'].get('password') if managed else None
+                    if not isinstance(password,str) or not password:
+                        raise HubInvocationUncertain('managed_private_access_requires_review')
+                    # Maintenance cancellation restores the saved private access
+                    # rather than clearing it or leaving the temporary gate key.
+                    values=[values[0],{**values[1],'password':password}]
                 if operation == "ChangeRoomSettings" and self.private and values[1].get("password") == "":
-                    self.pending_public = self.private_pilot is None
+                    self.pending_public = self.private_pilot is None and self.cfg.get('managed_visibility')!='private'
                     values = [values[0], {k: v for k, v in values[1].items() if k != "password"}]
                     if not values[1]:
                         return None
@@ -381,6 +407,8 @@ class Broker:
                 return scrub(result)
             return result
         if method in ("discord.send_to_channel", "discord.react_to_map", "discord.update_public_status"):
+            if self.cfg.get('managed_visibility')=='private' and method=='discord.update_public_status':
+                return False
             if self.private_pilot is not None and method == 'discord.update_public_status':
                 from poolrotater_host.private_pilot import discord_status_enabled
                 if not discord_status_enabled(self.owner.runtime,self.private_pilot):return False
@@ -395,8 +423,20 @@ class Broker:
             if channel and int(channel) not in allowed:
                 raise ValueError("Discord channel ownership mismatch")
             if method == "discord.update_public_status" and any(k in kwargs for k in (
-                    "channel_base_name", "display_name", "instance")):
+                    "channel_base_name", "display_name", "instance", "_runtime_settings")):
                 raise ValueError("public status identity belongs to supervisor")
+            if method == "discord.update_public_status":
+                # hello() binds cfg to this verified worker generation. Never
+                # classify Standard by its otherwise harmless default key count.
+                current={key:self.cfg.get(key,default) for key,default in (
+                    ('ruleset_id',0),('mania_keys',4),('auto_difficulty',False),('loved_mode',False))}
+                worker=getattr(self.owner,'workers',{}).get(self.alias)
+                if (worker is not None and getattr(worker,'broker',None) is self
+                        and callable(getattr(worker,'fresh',None)) and worker.fresh()
+                        and worker.status.get('room_id') in self.hub.owned
+                        and type(worker.status.get('auto')) is bool):
+                    current['auto_difficulty']=worker.status['auto']
+                kwargs['_runtime_settings']=current
             return getattr(self.discord, method[8:])(*args, **kwargs)
         if method in ("modlog.submit_chat", "modlog.submit_event"):
             return getattr(self.modlog, method[7:])(*args, **kwargs)

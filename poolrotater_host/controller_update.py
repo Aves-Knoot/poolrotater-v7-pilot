@@ -82,7 +82,14 @@ def _rows(target, parent, *, now, after=None):
             or after is not None and generated <= after): return None
     rooms = value.get('rooms')
     if type(rooms) is not dict or not rooms: return None
+    from .managed_host.admission import closed_aliases
+    closed=closed_aliases(target,parent,rooms)
+    rooms={alias:dict(row) for alias,row in rooms.items()}
     for alias,row in rooms.items():
+        row.pop('managed_closed',None)
+        if alias in closed:
+            row.update(managed_closed=True,empty_seconds=max(0,now-row.get('updated_at',now)),room_id=None)
+            continue
         status = row.get('status', {})
         age = row.get('heartbeat_age')
         if (row.get('phase') != 'running' or row.get('healthy') is not True
@@ -190,9 +197,11 @@ def _uncertain_maintenance(target,parent,job,*,now):
     if (type(generated)not in(int,float) or not math.isfinite(generated)
             or not 0<=now-generated<=8 or type(rows)is not dict
             or set(rows)!=set(job['rooms'])):return False
-    return any(type(row)is dict and type(row.get('status'))is dict
+    from .managed_host.admission import closed_aliases
+    closed=closed_aliases(target,parent,rows)
+    return any(alias not in closed and type(row)is dict and type(row.get('status'))is dict
         and type(row['status'].get('maintenance'))is dict
-        and row['status']['maintenance'].get('uncertain')is True for row in rows.values())
+        and row['status']['maintenance'].get('uncertain')is True for alias,row in rows.items())
 
 
 def _same_rooms(rows, job):
@@ -208,7 +217,7 @@ def identity(rows):
 
 def _gated(rows, job):
     if not _same_rooms(rows, job): return False
-    return all(type(r.get('empty_seconds')) in (int,float) and r['empty_seconds'] >= 2
+    return all(r.get('managed_closed') is True or type(r.get('empty_seconds')) in (int,float) and r['empty_seconds'] >= 2
         and r.get('status',{}).get('paused') is True
         and r.get('status', {}).get('maintenance') == {
         'nonce':job['nonce'], 'locked':True, 'uncertain':False, 'error':None}
@@ -219,9 +228,11 @@ def journal_matches(target,parent,job):
     from .reconciliation import _journal
     value=_journal(_control(target['root']/'state/rolling/ownership.json',
         parent['service_uid'],private=True),set(job['rooms']))
+    from .managed_host.admission import closed_aliases
+    closed=closed_aliases(target,parent,value['rooms'])
     return (identity(value['rooms']) == job['worker_identity'] and all(
-        r.get('phase')=='running' and r.get('operation')=='owned'
-        and r.get('ownership_unknown') is False for r in value['rooms'].values()))
+        alias in closed or r.get('phase')=='running' and r.get('operation')=='owned'
+        and r.get('ownership_unknown') is False for alias,r in value['rooms'].items()))
 
 
 def _gate(target, parent, job, phase):
@@ -275,6 +286,13 @@ def queue(instance, bundle, sha256, *, from_sha256, deployment_id=None, release_
         if old and old.get('phase') not in ('complete','cancelled'):
             raise ConfigError('a controller update already needs completion or review')
         native = _control(target['root'] / 'state/rolling/status.json', parent['service_uid'])
+        service = _service_state(instance)
+        stopped=None
+        if service['MainPID']==0 and service['ActiveState'] in ('inactive','failed'):
+            from .managed_host.admission import stopped_host
+            stopped=stopped_host(target,parent,reconcile=True)
+            if stopped is None:raise ConfigError('stopped controller requires confirmed managed off intent')
+            native={'rooms':stopped['rooms']}
         from .ratings.operations import _identity
         from .layout import load
         with _identity(parent['service_uid']): _, host = load(target['root'])
@@ -309,18 +327,54 @@ def queue(instance, bundle, sha256, *, from_sha256, deployment_id=None, release_
             archive.chmod(0o444)
             if hashlib.sha256(archive.read_bytes()).hexdigest() != sha256:
                 raise ConfigError('queued archive differs from staged candidate')
-        service = _service_state(instance); network = _state(instance)
+        network = _state(instance)
         job = {'format':1, 'id':deployment_id or str(uuid.uuid4()), 'phase':'waiting_empty',
             'before':parent, 'after':candidate, 'archive':str(archive),
-            'process':_process(service['MainPID']), 'rooms':sorted(aliases),
+            'process':_process(service['MainPID']) if stopped is None else None, 'rooms':sorted(aliases),
             'configuration':_config_hashes(target['root']), 'service_enabled':service['UnitFileState']=='enabled',
             'network_active':network['ActiveState']=='active', 'network_enabled':network['UnitFileState']=='enabled',
             'queued_at':time.time(), 'empty_since':None, 'reason':'waiting_for_all_rooms_empty',
             'automatic_recovery':{'format':1,'attempts':0}}
         if release_approval_required:job['release_approval_required']=True
+        from .managed_host.projection import read as managed_projection
+        projection=managed_projection(target['root'],marker)
+        if projection is not None:job['managed_before']=projection
         _write(path, job)
         return {'ok':True, 'phase':job['phase'], 'id':job['id'], 'release':staged['release'],
                 'services_restarted':False, 'all_rooms_empty_required':True}
+
+
+def _step_managed_stopped(instance,target,parent,job,save):
+    """Install through a positively closed host, without inventing a worker PID."""
+    from .managed_host.admission import stopped_host,stop_only_configuration
+    proof=stopped_host(target,parent,reconcile=True)
+    if proof is None:return False
+    actual=_config_hashes(target['root'])
+    if not stop_only_configuration(target,parent,job,proof,actual):
+        save(phase='held',reason='configuration_changed_since_queue')
+        return True
+    from .updates.recovery import _approval
+    _approval(target,job)
+    # Recheck after complete artifact hashing under deployment admission. No
+    # helper or explicit operator start can slip between this and commit.
+    from .pilot_operations import _service_state
+    service=_service_state(instance)
+    latest=stopped_host(target,parent,reconcile=True)
+    if (service['MainPID']!=0 or service['ActiveState'] not in ('inactive','failed')
+            or latest is None or _config_hashes(target['root'])!=actual):return False
+    _gate(target,parent,job,None)
+    if actual!=job['configuration']:
+        save(configuration_before_stop=job['configuration'],configuration=actual)
+    save(phase='committing',commit_started_at=time.time(),stage='approval',stage_at=time.time(),
+         reason='managed_rooms_confirmed_closed_and_intentionally_stopped',
+         admission_kind='managed_intentionally_stopped',
+         automatic_recovery=job.get('automatic_recovery',{'format':1,'attempts':0}))
+    try:_commit(instance,target,parent,job,save)
+    except Exception as error:
+        from .update_lifecycle import failed
+        failed(save,job,error)
+        if job['phase']=='held':disarm(instance)
+    return True
 
 
 def step(instance):
@@ -336,7 +390,7 @@ def step(instance):
             result=controller(instance,observed['id'],'complete',automatic=True)
             if result.get('phase')in('complete','held'):disarm(instance)
             return result
-    with file_lease(target['prefix'] / 'controller-update-admin.lock'):
+    with file_lease(target['prefix'] / 'deployment-admission.lock'),file_lease(target['prefix'] / 'controller-update-admin.lock'):
         path = target['prefix'] / NAME; job = _control(path)
         if job.get('phase') in ('complete','cancelled','held'):
             disarm(instance)
@@ -350,7 +404,11 @@ def step(instance):
                  next_action='review_controller_update_with_operation_id')
             return {'ok':False,'phase':'held','reason':job['reason']}
         parent = job['before']
-        try: same_process=_process(_service_state(instance)['MainPID']) == job['process']
+        service=_service_state(instance)
+        if (current==parent and service['MainPID']==0 and service['ActiveState'] in ('inactive','failed')
+                and _step_managed_stopped(instance,target,parent,job,save)):
+            return {'ok':job['phase']!='held','phase':job['phase'],'reason':job.get('reason')}
+        try: same_process=_process(service['MainPID']) == job['process']
         except (ConfigError, OSError): same_process=False
         if current != parent or not same_process:
             save(phase='held', reason='controller_identity_changed')
@@ -384,7 +442,7 @@ def step(instance):
         rows=_rows(target,parent,now=now)
         if rows is not None and set(rows) != set(job['rooms']): rows=None
         if job['phase']=='waiting_empty':
-            if rows is None or any(r['status'].get('paused') for r in rows.values()):
+            if rows is None or any(not r.get('managed_closed') and r['status'].get('paused') for r in rows.values()):
                 save(empty_since=None,reason='waiting_for_all_rooms_empty')
             elif job['empty_since'] is None or not _same_rooms(rows,job) or now < job['empty_since']:
                 save(empty_since=now,room_ids={a:r['room_id']for a,r in rows.items()},
@@ -445,7 +503,7 @@ def step(instance):
 
 
 def _commit(instance,target,parent,job,save):
-    from .pilot_operations import _systemctl, lifecycle
+    from .pilot_operations import _systemctl, automatic_start
     from .network import operations as network
     from .pilot_upgrade import upgrade
     # No mutation or token I/O outside the already-running services. Native
@@ -468,6 +526,10 @@ def _commit(instance,target,parent,job,save):
     _systemctl('stop',target['unit'],timeout=100); _systemctl('disable',target['unit'])
     checkpoint(save,'cleanup')
     wait_stopped(target['root'],parent['service_uid'],save=save)
+    if job.get('admission_kind')=='managed_intentionally_stopped':
+        from .managed_host.admission import stopped_host
+        if stopped_host(target,parent,reconcile=True) is None:
+            raise ConfigError('update_guard_requires_review')
     save(services_stopped_at=time.time())
     _gate(target,parent,job,None)
     checkpoint(save,'upgrade')
@@ -476,17 +538,21 @@ def _commit(instance,target,parent,job,save):
     checkpoint(save,'configuration')
     if _config_hashes(target['root']) != job['configuration']:
         raise ConfigError('configuration changed during controller upgrade')
+    from .managed_host.upgrade import prepare as prepare_managed_configuration
+    prepare_managed_configuration(target,job['after'],job)
     save(upgrade_transition=result['transition_id'])
     checkpoint(save,'controller_start',startup_attempted_at=time.time())
-    started=lifecycle(instance,'start')
+    started=automatic_start(instance,target['root'])
     if not started.get('ok'): raise ConfigError('upgraded controller startup requires review')
     checkpoint(save,'readiness')
     from .updates.recovery import wait_for_workers
     wait_for_workers(instance,target,job['after'])
     checkpoint(save,'network_restore')
     if job['service_enabled']: _systemctl('enable',target['unit'])
-    if job['network_active']: network.unit(instance,'start')
-    if job['network_enabled']: _systemctl('enable','poolrotater-v7-network-'+instance+'.service')
+    from .managed_host.policy import administrative_enabled as managed_enabled
+    managed=managed_enabled(target['root'],job['after']['service_uid'])
+    if job['network_active'] or managed: network.unit(instance,'start')
+    if job['network_enabled'] or managed: _systemctl('enable','poolrotater-v7-network-'+instance+'.service')
     checkpoint(save,'completion')
     save(phase='complete',reason='controller_upgraded_configuration_preserved',completed_at=time.time())
     disarm(instance)

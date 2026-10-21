@@ -73,3 +73,17 @@ class ProviderOAuth(OAuthAuthority):
             gate = self._require_gate()
             initial = gate._read()
             return gate._recover_locked(initial, expected_state_sha256)
+
+    def _prepare_owner_verification(self):
+        # OAuthAuthority calls this only after obtaining the lifetime owner and
+        # OAuth leases, rechecking installation integrity and rejecting pending
+        # authorization. No request, token refresh or room mutation has begun.
+        from .managed_host.policy import enabled
+        if not enabled(self.root):
+            return
+        record = self._read(self.token_path, 'token')
+        if record['phase'] not in ('ready', 'unverified'):
+            raise AuthError('credential_recovery_required')
+        if record['user_id'] != self._account():
+            raise AuthError('expected_account_mismatch')
+        self._require_gate()._rebase_idle_boot()
