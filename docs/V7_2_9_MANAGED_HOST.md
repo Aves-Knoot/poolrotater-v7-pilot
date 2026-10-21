@@ -45,7 +45,7 @@ upgrade transaction is never blindly replayed. This repairs transient-reader
 holds found by the real installed automatic-updater qualification.
 
 This is a controller update. Exact published v7.2.6/v7.2.7/v7.2.8 updater paths
-must pass installed acceptance before publication. Each host uses its verified
+passed installed acceptance with the attribution below. Each host uses its verified
 host-wide empty/idle gate, with no forced occupied-room interruption. Queueing,
 waiting-empty, installed and verified healthy are separate deployment states.
 
@@ -75,3 +75,11 @@ No actual osu! gameplay was performed for this qualification. Production update
 queues and installed versions are separate from publication; occupied hosts
 wait for the proven safe gate. Credentials and private moderation evidence are
 excluded from these artifacts.
+
+
+Documentation clarification (October 21): the current
+[operator guide](MANAGED_HOST_ADMIN.md) supersedes candidate labels retained in
+the original installer archive. The runtime and installer assets are unchanged.
+Private fleet Discord controls require a verified staff-only channel configured
+on the hub; publication alone does not enable them. The owner exclusion signer
+is deployed and all sixteen current IDs were verified in every compatible feed.

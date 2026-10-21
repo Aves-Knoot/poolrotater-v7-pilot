@@ -1,9 +1,17 @@
-# Managed-host administration — candidate operator guide
+# Managed-host administration — v7.2.9 operator guide
 
-This guide describes the isolated managed-host candidate. It is not a claim that
-v7.2.8 or the running owner/community installations have these controls. Publish
-and queue only after the full installed donor acceptance and compatibility gates
-in `PRIVATE_LOBBIES_AND_FLEET_ADMIN_PLAN.md` pass.
+v7.2.9 is published and its protected installed qualification is complete within
+the scope recorded in the release's VALIDATION.json. This does not mean every
+host has installed it: v7.2.8 hosts keep legacy behaviour until their safe update
+finishes and their capabilities prove migration. See
+[V7_2_9_MANAGED_HOST.md](V7_2_9_MANAGED_HOST.md) for exact validation attribution.
+
+The current hub needs a dedicated, verified staff-only `fleet_channel_id` before
+Discord fleet controls are enabled. Channel setup is a separate administrative
+prerequisite; it must not be bypassed by using public lobby panels or a channel
+visible to unrelated bots. Until that channel is configured and validated,
+`.fleet` is unavailable on that hub. Ordinary existing room controls remain
+separate.
 
 ## Staff Discord surface
 
@@ -87,7 +95,9 @@ native ownership/closure checks; leaving the referee is not closure.
 effective defaults. It labels historical snapshots as synchronizing when they do
 not match the latest capability revisions. Temporary player selections remain
 separate from persistent defaults. Constructor/main-loop qualification of all
-fields and effective acknowledgments is a remaining release gate.
+fields and effective acknowledgments is covered by the published qualification;
+see VALIDATION.json for the distinction between exact final-runtime checks and
+retained earlier native-lifecycle evidence.
 
 Large greeting dictionaries are transferred as authenticated 24 KiB pages on
 `/v1/hosts/self/managed-settings`, outside the frequent capability heartbeat.
@@ -116,11 +126,11 @@ printf '%s\n' '{"max_concurrent_rooms":4}' |
 
 Zero blocks new creation and drains rooms naturally once empty. Lowering a limit
 does not abruptly remove occupied players. Explicit ceilings survive upgrades.
-The candidate's stopped preparation adds addressable slots through room4 when
+The managed release's stopped preparation adds addressable slots through room4 when
 a retained installation has fewer aliases. Existing room order, saved defaults,
 intent and channel bindings remain. New slots start deliberately stopped with no
 room identity or creation reservation; provisioning a slot does not open a room.
-Actual installed upgrade acceptance remains a release gate. Do not edit
+Installed upgrade qualification is recorded in VALIDATION.json. Do not edit
 `host.json` manually to work around that preparation.
 
 An explicit whole-service operator stop saves desired-off before systemd is
@@ -151,7 +161,8 @@ through the pinned catalog TLS/TUF origin. Preparation adds missing modes and
 preserves already-selected content IDs; there is no local collection or analysis.
 A durable catalog transaction handles interrupted staging and activation.
 Configuration migration likewise pins exact planned bytes before replacement.
-These paths are candidate implementation pending full installed qualification.
+These paths passed installed qualification with the attribution recorded in
+VALIDATION.json; synthetic provider tests are not actual osu! gameplay acceptance.
 
 ## Managed participation and rollout
 
@@ -163,23 +174,23 @@ Enrollment alone is not proof that the hub has accepted the contribution policy;
 the authenticated managed exchange establishes that authority. Hosting-account
 OAuth and Discord credentials stay local and are preserved.
 
-This candidate changes shared controller contracts. Its rollout needs the proven
-host-wide empty/idle admission path, including intentionally stopped slots, rather
-than a worker-only swap. Full installed tests for fresh installation, actual
-v7.2.6/v7.2.7/v7.2.8 upgrades, stopped-controller/update races, missing-catalog
-acquisition, private visibility and fleet controls remain mandatory. Until those
-pass, no managed release or signed deployment queue should be advertised ready.
+This release changes shared controller contracts. Its rollout uses the proven
+host-wide empty/idle admission path, including intentionally stopped slots,
+rather than a worker-only swap. Original automatic updater paths from published
+v7.2.6, v7.2.7 and v7.2.8 passed installed qualification with the exact reference
+revisions and limits recorded in VALIDATION.json. Queued, waiting-empty,
+installed and healthy remain distinct states. Never force an occupied-host
+restart or clear ownership journals to accelerate deployment.
 
-
-Candidate slot preparation: retained hosts gain four addressable aliases during
+Managed slot preparation: retained hosts gain four addressable aliases during
 stopped root preparation, while missing slots remain deliberately stopped. The
 local concurrent ceiling (default4) remains separate from intended active room
 count and is preserved, including zero. Extra slots do not inherit Discord
 channel IDs or credentials. First-start and interrupted preparation reuse a
-root-owned exact plan. This behaviour still awaits full installed acceptance.
+root-owned exact plan. Installed slot/upgrade coverage is recorded in VALIDATION.json.
 
 
-## Owner chart-exclusion distribution (unreleased candidate)
+## Owner chart-exclusion distribution
 
 The origin can bind its root-owned catalog-refresh configuration to the owner's
 existing chart-exclusion file with `configure-refresh --operator-exclusions`.
@@ -195,6 +206,13 @@ silently undo a signed exclusion; an explicit signed reversal remains required.
 Invalid or changed-owner source files leave the last signed publication intact.
 The listener and room services do not restart for an exclusion publication.
 
-This origin-side binding/timer still requires installed acceptance and deployment;
-the presence of this documentation does not mean all sixteen owner exclusions
-have already reached community hosts.
+The owner origin binding and five-minute timer are deployed. All sixteen current
+owner exclusions were independently verified in the three compatible signed
+feeds with native pinned TUF verification and all five full catalogs unchanged.
+That proves publication; a particular host receives the feed during its normal
+refresh. Do not report a community host as synchronized without its receipt.
+
+The original v7.2.9 installer archive retains an earlier copy of this guide with
+candidate labels. This published guide supersedes those labels. Runtime and
+installer digests remain immutable; no reinstall or new runtime is needed for
+this documentation correction.
