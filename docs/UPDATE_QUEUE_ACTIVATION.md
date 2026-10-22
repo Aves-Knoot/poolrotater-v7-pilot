@@ -5,7 +5,7 @@ rooms remain running. Their root queue reads the service-owned managed-settings
 projection with the wrong effective UID. v7.2.12 keeps the strict ownership and
 privacy checks and reads that file under the existing service identity.
 
-An affected host needs the pinned `poolrotater-activate-v7.2.12-v3.py` release asset
+An affected host needs the pinned `poolrotater-activate-v7.2.12-v4.py` release asset
 once, run as root with `--instance YOUR_EXISTING_INSTANCE`. Verify its checksum
 against `RELEASE_SHA256SUMS.txt` from the matching GitHub release first. The
 activation downloads the exact pinned runtime, validates its archive, and uses
@@ -36,4 +36,6 @@ signatures, anti-rollback state and exact installed-baseline checks remain.
 Use the v7.2.12 activator; the earlier v7.2.11 activator can safely refuse with
 `queue_activation_signed_target_changed` without queueing or stopping rooms.
 
-Activation revision3 also arms the exact checked native controller timer after queue admission. It does not stop rooms. Earlier activation revisions may leave a waiting job without arming its timer; retain that job and use revision3 with the same instance.
+Activation revision4 also arms the exact checked native controller timer after queue admission. It does not stop rooms. Earlier activation revisions may leave a waiting job without arming its timer; retain that job and use revision4 with the same instance.
+
+Revision4 uses a temporary protected root-owned staging directory under `/opt`, so native custody checks never inherit the world-writable `/tmp` parent. Verified SDK files remain read-only and the private archive is removed afterward. Exact revision4 logic passed actual running-owner admission and native timer arming without stopping rooms.
