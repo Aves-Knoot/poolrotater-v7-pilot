@@ -67,8 +67,12 @@ class NativeAdapter:
         alias=value['alias']
         if alias not in self.owner.configs:raise BeforeMutationError('room_not_found')
         row=self.state.room(alias,private=True)
+        if value['action']=='catalog':
+            from ..catalog_store import mode_for
+            if mode_for({'preset':row['config']['preset']})!=value['patch']['mode']:
+                raise BeforeMutationError('catalog_unavailable')
         limits=self.state.limits()
-        needs_open=value['action'] in ('open','restart') or value['action']=='configure' and row['desired']=='running' and settings.application(value['patch'])=='recreate'
+        needs_open=value['action'] in ('open','restart') or value['action']=='catalog' and row['desired']=='running' or value['action']=='configure' and row['desired']=='running' and settings.application(value['patch'])=='recreate'
         if needs_open and (limits['effective_limit']==0 or limits['capacity_used']>limits['effective_limit']
                 or row['room_id'] is None and limits['capacity_used']>=limits['effective_limit']):
             raise BeforeMutationError('host_capacity_reached')
@@ -102,6 +106,11 @@ class NativeAdapter:
         row=self.owner.registry.snapshot()['rooms'].get(alias,{})
         if row.get('ownership_unknown') or row.get('phase')=='recovery_required':raise BeforeMutationError('room_ownership_requires_review')
     def ready(self,value):
+        if value['action']=='catalog':
+            from .catalog_rollout import ready
+            try:
+                if not ready(self.owner.protected_parent['prefix'],value):return False
+            except Exception:raise BeforeMutationError('catalog_unavailable') from None
         if self.owner.stopping.is_set() or self.owner.rollout_alias or self.owner.targets:return False
         if os.path.lexists(Path(self.owner.runtime)/'state/rolling/supervisor-maintenance.json'):return False
         worker=self.owner.workers.get(value['alias'])
@@ -132,7 +141,10 @@ class NativeAdapter:
         revision=self.state.room(alias)['revision']
         if action=='open' and running and worker.broker.hub.owned:
             return {'application':'lifecycle','room_id':worker.status.get('room_id'),'revision':revision}
-        recreate=action=='restart' or action=='configure' and settings.application(value['patch'])=='recreate'
+        recreate=action in ('restart','catalog') or action=='configure' and settings.application(value['patch'])=='recreate'
+        if action=='catalog' and not running and self.state.room(alias)['desired']=='stopped':
+            return {'application':'recreate','revision':revision,'room_id':None,
+                    'catalog_content_id':value['patch']['content_id']}
         if action=='configure' and not running and self.state.room(alias)['desired']=='stopped':
             # Saved defaults on an intentionally stopped room do not grant room
             # creation, even when the patch would recreate a running room.
@@ -159,6 +171,9 @@ class NativeAdapter:
                 release=worker.release if worker is not None else owner.start_release_for(alias)
                 try:candidate=owner.prepare(alias,release)
                 except Exception:raise BeforeMutationError('catalog_unavailable') from None
+                if action=='catalog':
+                    actual=candidate.broker.cfg.get('_host_catalog_reference',{}).get('modes',{}).get(value['patch']['mode'])
+                    if actual!=value['patch']['content_id']:raise BeforeMutationError('catalog_unavailable')
             if running:
                 if value['timing']!='immediate':
                     from rolling.supervisor import HandoffDeferred
@@ -180,7 +195,11 @@ class NativeAdapter:
             if action=='close':return {'application':'lifecycle','room_id':None,'revision':revision}
             owner.activate(candidate);candidate=None
             current=owner.workers[alias]
-            return {'application':'recreate' if recreate else 'lifecycle','room_id':current.status.get('room_id'),'revision':revision}
+            result={'application':'recreate' if recreate else 'lifecycle','room_id':current.status.get('room_id'),'revision':revision}
+            if action=='catalog':
+                result['catalog_content_id']=value['patch']['content_id']
+                result['catalog_set_id']=current.broker.cfg['_host_catalog_set']
+            return result
         finally:
             if candidate is not None:owner.dispose(candidate)
             if running and not closed and getattr(worker,'status',{}).get('paused'):

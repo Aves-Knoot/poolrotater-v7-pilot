@@ -35,6 +35,7 @@ SHARED += ("poolrotater_host/managed_host/__init__.py", "poolrotater_host/manage
            "poolrotater_host/managed_host/settings.py", "poolrotater_host/managed_host/state.py",
            "poolrotater_host/managed_bootstrap.py")
 SHARED += ("poolrotater_host/discord_relay/fleet.py",)
+SHARED += ("poolrotater_host/managed_host/catalog_rollout.py", "poolrotater_host/managed_host/catalog_fleet.py")
 STORES = ("bot/ratings.py", "bot/ppstats.py", "bot/player_preferences.py",
           "bot/process_control.py", "bot/config_lock.py")
 

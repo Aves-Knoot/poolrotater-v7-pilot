@@ -48,8 +48,11 @@ class Repository:
         require(type(value['phase']) is str and value['phase'] in PHASES,'invalid_managed_receipt')
         require(value['failure_code'] is None or type(value['failure_code']) is str and value['failure_code'] in ERRORS,'invalid_managed_receipt')
         result=value['result']
-        require(result is None or type(result) is dict and not set(result)-{'room_id','revision','application'},'invalid_managed_result')
+        require(result is None or type(result) is dict and not set(result)-{'room_id','revision','application','catalog_content_id','catalog_set_id'},'invalid_managed_result')
         if result is not None:
+            import re
+            for key in ('catalog_content_id','catalog_set_id'):
+                if key in result:require(type(result[key]) is str and re.fullmatch('[a-f0-9]{64}',result[key]) is not None,'invalid_managed_result')
             if result.get('room_id') is not None:integer(result['room_id'],1,2**63-1)
             if 'revision' in result:integer(result['revision'],0,2**53-1)
             require('application' not in result or result['application'] in ('live','next_map','recreate','lifecycle','inspect','cancel'),'invalid_managed_result')
@@ -100,7 +103,7 @@ class Repository:
               expected_revision=None,expected_room_generation=INFER,expires_seconds=600,cancel_operation_id=None,
               operation_id=None):
         """Root/local administrator API only. No host token may enqueue commands."""
-        identifier(host_id);integer(expires_seconds,30,1800)
+        identifier(host_id);integer(expires_seconds,30,7*86400 if action=='catalog' else 1800)
         operation_id=str(uuid.uuid4()) if operation_id is None else operation_id;identifier(operation_id)
         submission=digest({'host_id':host_id,'alias':alias,'action':action,'patch':patch,'timing':timing,
             'actor':actor,'role':role,'expected_revision':expected_revision,

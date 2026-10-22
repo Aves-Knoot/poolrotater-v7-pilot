@@ -4,7 +4,7 @@ import re
 from ..network.contracts import canonical, fields, identifier, integer, number, require, text
 from .settings import validate
 
-ACTIONS = frozenset(('open','close','restart','configure','inspect','cancel'))
+ACTIONS = frozenset(('open','close','restart','configure','inspect','cancel','catalog'))
 TIMINGS = frozenset(('live','next_map','when_empty','immediate'))
 PHASES = frozenset(('received','validated','waiting_boundary','applying','applied','refused','uncertain','cancelled','expired'))
 TERMINAL = frozenset(('applied','refused','uncertain','cancelled','expired'))
@@ -34,14 +34,19 @@ def request(value):
     require(value['expected_room_generation'] is None or type(value['expected_room_generation']) is str
             and re.fullmatch('[a-f0-9]{32}',value['expected_room_generation']) is not None,'invalid_managed_generation')
     require(type(value['patch']) is dict and len(value['patch'])<=256,'invalid_managed_patch')
-    if value['action']=='configure':require(bool(value['patch']),'invalid_managed_patch')
+    if value['action']=='catalog':
+        require(value['timing']=='when_empty' and set(value['patch'])=={'mode','content_id'}
+                and value['patch']['mode'] in ('standard','mania4','mania7','catch','loved')
+                and type(value['patch']['content_id']) is str
+                and re.fullmatch('[a-f0-9]{64}',value['patch']['content_id']) is not None,'invalid_managed_patch')
+    elif value['action']=='configure':require(bool(value['patch']),'invalid_managed_patch')
     else:require(not value['patch'],'invalid_managed_patch')
     if value['action']=='cancel':identifier(value['cancel_operation_id'])
     else:require(value['cancel_operation_id'] is None,'invalid_managed_cancel')
     # Validate values against the saved room in the host controller; no preset
     # assumption at the hub, and never accept a configurable path/credential.
     from .settings import FIELDS
-    require(not set(value['patch'])-FIELDS,'invalid_managed_patch')
+    if value['action']!='catalog':require(not set(value['patch'])-FIELDS,'invalid_managed_patch')
     return value
 
 def capabilities(value):
