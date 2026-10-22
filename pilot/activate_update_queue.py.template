@@ -65,6 +65,17 @@ def unpack(source,destination):
             with target.open('xb')as stream:stream.write(archive.read(row))
 
 
+def seal_payload(stage):
+    # The SDK is public, hash-verified source. Native admission temporarily
+    # assumes the service UID and must still be able to import its modules.
+    # Keep the archive private and all source immutable to that identity.
+    payload=stage/'payload'
+    for path in payload.rglob('*'):
+        if path.is_file():path.chmod(0o444)
+    for path in (payload,*[p for p in payload.rglob('*')if p.is_dir()]):path.chmod(0o755)
+    stage.chmod(0o711)
+
+
 def root_json(path):
     for p in(path,*path.parents):
         info=p.lstat()
@@ -88,7 +99,7 @@ def main():
         if not stat.S_ISDIR(info.st_mode)or info.st_uid!=0 or info.st_mode&0o022:raise ValueError('queue_activation_environment_refused')
     if (environment/'bin/python').resolve()!=Path('/usr/bin/python3.12'):raise ValueError('queue_activation_interpreter_refused')
     with tempfile.TemporaryDirectory(prefix='poolrotater-queue-activation-')as directory:
-        stage=Path(directory);archive=stage/'runtime.zip';download(archive);unpack(archive,stage)
+        stage=Path(directory);archive=stage/'runtime.zip';download(archive);unpack(archive,stage);seal_payload(stage)
         code='''import json,re,sys
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])

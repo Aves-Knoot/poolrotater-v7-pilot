@@ -35,3 +35,11 @@ class BootstrapTests(unittest.TestCase):
     def test_expanded_quota_is_checked_before_writes(self):
         archive=self.archive(body=b'x'*100)
         with patch.object(self.module,'LIMIT',99),self.assertRaisesRegex(ValueError,'archive_refused'):self.module.unpack(archive,self.root/'out')
+
+    def test_sealed_sdk_can_be_read_after_uid_switch_but_is_not_writable(self):
+        archive=self.archive();stage=self.root/'stage';stage.mkdir(mode=0o700)
+        self.module.unpack(archive,stage);self.module.seal_payload(stage)
+        self.assertEqual(stage.stat().st_mode&0o777,0o711)
+        self.assertEqual((stage/'payload').stat().st_mode&0o777,0o755)
+        self.assertEqual((stage/'payload/example.py').stat().st_mode&0o777,0o444)
+        self.assertFalse(archive.stat().st_mode&0o022)

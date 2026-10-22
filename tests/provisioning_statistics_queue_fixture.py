@@ -63,3 +63,22 @@ class ManagedQueueIdentityTests(unittest.TestCase):
         self.assertFalse((self.prefix/'controller-update.json').exists())
 
 if __name__=='__main__':unittest.main()
+
+class BootstrapServiceIdentityTests(unittest.TestCase):
+    def test_public_sdk_imports_work_after_switch_and_archive_stays_private(self):
+        import importlib.machinery,importlib.util,tempfile
+        path=Path(__file__).resolve().parents[1]/'pilot/activate_update_queue.py.template'
+        loader=importlib.machinery.SourceFileLoader('bootstrap_uid_fixture',str(path));spec=importlib.util.spec_from_loader(loader.name,loader)
+        module=importlib.util.module_from_spec(spec);loader.exec_module(module)
+        with tempfile.TemporaryDirectory()as tmp:
+            stage=Path(tmp);payload=stage/'payload';payload.mkdir(mode=0o700)
+            code=payload/'example.py';code.write_text('value = 42\n');code.chmod(0o600)
+            archive=stage/'runtime.zip';archive.write_bytes(b'private transport archive');archive.chmod(0o600)
+            with _identity(1000),self.assertRaises(PermissionError):code.read_text()
+            module.seal_payload(stage)
+            with _identity(1000):
+                imported={};exec(compile(code.read_bytes(),str(code),'exec'),imported);self.assertEqual(imported['value'],42)
+                with self.assertRaises(PermissionError):code.write_text('changed')
+                with self.assertRaises(PermissionError):archive.read_bytes()
+                with self.assertRaises(PermissionError):(payload/'injected.py').write_text('changed')
+            self.assertEqual(os.geteuid(),0)
