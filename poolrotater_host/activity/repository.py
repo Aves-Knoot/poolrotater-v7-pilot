@@ -143,7 +143,7 @@ class Repository:
                 hidden.update(r[0] for r in db.execute('SELECT user_id FROM privacy WHERE hidden=1'))
                 consents={r['host_id']:dict(r) for r in db.execute('SELECT * FROM consents')}
                 result={'format':1,'generated_at':now,'hosts':[],'presence':[],'joins':[],'leaves':[],'matches':[],'achievements':[],'baselines':[],
-                        'hidden_user_ids':sorted(hidden),'coverage':{'historical_backfill':False,'private_rooms':False,'pp_attribution':False,'tracked_pp_supported':True,'source':'native_activity_ledger'}}
+                        'hidden_user_ids':sorted(hidden),'coverage':{'historical_backfill':False,'private_rooms':True,'pp_attribution':False,'tracked_pp_supported':True,'source':'native_activity_ledger'}}
                 for hid,host in hosts.items():
                     policy=consents.get(hid);latest=db.execute('SELECT MAX(received) FROM events WHERE host_id=?',(hid,)).fetchone()[0]
                     result['hosts'].append({'host_id':hid,'label':host['label'],'account_id':host['account_id'],

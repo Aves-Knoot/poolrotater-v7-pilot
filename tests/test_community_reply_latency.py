@@ -17,7 +17,8 @@ from tests import test_local_statistics_replica as replica_fixture
 
 class CommunityGreetingsTests(unittest.TestCase):
     def test_shared_defaults_work_without_host_integration_configuration(self):
-        self.assertEqual(len(DEFAULT_JOIN_GREETINGS), 6)
+        self.assertEqual(len(DEFAULT_JOIN_GREETINGS), 7)
+        self.assertEqual(configured_greeting({}, 7, "Saycey"), "Say hey to saycey")
         for key, message in DEFAULT_JOIN_GREETINGS.items():
             uid, name = (int(key), 'unrelated') if key.isdigit() else (999999999, key.upper())
             self.assertEqual(configured_greeting({}, uid, name), message)

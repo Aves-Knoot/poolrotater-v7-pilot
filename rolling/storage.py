@@ -7,8 +7,9 @@ the existing store initializers; rolling candidates may only reuse that schema.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import sqlite3
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 _CONNECT = sqlite3.connect
 _CREATE = {sqlite3.SQLITE_CREATE_TABLE: "table", sqlite3.SQLITE_CREATE_INDEX: "index",
@@ -18,11 +19,31 @@ _DENY = {getattr(sqlite3, name) for name in (
     "SQLITE_ALTER_TABLE", "SQLITE_ATTACH", "SQLITE_DETACH", "SQLITE_CREATE_VTABLE", "SQLITE_DROP_VTABLE")}
 
 
-def guarded_connect(database, *args, allowed_paths=None, readonly_paths=(), **kwargs):
+def guarded_connect(database, *args, allowed_paths=None, readonly_paths=(),
+                    statistics_root=None, **kwargs):
     raw = str(database)
     filename = unquote(urlsplit(raw).path) if raw.startswith("file:") else raw
     path = str(Path(filename).resolve())
-    if allowed_paths is not None and path not in allowed_paths:
+    replica = False
+    if statistics_root is not None and raw.startswith('file:') and kwargs.get('uri') is True:
+        # The agent atomically switches completed replicas while workers run.
+        # Admit their exact closed filenames dynamically, never the staging DB,
+        # arbitrary siblings, symlinks, or a writable SQLite connection.
+        candidate = Path(filename).absolute()
+        base = Path(statistics_root)
+        replica = (candidate.name == 'replica.sqlite3'
+                   and candidate.parent.parent == base
+                   and re.fullmatch('[a-f0-9]{64}', candidate.parent.name) is not None
+                   and parse_qs(urlsplit(raw).query) == {'mode': ['ro'], 'immutable': ['1']})
+        if replica:
+            from poolrotater_host.ratings.migration import _private
+            try:
+                _private(base, directory=True)
+                _private(candidate.parent, directory=True)
+                _private(candidate)
+            except (OSError, ValueError):
+                raise sqlite3.OperationalError('rolling worker statistics replica refused') from None
+    if allowed_paths is not None and path not in allowed_paths and not replica:
         raise sqlite3.OperationalError("rolling worker cannot open an undeclared database")
     if not Path(path).is_file():
         raise sqlite3.OperationalError("rolling worker cannot create a database")
@@ -30,7 +51,7 @@ def guarded_connect(database, *args, allowed_paths=None, readonly_paths=(), **kw
     try:
         existing = set(conn.execute("SELECT type,name FROM sqlite_master").fetchall())
         conn.enable_load_extension(False)
-        readonly = path in readonly_paths
+        readonly = replica or path in readonly_paths
 
         def authorize(action, first, second, database_name, trigger):
             if action in _DENY:
@@ -70,5 +91,8 @@ def install_guard(cfg):
     readonly = {str(Path(cfg[key]).resolve()) for key in ("farm_db", "loved_db", "mania_db", "mania_farm_db", "catch_catalog")
                 if cfg.get(key)}
     if cfg.get('_host_root'):readonly.add(managed)
+    statistics_root = (Path(cfg['_host_root']).absolute()/'state/activity-replica-downloads'
+                       if cfg.get('_host_root') else None)
     sqlite3.connect = lambda database, *a, **kw: guarded_connect(
-        database, *a, allowed_paths=allowed, readonly_paths=readonly, **kw)
+        database, *a, allowed_paths=allowed, readonly_paths=readonly,
+        statistics_root=statistics_root, **kw)

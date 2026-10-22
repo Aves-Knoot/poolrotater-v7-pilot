@@ -219,3 +219,11 @@ this documentation correction.
 
 
 Central hub/Discord packaging follow-up: see [MANAGED_SERVICE_PACKAGING.md](MANAGED_SERVICE_PACKAGING.md). It fixes standalone settings/greeting dependencies using existing audited modules; community client runtime archives and update digests are unchanged.
+
+## Player statistics in private rooms
+
+From v7.2.10, witnessed private-room playtime, completed map participation and
+tracked PP gains contribute to shared player aggregates and website statistics.
+Private rooms remain absent from public room lists; no room link, password,
+roster or chat is published by statistics aggregation. Account-wide hidden-stat
+preferences still apply. Unknown legacy history is not imported automatically.

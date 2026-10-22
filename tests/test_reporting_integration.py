@@ -54,6 +54,8 @@ class ReportingIntegrationTests(unittest.TestCase):
         now=time.time();self.ledger.record_room_visibility(99,public=True,observed_at=now-1,mode='standard')
         self.ledger.add_room_player_time(room_id=99,user_id=7,username='Invented Player',seconds=.2,left_at=now)
     def test_real_https_consents_capture_upload_and_local_query_cache(self):
+        # Legacy query fallback is separate from complete periodic replica tests.
+        self.enterContext(patch("poolrotater_host.activity.replica.Replica.tick",return_value={"phase":"legacy"}))
         self.enable();self.presence();reader=Reader(self.root);reader.request(user_id=7)
         local=reporting.logs(self.root);local.append('lifecycle info retained',room='room1',version='7.1.0')
         for _ in range(7):self.reporter.step()
@@ -64,6 +66,7 @@ class ReportingIntegrationTests(unittest.TestCase):
         self.assertFalse(reporting.support(self.root)['provider_dispatch'])
 
     def test_reviewed_history_captures_uploads_and_resolves_name_over_real_https(self):
+        self.enterContext(patch("poolrotater_host.activity.replica.Replica.tick",return_value={"phase":"legacy"}))
         from bot.ppstats import PPStatsStore
         from poolrotater_host.activity import history
         self.enable()

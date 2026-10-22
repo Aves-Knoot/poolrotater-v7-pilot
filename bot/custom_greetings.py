@@ -31,7 +31,8 @@ DEFAULT_JOIN_GREETINGS = {'16480556': 'Mrnachos123 has joined the game. Muzan ha
  'JustAria': 'Rawr x3 nuzzles pounces on you, uwu you so warm.. JustAria has joined!',
  'OLI67': 'A legend has joined the game, OLI67 is here to grace us with his presence.',
  'Zayoh': 'The man, the myth the legend, ZAYOH has joined the game. Blessed be the osu! gods.',
- 'moocows': 'The one and only Moocows has joined the game. May peppy bow at the glory'}
+ 'moocows': 'The one and only Moocows has joined the game. May peppy bow at the glory',
+ 'saycey': 'Say hey to saycey'}
 
 JOIN_GREETING_COOLDOWN = GreetingCooldown()
 

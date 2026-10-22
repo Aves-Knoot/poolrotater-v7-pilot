@@ -42,12 +42,16 @@ class ActivityCollectorTests(unittest.TestCase):
         self.assertEqual(items[0]['payload']['ended_at'],110)
         self.assertEqual(items[0]['payload']['mode'],'mania4')
 
-    def test_missing_visibility_private_intervals_and_private_transition_excluded(self):
+    def test_known_private_intervals_count_but_missing_visibility_stays_excluded(self):
         self.consent();self.presence(room=2);self.join(room=2)
         self.public();self.native.record_room_visibility(1,public=False,observed_at=105)
         self.presence(start=101,end=110);self.join(at=105)
         self.collector.collect();items=self.events()
-        self.assertEqual(len(items),1);self.assertEqual(items[0]['payload']['ended_at'],105)
+        self.assertEqual(len(items),3)
+        presence=[e['payload'] for e in items if e['kind']=='presence']
+        self.assertEqual([(r['started_at'],r['ended_at']) for r in presence],[(101,105),(105,110)])
+        self.assertEqual([e['kind'] for e in items].count('join'),1)
+        self.assertEqual({e['payload']['room_id'] for e in items},{1})
 
     def test_restart_offline_replay_and_ack_are_durable_without_duplicates(self):
         self.consent();self.public();self.presence(start=101,end=110);self.join()

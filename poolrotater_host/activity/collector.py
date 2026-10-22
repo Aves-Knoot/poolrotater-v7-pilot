@@ -120,15 +120,24 @@ class Collector:
 
     @staticmethod
     def _public_ranges(source,room,start,end):
+        return Collector._visibility_ranges(source,room,start,end,public=True)
+
+    @staticmethod
+    def _visibility_ranges(source,room,start,end,*,public):
+        """Known visibility proves attribution; missing evidence proves nothing.
+
+        Private participation contributes player totals, without publishing room
+        metadata. Public-only legacy history review keeps its original boundary.
+        """
         if not Collector._table(source,'activity_visibility'):return []
         rows=source.execute('SELECT public,observed_at,mode FROM activity_visibility WHERE room_id=? AND observed_at<=? ORDER BY observed_at,id',(room,end)).fetchall()
         if start==end:
-            return [(start,end,rows[-1]['mode'])] if rows and rows[-1]['public'] else []
+            return [(start,end,rows[-1]['mode'])] if rows and bool(rows[-1]['public'])==public else []
         result=[]
         for i,row in enumerate(rows):
             finish=min(end,rows[i+1]['observed_at'] if i+1<len(rows) else end)
             begin=max(start,row['observed_at'])
-            if row['public'] and finish>begin:result.append((begin,finish,row['mode']))
+            if bool(row['public'])==public and finish>begin:result.append((begin,finish,row['mode']))
         return result
 
     def collect(self, *, limit=500):
@@ -164,31 +173,37 @@ class Collector:
             try:
                 require(all(self._table(source,t) for t in ('activity_visibility','activity_presence','activity_joins','activity_leaves')),'activity_ledger_migration_required')
                 for table,kind in (('activity_presence','presence'),('activity_joins','join'),('activity_leaves','leave')):
-                    saved=target.execute('SELECT value FROM meta WHERE key=?',('cursor_'+table,)).fetchone();cursor=int(saved[0]) if saved else 0
-                    high=source.execute('SELECT COALESCE(MAX(id),0) FROM '+table).fetchone()[0]
-                    require(high>=cursor,'activity_source_restore_requires_review')
-                    anchor=target.execute('SELECT value FROM meta WHERE key=?',('anchor_'+table,)).fetchone()
-                    if cursor and anchor:
-                        prior=source.execute('SELECT * FROM '+table+' WHERE id=?',(cursor,)).fetchone()
-                        require(prior is not None and fingerprint(dict(prior))==anchor[0],'activity_source_restore_requires_review')
-                    for row in source.execute('SELECT * FROM '+table+' WHERE id>? ORDER BY id LIMIT ?',(cursor,limit)):
-                        if not provider_identity(row['user_id']):
-                            self._excluded(target,kind);cursor=row['id'];continue
-                        uid=row['user_id'];start=float(row['started_at'] if kind=='presence' else row['occurred_at']);end=float(row['ended_at'] if kind=='presence' else row['occurred_at'])
-                        if end<since or uid in hidden:
-                            cursor=row['id'];continue
-                        for begin,finish,mode in self._public_ranges(source,row['room_id'],max(start,since),end):
-                            p={'room_id':int(row['room_id']),'mode':mode,'user_id':uid,'username':row['username']}
-                            p.update({'started_at':begin,'ended_at':finish} if kind=='presence' else {'occurred_at':finish})
-                            enqueued=self._enqueue(target,profile,kind+':'+str(row['id'])+':'+str(begin),kind,p)
-                            if enqueued is None:capture_paused=True;break
-                            added+=enqueued
-                        if capture_paused:break
-                        cursor=row['id']
-                    target.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('cursor_'+table,str(cursor)))
-                    if cursor:
-                        last=source.execute('SELECT * FROM '+table+' WHERE id=?',(cursor,)).fetchone()
-                        target.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('anchor_'+table,fingerprint(dict(last))))
+                    # Separate private cursors backfill witnessed participation
+                    # already skipped by older releases. Existing public event
+                    # identities/cursors remain byte-for-byte compatible.
+                    for public in (True,False):
+                        cursor_key=('cursor_' if public else 'cursor_private_')+table
+                        anchor_key=('anchor_' if public else 'anchor_private_')+table
+                        saved=target.execute('SELECT value FROM meta WHERE key=?',(cursor_key,)).fetchone();cursor=int(saved[0]) if saved else 0
+                        high=source.execute('SELECT COALESCE(MAX(id),0) FROM '+table).fetchone()[0]
+                        require(high>=cursor,'activity_source_restore_requires_review')
+                        anchor=target.execute('SELECT value FROM meta WHERE key=?',(anchor_key,)).fetchone()
+                        if cursor and anchor:
+                            prior=source.execute('SELECT * FROM '+table+' WHERE id=?',(cursor,)).fetchone()
+                            require(prior is not None and fingerprint(dict(prior))==anchor[0],'activity_source_restore_requires_review')
+                        for row in source.execute('SELECT * FROM '+table+' WHERE id>? ORDER BY id LIMIT ?',(cursor,limit)):
+                            if not provider_identity(row['user_id']):
+                                self._excluded(target,kind);cursor=row['id'];continue
+                            uid=row['user_id'];start=float(row['started_at'] if kind=='presence' else row['occurred_at']);end=float(row['ended_at'] if kind=='presence' else row['occurred_at'])
+                            if end<since or uid in hidden:
+                                cursor=row['id'];continue
+                            for begin,finish,mode in self._visibility_ranges(source,row['room_id'],max(start,since),end,public=public):
+                                p={'room_id':int(row['room_id']),'mode':mode,'user_id':uid,'username':row['username']}
+                                p.update({'started_at':begin,'ended_at':finish} if kind=='presence' else {'occurred_at':finish})
+                                enqueued=self._enqueue(target,profile,('' if public else 'private:')+kind+':'+str(row['id'])+':'+str(begin),kind,p)
+                                if enqueued is None:capture_paused=True;break
+                                added+=enqueued
+                            if capture_paused:break
+                            cursor=row['id']
+                        target.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',(cursor_key,str(cursor)))
+                        if cursor:
+                            last=source.execute('SELECT * FROM '+table+' WHERE id=?',(cursor,)).fetchone()
+                            target.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',(anchor_key,fingerprint(dict(last))))
                 if self._table(source,'autohost_matches') and self._table(source,'autohost_match_players'):
                     # Revisit mutable completed rows: scores can arrive after MatchEnded. No timestamp watermark loses them.
                     saved=target.execute("SELECT value FROM meta WHERE key='cursor_matches'").fetchone()
@@ -200,8 +215,10 @@ class Collector:
                             self._excluded(target,'match');match_cursor=row['source_row'];continue
                         if row['user_id'] in hidden:
                             match_cursor=row['source_row'];continue
-                        ranges=self._public_ranges(source,row['room_id'],row['started_at'],row['ended_at'])
-                        if len(ranges)!=1 or ranges[0][:2]!=(row['started_at'],row['ended_at']):
+                        ranges=sorted(self._public_ranges(source,row['room_id'],row['started_at'],row['ended_at'])
+                            +self._visibility_ranges(source,row['room_id'],row['started_at'],row['ended_at'],public=False))
+                        if (not ranges or ranges[0][0]!=row['started_at'] or ranges[-1][1]!=row['ended_at']
+                                or any(left[1]!=right[0] or left[2]!=right[2] for left,right in zip(ranges,ranges[1:]))):
                             match_cursor=row['source_row'];continue
                         p={k:row[k] for k in ('room_id','user_id','username','match_key','beatmap_id','started_at','ended_at')}
                         p.update(mode=ranges[0][2],score_submitted=bool(row['score_submitted']),accuracy=row['accuracy'] if row['score_submitted'] else None)
@@ -236,6 +253,8 @@ class Collector:
                 if uid in hidden or room is None or (historical and room not in reviewed):
                     cursor=row['source_row'];continue
                 ranges=self._public_ranges(source,room,row['created_at'],row['created_at'])
+                if not historical:
+                    ranges+=self._visibility_ranges(source,room,row['created_at'],row['created_at'],public=False)
                 if not historical and not ranges:
                     cursor=row['source_row'];continue
                 mode=ranges[0][2] if ranges else fallback_mode

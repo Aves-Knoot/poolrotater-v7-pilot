@@ -18,13 +18,14 @@ def main():
     if len(raw)>786432:return 1
     value=json.loads(raw);url=urlsplit(value['origin'])
     maximum=512*1024 if value['path'].split('?',1)[0] in ('/v1/events/batches','/v1/ratings/state-query',
-                         '/v1/ratings/snapshots/current','/v1/ratings/snapshot-page','/v1/activity/replica/current','/v1/activity/replica/page') else 65536
+                         '/v1/ratings/snapshots/current','/v1/ratings/snapshot-page','/v1/activity/replica/current','/v1/activity/replica/page',
+                         '/v2/activity/replica/current','/v2/activity/replica/page') else 65536
     if maximum==65536 and len(raw)>262144:return 1
     context=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT);context.minimum_version=ssl.TLSVersion.TLSv1_2
     context.load_verify_locations(cadata=value['ca_pem'])
     connection=http.client.HTTPSConnection(url.hostname,url.port or 443,timeout=value['timeout'],context=context)
     headers={'Accept':'application/json','Content-Type':'application/json','User-Agent':'PoolRotater-network/1'}
-    if value['path'].startswith('/v1/activity/replica/'):
+    if value['path'].startswith(('/v1/activity/replica/','/v2/activity/replica/')):
         headers['Accept-Encoding']='gzip'
     if value['token'] is not None:headers['Authorization']='Bearer '+value['token']
     body=None if value['body'] is None else json.dumps(value['body'],separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()
