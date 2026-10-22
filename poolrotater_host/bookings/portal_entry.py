@@ -60,14 +60,15 @@ def validate_config(value):
         require(type(value['client_id']) is str and value['client_id'].isascii()
                 and value['client_id'].isdigit() and 0 < len(value['client_id']) <= 20,
                 'booking_oauth_configuration_required')
+        secret=value['client_secret']
+        require(type(secret)is str and 8<=len(secret)<=256
+                and all(not ch.isspace() and ord(ch)>=33 and ord(ch)!=127 for ch in secret),
+                'booking_oauth_configuration_required')
     if 'preview_catalog_root' in value:
         directory=value['preview_catalog_root']
         require(type(directory)is str and len(directory)<=1024 and Path(directory).is_absolute()
                 and not any(part in ('.','..')for part in directory.split('/'))
                 and not any(ord(ch)<32 for ch in directory),'booking_preview_configuration_refused')
-        require(type(value['client_secret']) is str and 8 <= len(value['client_secret']) <= 256
-                and not any(ord(ch) <= 32 for ch in value['client_secret']),
-                'booking_oauth_configuration_required')
     return {**value, 'origin': origin}
 
 

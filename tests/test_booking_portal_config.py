@@ -60,6 +60,26 @@ class PortalConfigTests(unittest.TestCase):
         self.assertEqual(callback, 'https://poolrotater.com/private-lobbies/oauth/callback')
         self.assertNotIn(test_secret, json.dumps(portal_entry.public_config_summary(config)))
 
+    def test_oauth_secret_is_validated_even_when_preview_is_not_configured(self):
+        for secret in ('', 'short7', '        ', 'A AAAAAA', 12345678, None):
+            value = {**self.default(), 'client_id': '123456', 'client_secret': secret}
+            with self.subTest(secret=secret), self.assertRaises(NetworkError):
+                portal_entry.validate_config(value)
+
+    def test_disabled_preview_root_does_not_require_oauth_credentials(self):
+        value = {**self.default(), 'preview_catalog_root': str(self.root / 'trusted-catalogs')}
+        config = portal_entry.validate_config(value)
+        self.assertFalse(config['enabled'])
+        self.assertNotIn('client_id', config)
+        self.assertEqual(config['preview_catalog_root'], value['preview_catalog_root'])
+
+    def test_valid_oauth_pair_without_preview_root_is_accepted(self):
+        value = {**self.default(), 'enabled': True,
+                 'client_id': '123456', 'client_secret': 'valid-secret-123'}
+        config = portal_entry.validate_config(value)
+        self.assertTrue(config['enabled'])
+        self.assertNotIn('preview_catalog_root', config)
+
     def test_config_file_must_be_owned_private_regular_nonsymlink(self):
         self.write(self.default(), 0o644)
         with self.assertRaises(NetworkError):
