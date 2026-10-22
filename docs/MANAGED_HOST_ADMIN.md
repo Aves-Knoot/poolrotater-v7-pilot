@@ -216,3 +216,6 @@ The original v7.2.9 installer archive retains an earlier copy of this guide with
 candidate labels. This published guide supersedes those labels. Runtime and
 installer digests remain immutable; no reinstall or new runtime is needed for
 this documentation correction.
+
+
+Central hub/Discord packaging follow-up: see [MANAGED_SERVICE_PACKAGING.md](MANAGED_SERVICE_PACKAGING.md). It fixes standalone settings/greeting dependencies using existing audited modules; community client runtime archives and update digests are unchanged.

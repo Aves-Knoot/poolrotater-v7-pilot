@@ -143,8 +143,9 @@ def prepare(destination, *, bind='127.0.0.1', port=9444):
             target.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
             target.write_bytes(path.read_bytes());target.chmod(0o644)
         # Ratings wire provenance deliberately reuses the existing vote writer's
-        # closed contract. These two stdlib files are the only bot dependency.
-        for name in ('__init__.py','rating_outbox.py'):
+        # closed contract. Managed settings also share the stdlib-only ruleset
+        # validators and greeting defaults; retain them in standalone services.
+        for name in ('__init__.py','rating_outbox.py','mode.py','custom_greetings.py'):
             target=runtime/'bot'/name;target.parent.mkdir(mode=0o755,exist_ok=True)
             target.write_bytes((source.parent/'bot'/name).read_bytes());target.chmod(0o644)
         bootstrap=runtime/'bootstrap.py';bootstrap.write_text(BOOTSTRAP);bootstrap.chmod(0o644)
@@ -197,7 +198,8 @@ def install_assets(kit, *, expected_inventory_sha256, cert, key,
     require(inventory['files']['bootstrap.py']==hashlib.sha256(BOOTSTRAP.encode()).hexdigest(),'hub_bootstrap_refused')
     for name,digest in inventory['files'].items():
         path=runtime/name
-        require(name in ('bootstrap.py','bot/__init__.py','bot/rating_outbox.py')
+        require(name in ('bootstrap.py','bot/__init__.py','bot/rating_outbox.py',
+                         'bot/mode.py','bot/custom_greetings.py')
                 or (name.startswith('poolrotater_host/') and name.endswith('.py')),'hub_kit_refused')
         require(Path(name).as_posix()==name and '..' not in Path(name).parts and not Path(name).is_absolute(),'hub_kit_refused')
         for ancestor in (path,*path.parents):require(not ancestor.is_symlink(),'hub_kit_refused')
