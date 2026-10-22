@@ -9,9 +9,10 @@ import time
 
 from bot.bot import LobbyBot as BaseLobbyBot, IDLE, PLAYING, STARTING
 from poolrotater_host.catalog_exclusions import ExclusionLobbyMixin
+from poolrotater_host.bookings.game import BookingEventsMixin
 
 
-class LobbyBot(ExclusionLobbyMixin, BaseLobbyBot):
+class LobbyBot(BookingEventsMixin, ExclusionLobbyMixin, BaseLobbyBot):
     pass
 from bot.discord_control import DiscordCommand
 from run_multiroom import make_pool
@@ -152,6 +153,16 @@ class Lifecycle:
                 raise ValueError('invalid managed worker patch')
             self.commands.put_nowait((method,(request_id,patch)))
             return True
+        if method == 'booking-control':
+            import uuid
+            id,=args
+            if type(id)is not str or str(uuid.UUID(id))!=id:raise ValueError('invalid booking operation')
+            self.commands.put_nowait((method,id));return True
+        if method == 'booking-warning':
+            from poolrotater_host.bookings.game import WARNINGS
+            id,code=args
+            if type(code)is not str or code not in WARNINGS:raise ValueError('invalid booking warning')
+            self.commands.put_nowait((method,(id,code)));return True
         if method == 'maintenance':
             from poolrotater_host.operator_maintenance import validate
             job, = args
@@ -199,7 +210,9 @@ class Lifecycle:
             "freestyle": bool(bot.cfg.get("freestyle", False)),
             "countdown_seconds": bot.cfg.get("countdown_seconds", 15)},
             "playing_players": playing_players, "match": match}
+        from poolrotater_host.bookings.game import observation as booking_observation
         return {
+            "booking": booking_observation(bot),
             "version": bot.cfg["version"], "room_id": bot.room_id,
             "ready": bool(bot._room_ready), "running": bool(bot.running),
             "state": bot.state, "players": len(bot.players),
@@ -240,6 +253,15 @@ class Lifecycle:
                 ok=apply_worker_settings(bot,patch)
             except Exception:ok=False
             self.last_control={'id':id,'command':command,'ok':ok}
+        elif command == 'booking-control':
+            from poolrotater_host.bookings.game import execute as booking_execute
+            try:ok=booking_execute(bot,request_id,make_worker_pool)
+            except Exception:ok=False
+            self.last_control={'id':request_id,'command':command,'ok':ok}
+        elif command == 'booking-warning':
+            from poolrotater_host.bookings.game import WARNINGS
+            id,code=request_id
+            if bot.cfg.get('_booking_session'):bot.say(WARNINGS[code])
         elif command == "maintenance":
             self.operator_maintenance.command(request_id)
         elif command == "prepare":
@@ -310,6 +332,10 @@ def run(sock, release):
         if duration_policy is not None:
             cfg.update(duration_policy, max_length=duration_policy['real_max_length'])
         pool = make_worker_pool(cfg)
+        if cfg.get('_booking_session'):
+            from poolrotater_host.bookings.worker import install_selection
+            if not install_selection(pool,cfg,cfg['_booking_session']['preset']):
+                raise ValueError('booking settings have no qualified map candidates')
         if cfg.get('_host_catalog_set'):
             from poolrotater_host.catalog_store import CatalogStore
             mode = managed_catalog_mode(cfg)

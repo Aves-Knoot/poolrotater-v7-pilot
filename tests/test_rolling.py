@@ -4,6 +4,7 @@ from scripts.test_isolation import require_test_isolation
 require_test_isolation('ordinary')
 
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,40 @@ from rolling.worker import Lifecycle
 from run_multiroom import load_rooms
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _mania_fixture_db(keys, role):
+    """Use legacy checked-in fixture DBs, or a checksum-validated full export."""
+    legacy = ROOT / (f"catalog-data/mania_{keys}k.db" if role == "catalog" else
+                     f"farm-data/mania_{keys}k_farm.db")
+    if legacy.is_file():
+        return legacy
+
+    work_root = ROOT.parents[2]
+    export = work_root / "validation" / "loved726" / "inputs" / f"mania{keys}"
+    manifest_path = export / "manifest.json"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise FileNotFoundError(f"full immutable mania{keys} export manifest is missing")
+    manifest = json.loads(manifest_path.read_text())
+    if (manifest.get("format") != 1 or manifest.get("export_schema") != 1 or
+            manifest.get("mode") != f"mania{keys}" or manifest.get("keys") != keys or
+            manifest.get("reader") != "poolrotater-selection-v1"):
+        raise AssertionError(f"invalid full mania{keys} fixture export manifest")
+    filename = "catalog.db" if role == "catalog" else "farm.db"
+    entry = next((item for item in manifest.get("files", [])
+                  if item.get("name") == filename and item.get("role") == role), None)
+    if entry is None:
+        raise AssertionError(f"manifest does not identify the full {role} export")
+    path = export / filename
+    if not path.is_file() or path.is_symlink():
+        raise FileNotFoundError(f"full immutable mania{keys} {role} database is missing")
+    metadata = path.stat()
+    if metadata.st_mode & 0o222:
+        raise AssertionError(f"mania{keys} {role} fixture must remain immutable/read-only")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if metadata.st_size != entry.get("bytes") or digest != entry.get("sha256"):
+        raise AssertionError(f"mania{keys} {role} fixture does not match its full-export manifest")
+    return path
 
 
 def seal(root, version="v6.7.0"):
@@ -882,8 +917,8 @@ from rolling.worker import run
         for index in (1, 2, 3, 4):
             keys = 7 if index == 3 else 4
             cfg = {"ruleset_id": 0 if index < 3 else 3, "mania_keys": keys,
-                   "farm_db": str(farm), "mania_db": str(Path(__file__).resolve().parents[1] / f"catalog-data/mania_{keys}k.db"),
-                   "mania_farm_db": str(Path(__file__).resolve().parents[1] / f"farm-data/mania_{keys}k_farm.db"), "pool_limit": 100,
+                   "farm_db": str(farm), "mania_db": str(_mania_fixture_db(keys, "catalog")),
+                   "mania_farm_db": str(_mania_fixture_db(keys, "farm")), "pool_limit": 100,
                    "sr_min": 2, "sr_max": 5, "max_length": 300, "min_passcount": 0,
                    "max_map_age_years": 30, "auto_difficulty": index == 1, "loved_mode": False,
                    "room_name": "Offline test", "discord_control_enabled": False,

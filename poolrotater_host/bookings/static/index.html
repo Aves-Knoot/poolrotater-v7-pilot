@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Private lobbies</title>
+  <link rel="stylesheet" href="/private-lobbies/static/app.css">
+  <script type="module" src="/private-lobbies/static/app.js"></script>
+</head>
+<body>
+  <main class="page-shell">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Poolrotater</p>
+        <h1>Private lobbies</h1>
+        <p class="lede">Reserve a private room and manage it while you play.</p>
+      </div>
+      <a id="sign-in" class="button button-secondary" href="/private-lobbies/oauth/start" hidden>Sign in</a>
+      <button id="sign-out" class="button button-secondary" type="button" hidden>Sign out</button>
+    </header>
+
+    <p id="page-message" class="notice" role="status" aria-live="polite" hidden></p>
+
+    <section id="public-section" class="panel" aria-labelledby="availability-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Availability</p>
+          <h2 id="availability-title">Choose a room</h2>
+        </div>
+        <div class="freshness" id="availability-freshness" role="status">Checking availability…</div>
+      </div>
+      <div id="slot-list" class="slot-list" aria-live="polite"></div>
+    </section>
+
+    <section id="reserve-section" class="panel" aria-labelledby="reserve-title" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">New booking</p>
+          <h2 id="reserve-title">Set up your lobby</h2>
+        </div>
+      </div>
+      <form id="reserve-form" class="form-grid">
+        <label>Room
+          <select id="reserve-slot" required></select>
+        </label>
+        <label>Preset
+          <select id="reserve-preset" required></select>
+        </label>
+        <label>Designated friend’s numeric player ID
+          <input id="friend-id" type="number" min="1" step="1" inputmode="numeric" placeholder="Optional">
+          <span class="field-help">Only the room owner or this player can claim the lobby during the arrival window.</span>
+        </label>
+        <div id="basic-settings" class="basic-settings form-grid"></div>
+        <div class="form-actions">
+          <button id="reserve-button" class="button" type="submit">Reserve room</button>
+          <button id="cancel-reserve" class="button button-secondary" type="button">Cancel</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="session-section" class="panel session-panel" aria-labelledby="session-title" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow" id="session-eyebrow">Private session</p>
+          <h2 id="session-title">Your lobby</h2>
+          <p id="session-state" class="lede"></p>
+        </div>
+        <span id="role-badge" class="role-badge"></span>
+      </div>
+
+      <div id="private-details" class="private-details" hidden>
+        <div class="detail-card"><span>Join lobby</span><a id="join-link" target="_blank" rel="noopener noreferrer">Open lobby</a></div>
+        <div class="detail-card"><span>Password</span><strong id="lobby-password"></strong></div>
+        <div class="detail-card"><span>Arrival window</span><strong id="claim-countdown"></strong></div>
+      </div>
+
+      <div id="map-queue-block" class="control-block map-queue-block" hidden>
+        <div class="map-queue-column">
+          <h3>Current map</h3>
+          <div id="current-map" class="map-card muted">No map is currently reported.</div>
+        </div>
+        <div class="map-queue-column">
+          <h3>Next maps</h3>
+          <ol id="next-maps" class="next-map-list"></ol>
+        </div>
+      </div>
+
+      <div id="owner-controls" class="control-block" hidden>
+        <h3>Lobby controls</h3>
+        <div class="button-row">
+          <button class="button" data-action="start" type="button">Start rotation</button>
+          <button class="button button-secondary" data-action="abort" type="button">Abort current map</button>
+          <button class="button button-secondary" data-action="skip" type="button">Skip current map</button>
+          <button class="button button-danger" data-action="end" type="button">End booking</button>
+        </div>
+      </div>
+
+      <div id="invite-block" class="control-block" hidden>
+        <h3>Invite a player</h3>
+        <p class="muted">Anyone with this link can see the lobby’s joining details until it expires. Players remain players unless you grant controller access. Creating another invite revokes this one.</p>
+        <div class="button-row">
+          <button id="create-invite" class="button button-secondary" type="button">Create invite link</button>
+          <a id="invite-link" class="button button-secondary" hidden>Open invite</a>
+          <button id="copy-invite" class="button button-secondary" type="button" hidden>Copy invite link</button>
+        </div>
+        <p id="invite-expiry" class="muted" aria-live="polite"></p>
+      </div>
+
+      <div id="roster-block" class="control-block" hidden>
+        <div class="section-heading compact-heading">
+          <h3>Players</h3>
+          <span id="roster-caption" class="muted"></span>
+        </div>
+        <ul id="roster-list" class="roster-list"></ul>
+      </div>
+
+      <div id="settings-block" class="control-block" hidden>
+        <div class="section-heading compact-heading">
+          <div><h3>Rotation settings</h3><p class="muted">Edits stay as a draft until you apply them.</p></div>
+        </div>
+        <div id="settings-controls" class="settings-grid"></div>
+        <div class="settings-footer">
+          <span id="settings-state" class="muted" aria-live="polite"></span>
+          <button id="preview-settings" class="button button-secondary" type="button">Preview selection</button>
+          <button id="apply-settings" class="button" type="button">Apply settings</button>
+        </div>
+        <div id="preview-result" class="preview-result" role="status" aria-live="polite" hidden></div>
+      </div>
+
+      <div id="operation-block" class="control-block" hidden>
+        <h3>Recent actions</h3>
+        <ul id="operation-list" class="operation-list"></ul>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

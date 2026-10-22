@@ -100,6 +100,13 @@ class Handler(BaseHTTPRequestHandler):
                 require(not target.query,'unexpected_query');result=dict(CAPABILITIES)
             elif method=='GET' and path=='/v1/capabilities':
                 require(not target.query,'unexpected_query');result=store.capabilities()
+            elif method=='GET' and path=='/v1/private-lobbies':
+                require(not target.query,'unexpected_query')
+                result={'protocol_version':1,'slots':[]}
+                if (store.root/'bookings.sqlite3').exists():
+                    from ..bookings.hub import Repository as BookingRepository
+                    from ..bookings.presentation import public_booking_status
+                    result['slots']=[public_booking_status(slot)for slot in BookingRepository(store).ledger.public_slots()]
             elif method=='GET' and path in ('/v1/rooms','/v2/rooms','/directory'):
                 params=parse_qs(target.query,keep_blank_values=True,strict_parsing=True)
                 require(set(params)<={'offset','limit'} and all(len(v)==1 and v[0].isdigit() and len(v[0])<=7 for v in params.values()),'invalid_pagination')
@@ -139,6 +146,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=='/v1/hosts/self/token-rotation':result=store.rotate(self.token(),self.body())
                 elif path=='/v1/hosts/self/leave':
                     token=self.token();value=self.body();fields(value,('protocol_version',));base(value);result=store.leave(token)
+                elif path=='/v1/hosts/self/bookings':
+                    from ..bookings.hub import Repository
+                    result=Repository(store).accept(self.token(),self.body())
                 elif path=='/v1/hosts/self/managed-rooms':
                     from ..managed_host.hub import Repository
                     result=Repository(store).accept(self.token(),self.body())

@@ -15,8 +15,13 @@ def installed(root,release,action,stream=None):
     from .settings import inventory
     guard(root,release)
     require(enabled(root),'managed_policy_required')
-    require(action in ('status','limit','request'),'invalid_managed_action')
-    require((stream is not None)==(action in ('limit','request')),'managed_input_required')
+    require(action in ('status','limit','request','bookings'),'invalid_managed_action')
+    require((stream is not None)==(action in ('limit','request','bookings')),'managed_input_required')
+    if action=='bookings':
+        value=decode(stream.read(2049),maximum=2048)
+        from ..bookings.policy import configure
+        result={'bookings':configure(root,value)}
+        return {'ok':True,**result,'protected_runtime_checked':True,'provider_dispatch':False}
     store=state(root);seed(root,store)
     if action=='limit':
         value=decode(stream.read(1025),maximum=1024);fields(value,('max_concurrent_rooms',))
@@ -27,21 +32,28 @@ def installed(root,release,action,stream=None):
         # central commands. Secret settings arrive on stdin, never argv.
         result={'receipt':store.enqueue(value)}
     else:
+        from ..bookings.policy import load as booking_policy
+        from ..bookings.agent import diagnostics as booking_diagnostics
         result={'capabilities':store.snapshot(),'limits':store.limits(),'settings_inventory':inventory(),
-                'rooms':[store.room(row['alias']) for row in store.snapshot()['rooms']]}
+                'rooms':[store.room(row['alias']) for row in store.snapshot()['rooms']],
+                'bookings':{'policy':booking_policy(root),'agent':booking_diagnostics(root)}}
     return {'ok':True,**result,'protected_runtime_checked':True,'provider_dispatch':False}
 
 
 def command(instance,action,stream=None):
     from ..pilot_installation import administrative_binding
     from .. import pilot_operations as pilot
-    require(action in ('status','limit','request'),'invalid_managed_action')
-    require((stream is not None)==(action in ('limit','request')),'managed_input_required')
+    require(action in ('status','limit','request','bookings'),'invalid_managed_action')
+    require((stream is not None)==(action in ('limit','request','bookings')),'managed_input_required')
     target,_,record=administrative_binding(instance)
     pilot._service_command(target,record,['--pilot-check'])
     arguments=['--managed-action',action];data=None
     if stream is not None:
-        data=canonical(decode(stream.read(65537)));arguments.append('--managed-input')
+        if action=='bookings':
+            data=canonical(decode(stream.read(2049),maximum=2048))
+        else:
+            data=canonical(decode(stream.read(65537)))
+        arguments.append('--managed-input')
     return pilot._service_command(target,record,arguments,input_data=data,timeout=60)
 
 
@@ -53,13 +65,13 @@ def _desired(root,uid):
         return store.snapshot(),store.pending(),store.intent_sequence()
 
 
-def startup_signature(marker,record,caps,intent_sequence,*,boot,recovery=None):
+def startup_signature(marker,record,caps,intent_sequence,*,boot,recovery=None,booking_leases=None):
     """Failure/progress observations must not grant another startup attempt."""
     return fingerprint({'binding':{k:marker[k] for k in ('installation_id','generation')},
         'runtime':record['bundle_sha256'],'intent_sequence':intent_sequence,
         'max_concurrent_rooms':caps['max_concurrent_rooms'],'provider_room_limit':caps['provider_room_limit'],
         'recovery':recovery.get('transaction_id') if recovery and recovery.get('phase')=='committed' else None,
-        'boot':boot})
+        'boot':boot,**({'bookings':booking_leases}if booking_leases else{})})
 
 
 def settle_closed(root,journal):
@@ -128,11 +140,13 @@ def tick(instance):
         caps,pending,intent_sequence=_desired(target['root'],uid)
         if caps['policy_version']!=1:return {'ok':True,'phase':'policy-migration-pending','rooms_started':False}
         intent=any(r['desired']=='running' for r in caps['rooms']) and min(caps['max_concurrent_rooms'],caps['provider_room_limit'])>0
-        if not pending and not intent:return {'ok':True,'phase':'intentionally-stopped','rooms_started':False}
+        from ..bookings.policy import startup_leases
+        with _identity(uid):bookings=startup_leases(target['root'])
+        if not pending and not intent and not bookings:return {'ok':True,'phase':'intentionally-stopped','rooms_started':False}
         if pilot._unit(instance,optional=True) is None:
             return {'ok':False,'phase':'unit-preparation-required','rooms_started':False}
         recovery=_control(target['root']/'state/ownership-recovery.json',uid,private=True,optional=True)
-        signature=startup_signature(marker,record,caps,intent_sequence,recovery=recovery,
+        signature=startup_signature(marker,record,caps,intent_sequence,recovery=recovery,booking_leases=bookings,
             boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip())
         path=directory/'start-attempt.json';old=_control(path,private=True,optional=True)
         if old is not None and old.get('signature')==signature:

@@ -448,6 +448,9 @@ class RollingSupervisor:
         locked = False
         old_closed = False
         try:
+            from poolrotater_host.bookings.update_guard import holds_alias
+            if holds_alias(self.runtime, alias):
+                return
             if not old.idle_empty():
                 return
             if schemas(list(self.configs.values())) != self.schema_baseline:
@@ -709,7 +712,11 @@ class RollingSupervisor:
         from poolrotater_host.operator_maintenance import poll as maintenance_poll
         maintenance_poll(self)
         managed=getattr(self,'managed',None)
+        bookings=getattr(self,'bookings',None)
+        if bookings is not None:bookings.tick()
         if managed is not None:managed.tick()
+        booking_panels=getattr(self,'booking_panels',None)
+        if booking_panels is not None:booking_panels.tick()
         now = time.monotonic()
         for alias, worker in list(self.workers.items()):
             if alias == self.rollout_alias:
@@ -765,6 +772,9 @@ class RollingSupervisor:
             if (alias in self.targets and self.rollout_alias is None and worker.empty_since is not None
                     and now - worker.empty_since >= self.empty_seconds
                     and now >= getattr(worker, "handoff_retry_at", 0.0)):
+                from poolrotater_host.bookings.update_guard import holds_alias
+                if holds_alias(self.runtime, alias):
+                    continue
                 self.rollout_alias = alias
                 self.rollout_thread = threading.Thread(target=self.roll, args=(alias, self.targets[alias]),
                                                        daemon=True, name="rollout-" + alias)

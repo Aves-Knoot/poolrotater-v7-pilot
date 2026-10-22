@@ -111,7 +111,7 @@ def main():
     mode.add_argument('--network-action', choices=('configure','enroll','resume','rotate','leave','reset','status','support','update-report','reporting-configure','reporting-support','reporting-sync'),
                       help='independent installed network operation; never provider authorization')
     mode.add_argument('--network-agent',action='store_true',help='independent optional heartbeat agent')
-    mode.add_argument('--managed-action',choices=('status','limit','request'))
+    mode.add_argument('--managed-action',choices=('status','limit','request','bookings'))
     parser.add_argument('--managed-input',action='store_true',help='bounded private managed JSON on stdin')
     mode.add_argument('--ratings-action',choices=('configure','sync','fetch','status','support'))
     parser.add_argument('--ratings-input',action='store_true',help='explicit bounded ratings JSON on stdin')
@@ -152,7 +152,7 @@ def main():
     args = parser.parse_args()
     prepared = bool(args.operator_authorization or args.provider_service or args.pilot_check or args.ownership_recovery or args.ownership_local_status
                     or args.network_action or args.network_agent or args.ratings_action or args.managed_action)
-    if args.managed_input != (args.managed_action in ('limit','request')):
+    if args.managed_input != (args.managed_action in ('limit','request','bookings')):
         raise ValueError('managed private input requires explicit action')
     if args.ratings_input != (args.ratings_action=='configure'):
         raise ValueError('ratings private input requires explicit configure action')

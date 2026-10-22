@@ -237,16 +237,21 @@ def journal_matches(target,parent,job):
 
 def _gate(target, parent, job, phase):
     from .ratings.operations import _identity
+    from .bookings.admission import update_admission
+    from .bookings.policy import holds_updates
     with _identity(parent['service_uid']):
-        path = target['root'] / GATE
-        current = _control(path, parent['service_uid'], private=True, optional=True)
-        if current is not None and current.get('nonce') != job.get('nonce'):
-            raise ConfigError('another maintenance request is present')
-        if phase is None:
-            path.unlink(missing_ok=True)
-        else:
-            atomic_json(path, {'format':1, 'phase':phase, 'nonce':job['nonce'],
-                'expires_at':time.time()+GATE_SECONDS, 'bridge_release':job['before']['release']})
+        with update_admission(target['root']):
+            path = target['root'] / GATE
+            current = _control(path, parent['service_uid'], private=True, optional=True)
+            if current is not None and current.get('nonce') != job.get('nonce'):
+                raise ConfigError('another maintenance request is present')
+            if phase is None:
+                path.unlink(missing_ok=True)
+            else:
+                if holds_updates(target['root']):return False
+                atomic_json(path, {'format':1, 'phase':phase, 'nonce':job['nonce'],
+                    'expires_at':time.time()+GATE_SECONDS, 'bridge_release':job['before']['release']})
+    return True
 
 
 def queue(instance, bundle, sha256, *, from_sha256, deployment_id=None, release_approval_required=False):
@@ -365,7 +370,13 @@ def _step_managed_stopped(instance,target,parent,job,save):
     latest=stopped_host(target,parent,reconcile=True)
     if (service['MainPID']!=0 or service['ActiveState'] not in ('inactive','failed')
             or latest is None or _config_hashes(target['root'])!=actual):return False
-    _gate(target,parent,job,None)
+    from .bookings.admission import declared
+    if declared(target['root']):
+        if not job.get('nonce'):save(nonce=secrets.token_hex(16))
+        if not _gate(target,parent,job,'committing'):
+            save(phase='waiting_empty',empty_since=None,locked_since=None,reason='private_booking_reserved_or_active')
+            return True
+    else:_gate(target,parent,job,None)
     if actual!=job['configuration']:
         save(configuration_before_stop=job['configuration'],configuration=actual)
     save(phase='committing',commit_started_at=time.time(),stage='approval',stage_at=time.time(),
@@ -407,6 +418,13 @@ def step(instance):
                  next_action='review_controller_update_with_operation_id')
             return {'ok':False,'phase':'held','reason':job['reason']}
         parent = job['before']
+        from .bookings.policy import holds_updates
+        from .ratings.operations import _identity
+        with _identity(parent['service_uid']):booking_held=holds_updates(target['root'])
+        if booking_held:
+            if job['phase']=='locking':_gate(target,parent,job,None)
+            save(phase='waiting_empty',empty_since=None,locked_since=None,reason='private_booking_reserved_or_active')
+            return {'ok':True,'phase':'waiting_empty','reason':job['reason']}
         service=_service_state(instance)
         if (current==parent and service['MainPID']==0 and service['ActiveState'] in ('inactive','failed')
                 and _step_managed_stopped(instance,target,parent,job,save)):
@@ -454,7 +472,8 @@ def step(instance):
                     type(r.get('empty_seconds')) in (int,float) and r['empty_seconds']>=EMPTY_SECONDS for r in rows.values()):
                 save(phase='locking',nonce=secrets.token_hex(16),lock_started=now,locked_since=None,
                      reason='waiting_for_private_admission_and_late_join_drain')
-                _gate(target,parent,job,'locking')
+                if not _gate(target,parent,job,'locking'):
+                    save(phase='waiting_empty',empty_since=None,locked_since=None,reason='private_booking_reserved_or_active')
         else:
             maintenance=[r.get('status',{}).get('maintenance',{})for r in (rows or {}).values()]
             if any(m.get('uncertain') for m in maintenance):
@@ -483,10 +502,13 @@ def step(instance):
                     _gate(target,parent,job,None)
                     save(phase='waiting_empty',empty_since=None,locked_since=None,reason='late_join_cancelled_commit')
                 else:
-                    _gate(target,parent,job,'committing')
+                    admitted=_gate(target,parent,job,'committing')
                     # Refresh after writing the phase too; a late arrival keeps
                     # its old worker and causes all gates to be released.
-                    if not _gated(_rows(target,parent,now=time.time()),job):
+                    if not admitted:
+                        _gate(target,parent,job,None)
+                        save(phase='waiting_empty',empty_since=None,locked_since=None,reason='private_booking_reserved_or_active')
+                    elif not _gated(_rows(target,parent,now=time.time()),job):
                         _gate(target,parent,job,None)
                         save(phase='waiting_empty',empty_since=None,locked_since=None,reason='late_join_cancelled_commit')
                     elif not journal_matches(target,parent,job):
@@ -505,7 +527,17 @@ def step(instance):
         return {'ok':True,'phase':job['phase'],'reason':job.get('reason')}
 
 
+def _commit_approval(target,parent,job):
+    if job.get('release_approval_required'):
+        from .updates.approval import require_approved
+        require_approved(validate_runtime(parent,target['prefix'])['manifest'],
+                         validate_runtime(job['after'],target['prefix'])['manifest'],parent,job['after'])
+
+
 def _commit(instance,target,parent,job,save):
+    # Pausing helpers is a lifecycle mutation too. Validate approval before it,
+    # then repeat at the actual service switch after bounded quiescence.
+    _commit_approval(target,parent,job)
     from .update_helpers import quiesce
     with quiesce(instance,target,job,save):
         return _commit_quiescent(instance,target,parent,job,save)
@@ -515,15 +547,13 @@ def _commit_quiescent(instance,target,parent,job,save):
     from .pilot_operations import _systemctl, automatic_start
     from .network import operations as network
     from .pilot_upgrade import upgrade
+    from .ratings.operations import _identity
+    from .bookings.policy import holds_updates
+    with _identity(parent['service_uid']):booking_held=holds_updates(target['root'])
+    if booking_held:raise ConfigError('private booking blocks controller update')
     # No mutation or token I/O outside the already-running services. Native
     # shutdown confirms closures before releasing the provider owner lease.
-    if job.get('release_approval_required'):
-        # Hashing/admission may span expiry. New commit authority is fresh at
-        # the first lifecycle mutation even if legacy manual repair would admit
-        # this same-version artifact. An interrupted commit stays held.
-        from .updates.approval import require_approved
-        require_approved(validate_runtime(parent,target['prefix'])['manifest'],
-                         validate_runtime(job['after'],target['prefix'])['manifest'],parent,job['after'])
+    _commit_approval(target,parent,job)
     from .update_lifecycle import checkpoint,wait_stopped
     checkpoint(save,'approval')
     network._checked_unit(instance,optional=not job['network_active'])

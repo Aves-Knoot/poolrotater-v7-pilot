@@ -16,7 +16,7 @@ from .contracts import NetworkError, require, canonical, decode, number
 RATING_ROUTES={'/v1/events/batches','/v1/ratings/state-query','/v1/ratings/snapshots/current','/v1/ratings/snapshot-page'}
 STATISTICS_ROUTES={'/v1/activity/replica/current','/v1/activity/replica/page',
                    '/v2/activity/replica/current','/v2/activity/replica/page'}
-UPDATE_ROUTES={'/v1/hosts/self/discord','/v1/hosts/self/updates','/v1/hosts/self/recovery','/v1/hosts/self/managed-rooms','/v1/hosts/self/managed-settings'}
+UPDATE_ROUTES={'/v1/hosts/self/bookings','/v1/hosts/self/discord','/v1/hosts/self/updates','/v1/hosts/self/recovery','/v1/hosts/self/managed-rooms','/v1/hosts/self/managed-settings'}
 REPORTING_ROUTES={'/v1/activity/consent','/v1/activity/events','/v1/activity/query','/v1/logs/consent','/v1/logs/chunks'}
 ROUTES={'/v1/transfers/capabilities','/v2/capabilities','/v2/rooms','/v2/hosts/self/heartbeat','/v1/capabilities','/v1/enrollments','/v1/rooms','/v1/hosts/self','/v1/hosts/self/heartbeat','/v1/hosts/self/token-rotation','/v1/hosts/self/leave','/v1/ratings/stream-state'}|RATING_ROUTES|STATISTICS_ROUTES
 # Diagnostics never repeat arbitrary strings supplied by a remote endpoint.
@@ -39,6 +39,10 @@ REMOTE_ERRORS|=frozenset(('unsupported_managed_policy','invalid_managed_receipt'
     'invalid_managed_result','unknown_managed_receipt','managed_receipt_conflict','managed_operation_conflict',
     'invalid_managed_settings','managed_settings_too_large','managed_settings_page_conflict',
     'managed_settings_revision_conflict','managed_settings_stale','managed_settings_capacity_required'))
+REMOTE_ERRORS|=frozenset(('booking_exchange_expired','booking_stale_exchange','booking_exchange_conflict',
+    'booking_invalid_capabilities','booking_invalid_observations','booking_exchange_too_large',
+    'invalid_operation_receipts','invalid_operation_receipt','operation_receipt_binding_mismatch',
+    'operation_receipt_conflict','host_generation_mismatch'))
 
 
 def origin(value):

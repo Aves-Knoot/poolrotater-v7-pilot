@@ -89,9 +89,12 @@ def serve(root,release):
     reporting_thread=start(client,stop)
     from ..managed_host.agent import start as start_administration
     administration_thread=start_administration(client,stop)
+    from ..bookings.agent import start as start_bookings
+    booking_thread=start_bookings(client,stop)
     try:run_combined(Agent(client,lambda:observation(root,__version__)),Scheduler(sync),stop,snapshots=FetchScheduler(sync))
     finally:
         stop.set();reporting_thread.join(timeout=6);administration_thread.join(timeout=6)
+        if booking_thread is not None:booking_thread.join(timeout=6)
         for sig,handler in previous.items():signal.signal(sig,handler)
 
 

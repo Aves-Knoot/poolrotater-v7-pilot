@@ -93,6 +93,7 @@ def source_names(root):
     names = set(ROOT_SOURCES) | {'requirements.txt', 'requirements-hashed.lock'}
     for folder in ('bot', 'rolling', 'poolrotater_host'):
         names.update(p.relative_to(root).as_posix() for p in (root / folder).rglob('*.py'))
+    names.update('poolrotater_host/bookings/static/'+name for name in ('index.html','app.js','app.css'))
     return sorted(names)
 
 
@@ -278,7 +279,9 @@ def inspect(path, expected_sha256, *, execution='offline-fixture'):
                 if name.startswith('payload/'):
                     relative = name.removeprefix('payload/')
                     if relative not in (*ROOT_SOURCES, 'requirements.txt', 'requirements-hashed.lock', POLICY_NAME) and not (
-                            relative.startswith(('bot/', 'rolling/', 'poolrotater_host/')) and relative.endswith('.py')):
+                            relative.startswith(('bot/', 'rolling/', 'poolrotater_host/')) and relative.endswith('.py')) and relative not in {
+                                'poolrotater_host/bookings/static/index.html','poolrotater_host/bookings/static/app.js',
+                                'poolrotater_host/bookings/static/app.css'}:
                         raise ConfigError('runtime payload member outside allowlist')
                 elif not name.startswith('wheelhouse/') or not name.endswith('.whl'):
                     raise ConfigError('runtime bundle contains unexpected content')

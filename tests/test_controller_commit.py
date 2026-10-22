@@ -25,7 +25,7 @@ class ControllerCommitTests(unittest.TestCase):
             parent={'service_uid':1000,'bundle_sha256':'a'*64}
             states={'bot':True,'network':network_active,'bot_enabled':enabled,'network_enabled':enabled}
             job={'network_active':network_active,'network_enabled':enabled,'service_enabled':enabled,
-                 'archive':'invented.zip','after':{'bundle_sha256':'b'*64},'configuration':update._config_hashes(root)}
+                 'archive':'invented.zip','after':{'bundle_sha256':'b'*64,'service_uid':1000},'configuration':update._config_hashes(root)}
             events=[];receipt={};upgraded=False
             def systemctl(action,*args,**kwargs):
                 events.append((action,*args))
@@ -44,7 +44,7 @@ class ControllerCommitTests(unittest.TestCase):
                 nonlocal upgraded
                 no_processes(1000);upgraded=True
                 return {'transition_id':'invented'}
-            def lifecycle(instance,action):
+            def lifecycle(instance,action,**kwargs):
                 self.assertEqual(action,'start');self.assertTrue(upgraded)
                 states['bot']=True;return {'ok':True}
             with patch.object(network,'_checked_unit'),patch.object(network,'unit',side_effect=network_unit), \
@@ -53,6 +53,8 @@ class ControllerCommitTests(unittest.TestCase):
                     patch('poolrotater_host.pilot_installation._stopped',return_value=nullcontext()), \
                     patch('poolrotater_host.pilot_installation.require_no_service_processes',side_effect=no_processes), \
                     patch('poolrotater_host.pilot_upgrade.upgrade',side_effect=upgrade), \
+                    patch('poolrotater_host.managed_host.upgrade.prepare'), \
+                    patch('poolrotater_host.ratings.operations._identity',return_value=nullcontext()), \
                     patch('poolrotater_host.updates.recovery.wait_for_workers'), \
                     patch.object(update,'_gate'),patch.object(update,'disarm'):
                 if refuse_network:

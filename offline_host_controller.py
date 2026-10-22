@@ -81,6 +81,8 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
         from rolling.supervisor import RollingSupervisor
         def load_configured_rooms():
             configs = (configured_rooms(root, bridge, private_pilot) if private_pilot is not None else bridge.load_rooms())
+            from poolrotater_host.bookings.native import overlay as booking_overlay
+            configs = booking_overlay(root, configs)
             if authentication is not None:
                 # Reuse the username from the already verified /me identity,
                 # just as the native supervisor does. Keep it runtime-only and
@@ -109,6 +111,10 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
         supervisor.private_pilot = private_pilot
         from poolrotater_host.managed_host.native import attach as attach_managed
         supervisor.managed=attach_managed(supervisor)
+        from poolrotater_host.bookings.native import attach as attach_bookings
+        supervisor.bookings=attach_bookings(supervisor)
+        from poolrotater_host.bookings.panels import Publisher as BookingPanelPublisher
+        supervisor.booking_panels=BookingPanelPublisher(supervisor)
         from poolrotater_host.runtime_registry import PrivateRegistry
         supervisor.registry = PrivateRegistry(supervisor.registry)
         hub.shared = supervisor.shared

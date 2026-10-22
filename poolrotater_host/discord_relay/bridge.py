@@ -79,7 +79,10 @@ class CommunityDiscord(DiscordControl):
     def _channel_allows_outbound(self,channel):return self._private_fleet_channel(channel)
 
 
-def card(room,slot,feed=None,*,now=None):
+def card(room,slot,feed=None,*,now=None,booking=None,website_origin='https://poolrotater.com'):
+    if booking is not None:
+        from ..bookings.presentation import purebooking_card
+        return purebooking_card(booking, website_origin)
     now=time.time() if now is None else now
     display=room.get('display') or {};settings=display.get('settings') or {}
     fresh=room.get('freshness')=='fresh';current=room.get('current_map') or {}
@@ -146,6 +149,24 @@ class Bridge:
             proposed[slot]=channel
         self.channels=proposed
 
+    def _booking_assignments(self):
+        """Read explicitly configured private slots without creating a ledger."""
+        path=self.store.root/'bookings.sqlite3'
+        if not os.path.lexists(path):return {}
+        try:
+            from ..bookings.eligibility import Eligibility
+            from ..bookings.repository import Repository as BookingLedger
+            ledger=BookingLedger(self.store.root,clock=self.clock,
+                                 eligibility=Eligibility(self.store,clock=self.clock))
+            assignments=ledger.public_assignments()
+            return {(row['host_id'],row['alias']):row['slot'] for row in assignments
+                    if row['host_id']!=self.owner_host}
+        except Exception:
+            # An unreadable opt-in ledger must not leave public room details or
+            # command routes exposed while its private alias policy is unknown.
+            log.warning('Private booking assignments unavailable; suppressing community room details')
+            return None
+
     def step(self):
         now=self.clock()
         if now>=self.next_discovery:
@@ -158,7 +179,11 @@ class Bridge:
             offset=page['next_offset']
             if offset is None:break
         community=[r for r in rooms if r['host_id']!=self.owner_host]
-        slots=self.repo.assign(community,self.channels,owner_host=self.owner_host)
+        booking_assignments=self._booking_assignments()
+        booking_identities=[] if booking_assignments is None else [
+            {'host_id':host,'alias':alias} for host,alias in booking_assignments
+            if not any(r['host_id']==host and r['alias']==alias for r in community)]
+        slots=self.repo.assign([*community,*booking_identities],self.channels,owner_host=self.owner_host)
         current={(r['host_id'],r['alias']):r for r in community}
         # Retain the identity of offline hosts so the slot stays clearly labelled.
         self.last_rooms.update(current)
@@ -172,8 +197,25 @@ class Bridge:
         routes={}
         for row in slots:
             key=(row['host'],row['alias']);room=current.get(key);last=self.last_rooms.get(key)
-            if last is None or row['channel'] is None:continue
+            if row['channel'] is None:continue
             channel=int(row['channel']);require(channel not in self.reserved,'owner_channel_conflict')
+            booking_slot=(booking_assignments or {}).get(key) if booking_assignments is not None else None
+            if booking_slot is not None:
+                values=card({},row['slot'],now=now,booking=booking_slot)
+                values['channel_id']=channel
+                signature=json.dumps(values,sort_keys=True)
+                if self.last_cards.get(channel)!=signature:
+                    if self.discord.update_public_status(**values):self.last_cards[channel]=signature
+                continue
+            if booking_assignments is None:
+                values=card({},row['slot'],now=now,booking={'label':'Private lobby',
+                             'state':'unavailable','fresh':False})
+                values['channel_id']=channel
+                signature=json.dumps(values,sort_keys=True)
+                if self.last_cards.get(channel)!=signature:
+                    if self.discord.update_public_status(**values):self.last_cards[channel]=signature
+                continue
+            if last is None:continue
             if room is None:last={**last,'freshness':'stale','state':'unavailable','occupants':None,'current_map':None}
             else:last=room
             if room and room['freshness']=='fresh' and room['age_seconds']<120:routes[channel]=key

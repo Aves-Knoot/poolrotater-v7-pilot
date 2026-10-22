@@ -35,6 +35,35 @@ SHARED += ("poolrotater_host/managed_host/__init__.py", "poolrotater_host/manage
            "poolrotater_host/managed_host/settings.py", "poolrotater_host/managed_host/state.py",
            "poolrotater_host/managed_bootstrap.py")
 SHARED += ("poolrotater_host/discord_relay/fleet.py",)
+# Booking ledgers, authorization and lifecycle are controller contracts.
+# A future change cannot silently roll only one worker against older authority.
+SHARED += (
+    'poolrotater_host/bookings/__init__.py',
+    'poolrotater_host/bookings/admin.py',
+    'poolrotater_host/bookings/admission.py',
+    'poolrotater_host/bookings/agent.py',
+    'poolrotater_host/bookings/auth.py',
+    'poolrotater_host/bookings/contracts.py',
+    'poolrotater_host/bookings/eligibility.py',
+    'poolrotater_host/bookings/game.py',
+    'poolrotater_host/bookings/hub.py',
+    'poolrotater_host/bookings/lifecycle.py',
+    'poolrotater_host/bookings/local.py',
+    'poolrotater_host/bookings/native.py',
+    'poolrotater_host/bookings/oauth.py',
+    'poolrotater_host/bookings/panels.py',
+    'poolrotater_host/bookings/policy.py',
+    'poolrotater_host/bookings/portal_entry.py',
+    'poolrotater_host/bookings/presentation.py',
+    'poolrotater_host/bookings/preview.py',
+    'poolrotater_host/bookings/repository.py',
+    'poolrotater_host/bookings/selection.py',
+    'poolrotater_host/bookings/server.py',
+    'poolrotater_host/bookings/settings.py',
+    'poolrotater_host/bookings/update_guard.py',
+    'poolrotater_host/bookings/web.py',
+    'poolrotater_host/bookings/worker.py',
+)
 STORES = ("bot/ratings.py", "bot/ppstats.py", "bot/player_preferences.py",
           "bot/process_control.py", "bot/config_lock.py")
 

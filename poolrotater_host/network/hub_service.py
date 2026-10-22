@@ -20,6 +20,11 @@ PREFIX = Path('/opt/poolrotater-v7-hub')
 STATE = Path('/var/lib/poolrotater-v7-hub')
 USER = 'poolrotater-hub'
 UNIT = 'poolrotater-v7-hub.service'
+BOOKING_ASSETS=tuple('poolrotater_host/bookings/static/'+n for n in ('index.html','app.js','app.css'))
+PREVIEW_MODULES=('__init__.py','rating_outbox.py','mode.py','custom_greetings.py',
+    'pool.py','standard_pool.py','mania_pool.py','catch_pool.py','jump_catalog.py','composition.py',
+    'catch_catalog/__init__.py','catch_catalog/c5_selection.py','catch_catalog/c6_reader.py',
+    'catch_catalog/c6_schema.py','catch_catalog/disk.py','catch_catalog/errors.py','catch_catalog/production.py')
 
 
 def settings(value):
@@ -145,9 +150,12 @@ def prepare(destination, *, bind='127.0.0.1', port=9444):
         # Ratings wire provenance deliberately reuses the existing vote writer's
         # closed contract. Managed settings also share the stdlib-only ruleset
         # validators and greeting defaults; retain them in standalone services.
-        for name in ('__init__.py','rating_outbox.py','mode.py','custom_greetings.py'):
-            target=runtime/'bot'/name;target.parent.mkdir(mode=0o755,exist_ok=True)
+        for name in PREVIEW_MODULES:
+            target=runtime/'bot'/name;target.parent.mkdir(mode=0o755,exist_ok=True,parents=True)
             target.write_bytes((source.parent/'bot'/name).read_bytes());target.chmod(0o644)
+        for name in BOOKING_ASSETS:
+            target=runtime/name;target.parent.mkdir(mode=0o755,exist_ok=True,parents=True)
+            target.write_bytes((source.parent/name).read_bytes());target.chmod(0o644)
         bootstrap=runtime/'bootstrap.py';bootstrap.write_text(BOOTSTRAP);bootstrap.chmod(0o644)
         inventory={p.relative_to(runtime).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
                    for p in sorted(runtime.rglob('*')) if p.is_file()}
@@ -198,8 +206,7 @@ def install_assets(kit, *, expected_inventory_sha256, cert, key,
     require(inventory['files']['bootstrap.py']==hashlib.sha256(BOOTSTRAP.encode()).hexdigest(),'hub_bootstrap_refused')
     for name,digest in inventory['files'].items():
         path=runtime/name
-        require(name in ('bootstrap.py','bot/__init__.py','bot/rating_outbox.py',
-                         'bot/mode.py','bot/custom_greetings.py')
+        require(name in ('bootstrap.py',*('bot/'+n for n in PREVIEW_MODULES),*BOOKING_ASSETS)
                 or (name.startswith('poolrotater_host/') and name.endswith('.py')),'hub_kit_refused')
         require(Path(name).as_posix()==name and '..' not in Path(name).parts and not Path(name).is_absolute(),'hub_kit_refused')
         for ancestor in (path,*path.parents):require(not ancestor.is_symlink(),'hub_kit_refused')
@@ -420,7 +427,7 @@ def main(argv=None):
     from .contracts import NetworkError
     parser=argparse.ArgumentParser(description='Isolated central hub service and recovery; no osu! credentials')
     parser.add_argument('--root',type=Path,required=True)
-    parser.add_argument('action',choices=('serve','check','backup','restore','admin'))
+    parser.add_argument('action',choices=('serve','check','backup','restore','admin','booking-check','booking-serve','booking-slots'))
     parser.add_argument('admin_action',nargs='?',choices=('invite','revoke','inspect','ratings-grant',
                         'ratings-inspect','ratings-link-replacement','ratings-grant-seed',
                         'ratings-policy','ratings-policy-recover','updates-inspect','activity-export','logs-search',
@@ -432,6 +439,14 @@ def main(argv=None):
     try:
         root,_=check(args.root)
         config=settings(read_json(root/'hub.json'))
+        if args.action in ('booking-check','booking-serve'):
+            from ..bookings.portal_entry import main as booking_portal
+            require(args.admin_action is None,'unexpected_admin_action')
+            return booking_portal(['--root',str(root),'--check'if args.action=='booking-check'else'--serve'])
+        if args.action=='booking-slots':
+            from ..bookings.admin import main as booking_admin
+            require(args.admin_action is None,'unexpected_admin_action')
+            return booking_admin(['--root',str(root)])
         if args.action=='admin':
             require(args.admin_action is not None,'hub_admin_action_required')
             from .admin import main as administrative

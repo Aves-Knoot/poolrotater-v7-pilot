@@ -573,7 +573,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             "config_reload_seconds",
             float(self.cfg.get("ai_config_reload_seconds", 2.0) or 2.0),
         )
-        self.cfg.setdefault("hard_restart_interval_seconds", 21600.0)
+        self.cfg.setdefault("hard_restart_interval_seconds", 7200.0)
         self.cfg.setdefault("hard_restart_warning_maps", 3)
         self.cfg.setdefault("hard_restart_close_delay_seconds", 5.0)
         self.cfg.setdefault("lazer_rejoin_delay_seconds", 5.0)
@@ -2232,12 +2232,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         """Configured lifetime of one discoverable room; zero disables it."""
         try:
             return self._external_float(
-                self.cfg.get("hard_restart_interval_seconds", 21600.0),
+                self.cfg.get("hard_restart_interval_seconds", 7200.0),
                 0.0,
                 2_592_000.0,
             )
         except (TypeError, ValueError):
-            return 21600.0
+            return 7200.0
 
     def _hard_restart_warning_maps(self) -> int:
         try:
@@ -4545,6 +4545,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         # opt-in/out and personal language choice/reset remain available.
         if (
             not is_privileged
+            and not self.cfg.get('_booking_session')
             and not self.cfg.get("user_commands_enabled", True)
             and cmd not in ("hidden", "show", "lang")
         ):
@@ -4555,6 +4556,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # Stay silent while throttled: replying to the flood would consume
             # the same shared osu! API budget this guard is protecting.
             return
+
+        if self.cfg.get('_booking_session'):
+            from poolrotater_host.bookings.game import command as booking_command
+            if booking_command(self,user_id,cmd,parts,privileged=is_privileged):return
 
         if cmd == "lang":
             self._handle_language_command(user_id, parts)

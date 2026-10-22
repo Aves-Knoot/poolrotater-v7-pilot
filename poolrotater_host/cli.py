@@ -46,7 +46,7 @@ def main(argv=None):
                    'ratings-migrate','ratings-seed','ratings-recover-stream','ratings-status','ratings-support','ratings-configure',
                    'ratings-reader-configure','ratings-review-epoch','ratings-sync','ratings-fetch',
                    'room-settings-configure','room-settings-status',
-                   'managed-status','managed-limit','managed-request',
+                   'managed-status','managed-limit','managed-request','managed-bookings',
                    'catch-pilot-prepare','catch-pilot-status','catch-pilot-resume','catch-pilot-rollback',
                    'worker-stage','worker-queue','worker-cancel','worker-status',
                    'maintenance-request','maintenance-cancel','maintenance-status',
@@ -55,7 +55,7 @@ def main(argv=None):
         'release-init','release-publish','release-promote','release-renew','release-resume','release-status'):
         command = commands.add_parser('pilot-' + action, help='explicit protected pilot ' + action)
         command.add_argument('--instance', required=True)
-        if action in ('managed-limit','managed-request'):
+        if action in ('managed-limit','managed-request','managed-bookings'):
             command.add_argument('--managed-stdin',required=True,action='store_true')
         if action in ('maintenance-request','maintenance-cancel'):
             command.add_argument('--operation-id',required=True)
@@ -174,7 +174,7 @@ def main(argv=None):
             elif action.startswith('managed-'):
                 from .managed_host.operations import command as managed_command
                 result=managed_command(args.instance,action.removeprefix('managed-'),
-                    stream=sys.stdin.buffer if action in ('managed-limit','managed-request') else None)
+                    stream=sys.stdin.buffer if action in ('managed-limit','managed-request','managed-bookings') else None)
             elif action.startswith('room-settings-'):
                 from .room_settings_operations import command as settings_command
                 result=settings_command(args.instance,action.removeprefix('room-settings-'),

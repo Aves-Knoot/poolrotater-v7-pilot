@@ -1,0 +1,35 @@
+[Unit]
+Description=PoolRotater private booking website portal
+After=network.target poolrotater-v7-hub.service
+Wants=poolrotater-v7-hub.service
+
+[Service]
+Type=simple
+User=poolrotater-hub
+Group=poolrotater-hub
+WorkingDirectory=/var/lib/poolrotater-v7-hub
+ExecStartPre=/usr/bin/python3.12 -I -S /opt/poolrotater-v7-hub/bootstrap.py --root /var/lib/poolrotater-v7-hub booking-check
+ExecStart=/usr/bin/python3.12 -I -S /opt/poolrotater-v7-hub/bootstrap.py --root /var/lib/poolrotater-v7-hub booking-serve
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+Nice=19
+CPUQuota=50%
+MemoryMax=512M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/poolrotater-v7-hub
+
+[Install]
+WantedBy=multi-user.target

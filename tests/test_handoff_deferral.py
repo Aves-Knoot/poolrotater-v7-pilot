@@ -1,7 +1,7 @@
 """Definite pre-mutation refusals wait; unknown writes and cleanup failures hold."""
 from scripts.test_isolation import require_test_isolation
 require_test_isolation('ordinary')
-import queue,threading,time,unittest
+import queue,threading,time,unittest,tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
@@ -11,6 +11,8 @@ from rolling.protocol import UncertainResult
 class HandoffDeferralTests(unittest.TestCase):
     def setUp(self):
         s=self.s=RollingSupervisor.__new__(RollingSupervisor);s.configs={'room1':{},'room2':{}};s.schema_baseline={}
+        runtime=tempfile.TemporaryDirectory();self.addCleanup(runtime.cleanup)
+        s.runtime=Path(runtime.name)
         broker=SimpleNamespace(uncertain=False,fenced=False,quiesced=False,password='',hub=Mock(owned={101}))
         old=self.old=SimpleNamespace(fresh=Mock(return_value=True),idle_empty=Mock(return_value=True),broker=broker,status={'paused':False},empty_since=1,empty_epoch=5,release=Path('/old'))
         s.workers={'room1':old,'room2':object()};s.targets={'room1':Path('/new')};s.rollout_alias='room1'

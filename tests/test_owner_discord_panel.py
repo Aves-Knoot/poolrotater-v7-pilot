@@ -19,9 +19,9 @@ class OwnerPanelTests(unittest.TestCase):
   self.assertEqual(identity(self.cfg),('l1-catch-setdiff','Lobby 1 · Catch Setdiff'))
   other={**self.cfg,'_host_root':'/var/lib/poolrotater-v7-pilot/two'}
   self.assertIsNone(identity(other));self.assertEqual(decorate(other,self.values,path=self.path,now=1000),self.values)
- def test_art_settings_next_and_actual_progress(self):
+ def test_art_settings_next_without_public_map_progress(self):
   r=self.panel();self.assertTrue(r['image_url'].endswith('/789/covers/cover.jpg'))
-  fields=dict(r['extra_fields']);self.assertIn('Freemod: off',fields['Room settings']);self.assertIn('0:20 / 1:40',fields['Map progress']);self.assertEqual(fields['Next map'],'Next invented map')
+  fields=dict(r['extra_fields']);self.assertIn('Freemod: off',fields['Room settings']);self.assertNotIn('Map progress',fields);self.assertEqual(fields['Next map'],'Next invented map')
  def test_delayed_or_expired_feed_never_reuses_old_art_or_progress(self):
   for changes in ({'generated_at':700},{'expires_at':999},{'available':False}):
    with self.subTest(changes=changes):
@@ -32,8 +32,8 @@ class OwnerPanelTests(unittest.TestCase):
   r=self.panel();self.assertEqual(r['image_url'],'');self.assertNotIn('Map progress',dict(r['extra_fields']))
  def test_idle_does_not_show_previous_progress(self):
   self.feed['rooms'][0]['state']='IDLE';self.write();self.assertNotIn('Map progress',dict(self.panel()['extra_fields']))
- def test_mod_adjusted_duration_is_retained(self):
-  self.feed['rooms'][0]['playback']['duration_seconds']=60;self.write();self.assertIn('0:20 / 1:00',dict(self.panel()['extra_fields'])['Map progress'])
+ def test_mod_adjusted_duration_does_not_expose_public_map_progress(self):
+  self.feed['rooms'][0]['playback']['duration_seconds']=60;self.write();self.assertNotIn('Map progress',dict(self.panel()['extra_fields']))
  def test_invalid_timing_and_nonfinite_are_suppressed(self):
   for value in (float('nan'),-1,100000):
    self.feed['rooms'][0]['playback']['duration_seconds']=value;self.write();self.assertNotIn('Map progress',dict(self.panel()['extra_fields']))

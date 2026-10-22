@@ -6,9 +6,12 @@ the existing store initializers; rolling candidates may only reuse that schema.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import re
+import stat
 import sqlite3
+import uuid
 from urllib.parse import parse_qs, unquote, urlsplit
 
 _CONNECT = sqlite3.connect
@@ -17,6 +20,50 @@ _CREATE = {sqlite3.SQLITE_CREATE_TABLE: "table", sqlite3.SQLITE_CREATE_INDEX: "i
 _DENY = {getattr(sqlite3, name) for name in (
     "SQLITE_DROP_INDEX", "SQLITE_DROP_TABLE", "SQLITE_DROP_TRIGGER", "SQLITE_DROP_VIEW",
     "SQLITE_ALTER_TABLE", "SQLITE_ATTACH", "SQLITE_DETACH", "SQLITE_CREATE_VTABLE", "SQLITE_DROP_VTABLE")}
+_BOOKING_ALIASES = frozenset(('room1', 'room2', 'room3', 'room4'))
+_BOOKING_BINDING_FIELDS = frozenset(('id', 'alias', 'session_generation', 'preset'))
+
+
+def _booking_session_database(cfg):
+    """Return only the controller-prepared ledger for a bound private worker."""
+    value = cfg.get('_booking_session')
+    if type(value) is not dict or set(value) != _BOOKING_BINDING_FIELDS:
+        return None
+    booking_id = value.get('id')
+    alias = value.get('alias')
+    generation = value.get('session_generation')
+    preset = value.get('preset')
+    try:
+        if type(booking_id) is not str or str(uuid.UUID(booking_id)) != booking_id:
+            return None
+    except (ValueError, AttributeError):
+        return None
+    if (type(alias) is not str or alias not in _BOOKING_ALIASES
+            or cfg.get('_instance_name') != alias
+            or type(generation) is not str or re.fullmatch('[a-f0-9]{32}', generation) is None):
+        return None
+    from poolrotater_host.config import PRESETS
+    if type(preset) is not str or preset not in PRESETS:
+        return None
+    root = cfg.get('_host_root')
+    if type(root) is not str or not Path(root).is_absolute():
+        return None
+    host_root = Path(root)
+    state = host_root / 'state'
+    database = state / 'bookings.sqlite3'
+    try:
+        if (any(item.is_symlink() for item in (host_root, *host_root.parents, state, database))
+                or not state.is_dir() or not database.is_file()):
+            return None
+        state_info = state.lstat()
+        database_info = database.lstat()
+        if (state_info.st_uid != os.geteuid() or stat.S_IMODE(state_info.st_mode) & 0o077
+                or not stat.S_ISREG(database_info.st_mode) or database_info.st_uid != os.geteuid()
+                or database_info.st_nlink != 1 or stat.S_IMODE(database_info.st_mode) & 0o077):
+            return None
+    except OSError:
+        return None
+    return str(database.resolve())
 
 
 def guarded_connect(database, *args, allowed_paths=None, readonly_paths=(),
@@ -88,6 +135,12 @@ def install_guard(cfg):
         # Workers never write command intent, revisions or capacity authority.
         managed=str((Path(cfg['_host_root'])/'state/managed-host.sqlite3').resolve())
         allowed.add(managed)
+        # A bound private-booking worker receives one pre-created local ledger.
+        # Its path is fixed beneath the installed host root; user-selected DB
+        # paths and workers without an exact lease binding remain denied.
+        booking_database = _booking_session_database(cfg)
+        if booking_database is not None:
+            allowed.add(booking_database)
     readonly = {str(Path(cfg[key]).resolve()) for key in ("farm_db", "loved_db", "mania_db", "mania_farm_db", "catch_catalog")
                 if cfg.get(key)}
     if cfg.get('_host_root'):readonly.add(managed)
