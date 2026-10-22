@@ -48,6 +48,8 @@ class RelayTests(unittest.TestCase):
         self.assertEqual(channel_name(2,'standard-fixed'),'l2-standard-setdiff')
         self.assertEqual(channel_name(3,'mania-7k'),'l3-7k-mania-setdiff')
         self.assertEqual(channel_name(5,'standard-auto',operator='Xikeon'),'l5-xikeon-standard-autodiff')
+        self.assertEqual(channel_name(9,'standard-loved',operator='Strohm'),'l9-strohm-loved-setdiff')
+        self.assertEqual(channel_name(10,'standard-fixed',operator='Strohm'),'l10-strohm-standard-setdiff')
         self.assertNotEqual(channel_name(5,'mania-4k',operator='same'),channel_name(6,'mania-4k',operator='same'))
 
     def test_owner_slots_reserved_and_capacity_extension(self):
@@ -178,11 +180,11 @@ class RelayTests(unittest.TestCase):
             cfg={'_host_root':'/var/lib/poolrotater-v7-pilot/owner','_instance_name':f'room{slot}','ruleset_id':ruleset,'mania_keys':keys,'auto_difficulty':False}
             self.assertEqual(SharedDiscord([cfg]).view_for(f'room{slot}')._public_status_channel_name(),f'l{slot}-{label}-setdiff')
 
-    def test_card_matches_map_art_and_timing_and_withdraws_stale(self):
+    def test_card_matches_map_art_and_omits_playback_progress(self):
         r=self.store.directory(protocol_version=2)['rooms'][0]
         r['state']='playing';r['display']={'settings':{'freestyle':True,'countdown_seconds':15,'selection_style':'variety'}}
         f={'room_id':12345,'fresh_until':1100,'current_map':{'cover_url':'https://assets.ppy.sh/beatmaps/123/covers/cover.jpg'},'playback':{'beatmap_id':100,'started_at':990,'duration_seconds':90}}
-        c=card(r,5,f,now=1000);self.assertTrue(c['image_url']);self.assertEqual(len(c['extra_fields']),2)
+        c=card(r,5,f,now=1000);self.assertTrue(c['image_url']);self.assertEqual(len(c['extra_fields']),1)
         c=card({**r,'freshness':'stale'},5,f,now=1000);self.assertFalse(c['is_open']);self.assertEqual(len(c['extra_fields']),1)
         self.assertEqual(card(r,5,{**f,'fresh_until':900},now=1000)['image_url'],'')
 

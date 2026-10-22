@@ -125,7 +125,7 @@ class Repository:
         from .query import query
         return query(self,token,value)
 
-    def snapshot(self, *, now=None, hidden_user_ids=(), include_hidden_for_totals=False, user_ids=None):
+    def snapshot(self, *, now=None, hidden_user_ids=(), include_hidden_for_totals=False, user_ids=None, detached_authority=False):
         """Complete private intermediate export, not a public HTTP endpoint.
 
         No leaderboard cap. Host-provided evidence is authenticated as its source,
@@ -135,8 +135,12 @@ class Repository:
         require(type(include_hidden_for_totals) is bool,'invalid_activity_privacy_projection')
         require(user_ids is None or (type(user_ids) in (list,tuple,set) and len(user_ids)<=30 and all(type(uid) is int and uid>0 for uid in user_ids)),'activity_query_too_large')
         now=self.store.clock() if now is None else now
-        with self.store.transaction() as auth:
+        from contextlib import ExitStack
+        require(type(detached_authority) is bool,'invalid_activity_privacy_projection')
+        with ExitStack() as authority:
+            auth=authority.enter_context(self.store.transaction())
             hosts={r['id']:dict(r) for r in auth.execute('SELECT id,label,revoked,account_id FROM hosts')}
+            if detached_authority:authority.close()
             with connection(self.path) as db:
                 hidden=set(int(x) for x in hidden_user_ids)
                 # Conservative global preference: a host cannot unhide another host's player choice.

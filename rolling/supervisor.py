@@ -911,6 +911,22 @@ class RollingSupervisor:
                 return self.release
         return pinned
 
+    def start_discord_relay(self):
+        if getattr(self.discord, 'remote_relay', None) is not None:
+            return
+        try:
+            from poolrotater_host.discord_relay.host import HostRelay
+            relay = HostRelay(self)
+            self.discord.remote_relay = relay
+            relay.start()
+        except Exception:
+            log.warning("Discord host relay unavailable; existing rooms retained")
+
+    def stop_discord_relay(self):
+        relay = getattr(self.discord, 'remote_relay', None)
+        if relay is not None:
+            relay.stop()
+
     def run(self):
         signal.signal(signal.SIGINT, lambda *_: self.request_shutdown())
         signal.signal(signal.SIGTERM, lambda *_: self.request_shutdown())
@@ -918,12 +934,7 @@ class RollingSupervisor:
             self.shared.hub.connect()
             self.shared.start_dispatch()
             self.discord.start()
-            try:
-                from poolrotater_host.discord_relay.host import HostRelay
-                self.discord.remote_relay = HostRelay(self)
-                self.discord.remote_relay.start()
-            except Exception:
-                log.warning("Discord host relay unavailable; existing rooms retained")
+            self.start_discord_relay()
             if self.chat_websocket:
                 self.chat_websocket.start()
             for alias in self.configs:

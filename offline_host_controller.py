@@ -116,6 +116,7 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
             hub.connect()
             supervisor.shared.start_dispatch()
             supervisor.discord.start()
+            supervisor.start_discord_relay()
             if supervisor.chat_websocket:
                 supervisor.chat_websocket.start()
             yield supervisor
@@ -145,6 +146,7 @@ def _host_controller(root, release, *, api, hub, account_id=None, authentication
             finally:
                 if supervisor.chat_websocket:
                     supervisor.chat_websocket.stop()
+                supervisor.stop_discord_relay()
                 supervisor.discord.stop()
                 for modlog in supervisor.modlogs.values():
                     modlog.stop(timeout=1)

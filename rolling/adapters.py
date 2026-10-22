@@ -120,6 +120,9 @@ class Api:
                 if name == 'room_item_scores' and exc.kind == 'ProviderScoreReadUnavailable':
                     from bot.api import ApiScoreReadUnavailable
                     raise ApiScoreReadUnavailable(str(exc)) from exc
+                if name == 'chat_send' and exc.kind == 'ProviderChatDeliveryRefused':
+                    from bot.api import ApiChatDeliveryRefused
+                    raise ApiChatDeliveryRefused(str(exc)) from exc
                 if name == 'chat_send' and exc.kind == 'ProviderChatDeliveryUncertain':
                     from bot.api import ApiChatDeliveryUncertain
                     raise ApiChatDeliveryUncertain(str(exc)) from exc

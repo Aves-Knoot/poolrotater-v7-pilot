@@ -51,7 +51,7 @@ from .process_control import SharedProcessControl
 from .custom_greetings import JOIN_GREETING_COOLDOWN, configured_greeting
 from .community import DEFAULT_DISCORD_INVITE
 from .api import (ApiAdmissionDeferred, ApiKeepaliveUnavailable,
-                  ApiChatReadUnavailable, ApiChatDeliveryUncertain,
+                  ApiChatReadUnavailable, ApiChatDeliveryUncertain, ApiChatDeliveryRefused,
                   ApiScoreReadUnavailable, ApiProfileReadUnavailable)
 
 log = logging.getLogger("bot")
@@ -3731,6 +3731,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # This typed refusal proves that no message was dispatched.
             self._queue_room_chat(entry)
             self._room_chat_retry_at = time.monotonic() + 1.0
+        except ApiChatDeliveryRefused:
+            self._room_chat_refused_until = time.monotonic() + 30.0
+            log.warning('room chat refused: HTTP 403; message omitted, gameplay retained')
         except ApiChatDeliveryUncertain:
             # Losing a cosmetic/command reply is preferable to aborting all
             # occupied rooms. Its dispatch outcome remains uncertain in the
@@ -3795,6 +3798,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # exponential client delay only postpones an otherwise ready reply.
             self._room_chat_retry_at = now + 1.0
             return
+        except ApiChatDeliveryRefused:
+            self._room_chat_refused_until = time.monotonic() + 30.0
+            log.warning('queued room chat refused: HTTP 403; message omitted, gameplay retained')
         except ApiChatDeliveryUncertain:
             log.warning('queued room chat delivery uncertain; message will not be resent')
         pending.popleft()
@@ -3807,6 +3813,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return getattr(self, '_shutdown_started', False) or not getattr(self, 'running', True)
         if stopping():
             return
+        if time.monotonic() < getattr(self, '_room_chat_refused_until', 0.0):
+            raise ApiAdmissionDeferred('room_chat_access_backoff')
         coordinator = getattr(self, "lazer_coordinator", None)
 
         if time.time() - self._last_sent < 1.5:

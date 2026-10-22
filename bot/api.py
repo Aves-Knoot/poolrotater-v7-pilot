@@ -46,6 +46,10 @@ class ApiScoreReadUnavailable(RuntimeError):
     """Transient match-score read failure; retry within the scoring window."""
 
 
+class ApiChatDeliveryRefused(RuntimeError):
+    """The server definitively rejected this chat message; gameplay may continue."""
+
+
 class ApiChatDeliveryUncertain(RuntimeError):
     """The one chat message may have arrived. Never automatically resend it."""
 

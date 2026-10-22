@@ -81,9 +81,63 @@ def directory(path):
 
 class Publisher:
     """One process-wide source projection, shared by authenticated consumers."""
-    def __init__(self,repository):
+    def __init__(self,repository,*,background=False):
         self.repository=repository;self.store=repository.store;self.lock=threading.Lock()
         self.projection=None;self.stamp=None;self.include_catch=False
+        self.background=background
+        self._schedule_lock=threading.Lock();self._pending={};self._failed_at={}
+        self._worker=None;self._closed=False
+
+    def close(self):
+        with self._schedule_lock:
+            self._closed=True;self._pending.clear();worker=self._worker
+        if worker is not None:worker.join()
+
+    def _cached(self,host,epoch,policy,*,include_catch=False):
+        base=self.store.root/('activity-replicas-v2' if include_catch else 'activity-replicas')/host
+        if not base.exists():return None
+        _private(base,directory=True);pointer=base/'current.json'
+        if not pointer.exists():return None
+        value=manifest(read_json(_private(pointer)))
+        age=self.store.clock()-value['generated_at']
+        if (value['host_id']!=host or value['server_epoch']!=epoch
+                or value['policy_id']!=policy or not 0<=age<MAX_AGE):return None
+        return value
+
+    def _schedule(self,token,host,include_catch):
+        key=(host,include_catch)
+        with self._schedule_lock:
+            if (self._closed or key in self._pending or len(self._pending)>=64
+                    or self.store.clock()-self._failed_at.get(key,float('-inf'))<15):return
+            self._pending[key]=token
+            if self._worker is None:
+                self._worker=threading.Thread(target=self._refresh,name='statistics-projection',daemon=True)
+                self._worker.start()
+
+    def _refresh(self):
+        while True:
+            with self._schedule_lock:
+                if self._closed or not self._pending:
+                    self._worker=None;return
+                key=next(iter(self._pending));token=self._pending[key]
+            try:self._current(token,include_catch=key[1])
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning('statistics projection refresh deferred; retained previous verified generation')
+                with self._schedule_lock:self._failed_at[key]=self.store.clock()
+            finally:
+                with self._schedule_lock:self._pending.pop(key,None)
+
+    def current(self,token,*,include_catch=False):
+        host,epoch,policy,_=self.authority(token)
+        old=self._cached(host,epoch,policy,include_catch=include_catch)
+        if (old is not None and self.store.clock()-old['generated_at']<INTERVAL
+                and (self.background or self.stamp is not None)):
+            return old
+        if not self.background:return self._current(token,include_catch=include_catch)
+        self._schedule(token,host,include_catch)
+        if old is not None:return old
+        raise NetworkError('hub_unavailable',503)
 
     def authority(self,token):
         with self.store.transaction() as auth:
@@ -98,7 +152,7 @@ class Publisher:
         return host['id'],epoch,policy,watermark
 
     def _project(self,epoch,policy,watermark,now,*,include_catch=False):
-        snapshot=self.repository.snapshot(now=now)
+        snapshot=self.repository.snapshot(now=now,detached_authority=True)
         groups={}
         for kind in COLLECTIONS:
             for row in snapshot[kind]:
@@ -128,7 +182,7 @@ class Publisher:
         rows.sort(key=lambda r:(r['ruleset_id'],r['player']['user_id']))
         self.projection=rows;self.stamp=(epoch,policy,watermark,now);self.include_catch=include_catch
 
-    def current(self,token,*,include_catch=False):
+    def _current(self,token,*,include_catch=False):
         with self.lock:
             host,epoch,policy,watermark=self.authority(token);now=self.store.clock()
             if self.include_catch!=include_catch or self.stamp is None or self.stamp[:2]!=(epoch,policy) or not 0<=now-self.stamp[3]<INTERVAL:

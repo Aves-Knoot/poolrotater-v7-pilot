@@ -127,6 +127,12 @@ class LovedSignedStoreTests(unittest.TestCase):
   self.assertEqual(set(reference['modes']),{'loved'})
   ref=store.inspect();self.assertEqual(ref['manifests']['loved']['mode'],'loved')
   pool=make_pool(root,load(root)[1]['rooms'][0]);self.assertTrue(pool.loved_mode);self.assertTrue(pool.maps)
+  # Exercise the worker's signed-policy path, not only the native pool factory.
+  # A Loved-only host has no Ranked Standard entry to accidentally fall back to.
+  cfg=RuntimeConfigBridge(root).load_rooms()[0]
+  worker_pool=make_worker_pool(cfg)
+  self.assertTrue(worker_pool.loved_mode);self.assertTrue(worker_pool.maps)
+  self.assertTrue(all(item.is_loved for item in worker_pool.maps))
   self.assertEqual(store.import_local(self.base/'public',['loved']),reference)
   self.assertTrue((store.path/'exclusions-loved.json').exists())
   self.assertEqual({(m,e['id'],e['action'])for e in store.exclusions()['events']for m in e['modes']},{(m,e['id'],e['action'])for e in _legacy_feed(self.feed)['events']for m in e['modes']})

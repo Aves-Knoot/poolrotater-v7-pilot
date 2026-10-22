@@ -38,6 +38,10 @@ class ProviderScoreReadUnavailable(AuthError):
     """
 
 
+class ProviderChatDeliveryRefused(AuthError):
+    """A definitive chat-only rejection, not room authority or delivery uncertainty."""
+
+
 class ProviderChatDeliveryUncertain(AuthError):
     """One chat send may have arrived. Drop it; retain gate uncertainty/cooldown.
 
@@ -205,6 +209,10 @@ class ProviderApiClient:
                     continue
                 raise AuthError('provider_api_unauthorized', http_status=code)
             if code == 429: raise AuthError('provider_api_rate_limited', http_status=code)
+            if code == 403:
+                if chat_send:raise ProviderChatDeliveryRefused('provider_chat_delivery_refused', http_status=code)
+                if chat_read:raise ProviderChatReadUnavailable('provider_chat_read_unavailable', http_status=code)
+                if keepalive:raise ProviderKeepaliveUnavailable('provider_chat_keepalive_unavailable', http_status=code)
             if code == 404 and not mutation: return None
             if code not in (200, 201, 204):
                 operation = 'chat_channel_access' if re.fullmatch(r'/api/v2/chat/channels/' + ID, full) else 'typed_api'

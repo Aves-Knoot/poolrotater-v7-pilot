@@ -21,7 +21,7 @@ def room_kind(preset, settings=None):
     settings=settings or {}
     kind=('4k-mania' if preset=='mania-4k' else '7k-mania' if preset=='mania-7k'
           else 'catch' if preset=='catch-fixed' else 'standard')
-    if preset=='standard-loved' or settings.get('selection_style')=='loved':kind='standard-loved'
+    if preset=='standard-loved' or settings.get('selection_style')=='loved':kind='loved'
     automatic=settings.get('auto_difficulty',preset=='standard-auto')
     return kind+('-autodiff' if automatic else '-setdiff')
 

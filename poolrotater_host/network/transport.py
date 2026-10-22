@@ -51,7 +51,7 @@ def origin(value):
 
 
 class Transport:
-    def __init__(self,url,trust,*,timeout=5):
+    def __init__(self,url,trust,*,timeout=30):
         self.origin=origin(url);require(type(trust) is TrustSnapshot,'explicit_hub_trust_required');trust.context()
         number(timeout,.1,30);self.trust=trust;self.timeout=timeout
         self.last_worker_reaped=True

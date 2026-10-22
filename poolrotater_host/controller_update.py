@@ -506,6 +506,12 @@ def step(instance):
 
 
 def _commit(instance,target,parent,job,save):
+    from .update_helpers import quiesce
+    with quiesce(instance,target,job,save):
+        return _commit_quiescent(instance,target,parent,job,save)
+
+
+def _commit_quiescent(instance,target,parent,job,save):
     from .pilot_operations import _systemctl, automatic_start
     from .network import operations as network
     from .pilot_upgrade import upgrade

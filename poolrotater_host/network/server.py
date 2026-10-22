@@ -17,17 +17,21 @@ class HubServer(ThreadingHTTPServer):
     block_on_close=True
     allow_reuse_address=True
 
-    def __init__(self,address,store,*,tls_context):
+    def __init__(self,address,store,*,tls_context,background_statistics=False):
         from ..ratings.hub_migration import require_settled
         require_settled(store)
         self.store=store;self.capacity=threading.BoundedSemaphore(8)
         self.requests=deque();self.quota_lock=threading.Lock()
         from ..activity.repository import Repository as Activity
         from ..activity.replica import Publisher as Statistics
-        self.statistics=Statistics(Activity(store))
+        self.statistics=Statistics(Activity(store),background=background_statistics)
         super().__init__(address,Handler)
         require(isinstance(tls_context,ssl.SSLContext),'https_required')
         self.socket=tls_context.wrap_socket(self.socket,server_side=True)
+
+    def server_close(self):
+        try:super().server_close()
+        finally:self.statistics.close()
 
     def get_request(self):
         # Socket handshake/slow clients must not stop accept indefinitely.

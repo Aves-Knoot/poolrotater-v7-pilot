@@ -98,7 +98,7 @@ def serve(root,cert,key,*,bind='127.0.0.1',port=9444):
     with file_lease(store.root/'hub-server.lock'):
         from ..ratings.hub_migration import require_settled
         require_settled(store)
-        stop=threading.Event();server=HubServer((bind,port),store,tls_context=tls(cert,key));server.timeout=.5
+        stop=threading.Event();server=HubServer((bind,port),store,tls_context=tls(cert,key),background_statistics=True);server.timeout=.5
         previous={sig:signal.signal(sig,lambda *_:stop.set()) for sig in (signal.SIGTERM,signal.SIGINT)}
         try:
             while not stop.is_set():server.handle_request()
