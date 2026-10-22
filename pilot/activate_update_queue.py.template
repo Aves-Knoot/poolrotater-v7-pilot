@@ -105,7 +105,13 @@ from pathlib import Path
 sys.path.insert(0,sys.argv[1])
 try:
  from poolrotater_host.update_queue_activation import command
- print(json.dumps(command(sys.argv[2],sys.argv[3])))
+ result=command(sys.argv[2],sys.argv[3])
+ if result.get('phase')=='waiting_empty':
+  from poolrotater_host.controller_update import arm
+  armed=arm(sys.argv[2])
+  if armed.get('phase')!='waiting_empty' or armed.get('rooms_stopped')is not False:raise ValueError('queue_activation_timer_requires_review')
+  result['timer_armed']=True
+ print(json.dumps(result))
 except Exception as error:
  value=getattr(error,'code',None)or(str(error)if len(error.args)==1 else None)
  if not isinstance(value,str)or not re.fullmatch('[a-z][a-z0-9_]{0,100}',value):value='queue_activation_requires_review'
