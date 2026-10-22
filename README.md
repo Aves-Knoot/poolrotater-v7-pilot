@@ -1,6 +1,6 @@
 # PoolRotater distributed host
 
-Current release: **v7.2.10**, shared-statistics repair and private-room player totals.
+Current release: **v7.2.11**, shared-statistics repair and private-room player totals.
 Use the installer ZIP asset of an accepted GitHub release; source archives do
 not install a protected runtime.
 
@@ -9,3 +9,6 @@ reporting and authenticated administration. See [managed room administration](do
 [release notes](docs/SHARED_STATISTICS_REPAIR.md), and the installer kit guides.
 Existing configuration, account authorization, catalogs and player history are
 retained. Private-room information never belongs in public directory panels.
+
+Affected v7.2.9/v7.2.10 hosts: see [first-update activation](docs/UPDATE_QUEUE_ACTIVATION.md)
+for the pinned queue-only bridge. No reinstall or repeated OAuth is needed.

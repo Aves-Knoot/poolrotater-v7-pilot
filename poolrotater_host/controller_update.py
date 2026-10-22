@@ -337,7 +337,10 @@ def queue(instance, bundle, sha256, *, from_sha256, deployment_id=None, release_
             'automatic_recovery':{'format':1,'attempts':0}}
         if release_approval_required:job['release_approval_required']=True
         from .managed_host.projection import read as managed_projection
-        projection=managed_projection(target['root'],marker)
+        # The secret-free projection is owned by the service UID, like other
+        # host JSON. Keep its normal owner/privacy checks under that identity.
+        with _identity(parent['service_uid']):
+            projection=managed_projection(target['root'],marker)
         if projection is not None:job['managed_before']=projection
         _write(path, job)
         return {'ok':True, 'phase':job['phase'], 'id':job['id'], 'release':staged['release'],

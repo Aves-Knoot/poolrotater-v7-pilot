@@ -1,0 +1,112 @@
+#!/usr/bin/python3.12
+"""Queue a pinned signed successor using its corrected native administrative SDK.
+
+This does not force room closure or restart. It repairs the first managed29/10
+queue preflight; credentials and ownership remain local and unchanged.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path,PurePosixPath
+import re
+import ssl
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.parse
+import urllib.request
+import zipfile
+
+URL='https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/download/v7.2.11/poolrotater-v7.2.11-runtime.zip'
+SHA256='@RUNTIME_SHA256@'
+LIMIT=128*1024**2
+HOSTS=frozenset(('github.com','release-assets.githubusercontent.com','objects.githubusercontent.com'))
+
+
+def allowed(url):
+    value=urllib.parse.urlsplit(url)
+    if (value.scheme!='https'or value.hostname not in HOSTS or value.port not in(None,443)
+            or value.username is not None or value.password is not None):raise ValueError('queue_activation_download_refused')
+
+
+class Redirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,req,fp,code,msg,headers,newurl):
+        allowed(newurl);return super().redirect_request(req,fp,code,msg,headers,newurl)
+
+
+def download(target):
+    allowed(URL);opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),Redirect(),urllib.request.HTTPSHandler(context=ssl.create_default_context()))
+    digest=hashlib.sha256();count=0;deadline=time.monotonic()+180
+    with opener.open(urllib.request.Request(URL,headers={'User-Agent':'PoolRotater-queue-activation'}),timeout=30)as response,target.open('xb')as stream:
+        allowed(response.url)
+        if response.status!=200:raise ValueError('queue_activation_download_refused')
+        while chunk:=response.read(1024**2):
+            count+=len(chunk)
+            if count>LIMIT or time.monotonic()>deadline:raise ValueError('queue_activation_download_limit')
+            digest.update(chunk);stream.write(chunk)
+    if digest.hexdigest()!=SHA256:raise ValueError('queue_activation_runtime_digest_mismatch')
+
+
+def unpack(source,destination):
+    with source.open('rb')as stream:
+        if hashlib.file_digest(stream,'sha256').hexdigest()!=SHA256:raise ValueError('queue_activation_runtime_digest_mismatch')
+    with zipfile.ZipFile(source)as archive:
+        rows=archive.infolist()
+        if len(rows)>4096 or len({r.filename for r in rows})!=len(rows)or sum(r.file_size for r in rows)>LIMIT:raise ValueError('queue_activation_archive_refused')
+        for row in rows:
+            p=PurePosixPath(row.filename)
+            if p.is_absolute()or any(x in('','.','..')for x in row.filename.split('/'))or not stat.S_ISREG(row.external_attr>>16)or row.flag_bits&1:raise ValueError('queue_activation_archive_refused')
+        for row in rows:
+            if not row.filename.startswith('payload/'):continue
+            target=destination/row.filename;target.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+            with target.open('xb')as stream:stream.write(archive.read(row))
+
+
+def root_json(path):
+    for p in(path,*path.parents):
+        info=p.lstat()
+        if stat.S_ISLNK(info.st_mode)or info.st_uid!=0 or info.st_mode&0o022:raise ValueError('queue_activation_protected_registration_required')
+    info=path.stat()
+    if not stat.S_ISREG(info.st_mode)or info.st_nlink!=1 or info.st_size>1024*1024:raise ValueError('queue_activation_protected_registration_required')
+    return json.loads(path.read_text())
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--instance',required=True);args=parser.parse_args()
+    if os.geteuid()!=0:raise ValueError('queue_activation_administrator_required')
+    if not re.fullmatch('[a-z0-9][a-z0-9_-]{0,31}',args.instance):raise ValueError('queue_activation_instance_refused')
+    os.umask(0o077);prefix=Path('/opt/poolrotater-v7-pilot')/args.instance
+    intent=root_json(prefix/'pilot-install.json');installation=intent['installation_id']
+    if not re.fullmatch('[a-f0-9-]{36}',installation):raise ValueError('queue_activation_registration_refused')
+    record=root_json(prefix/'installations'/(installation+'.json'));environment=Path(record['environment'])
+    if environment.parent!=prefix/'environments'or not re.fullmatch('[a-f0-9]{64}',environment.name):raise ValueError('queue_activation_environment_refused')
+    for path in(environment,environment/'bin',*environment.parents):
+        info=path.lstat()
+        if not stat.S_ISDIR(info.st_mode)or info.st_uid!=0 or info.st_mode&0o022:raise ValueError('queue_activation_environment_refused')
+    if (environment/'bin/python').resolve()!=Path('/usr/bin/python3.12'):raise ValueError('queue_activation_interpreter_refused')
+    with tempfile.TemporaryDirectory(prefix='poolrotater-queue-activation-')as directory:
+        stage=Path(directory);archive=stage/'runtime.zip';download(archive);unpack(archive,stage)
+        code='''import json,re,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+try:
+ from poolrotater_host.update_queue_activation import command
+ print(json.dumps(command(sys.argv[2],sys.argv[3])))
+except Exception as error:
+ value=getattr(error,'code',None)or(str(error)if len(error.args)==1 else None)
+ if not isinstance(value,str)or not re.fullmatch('[a-z][a-z0-9_]{0,100}',value):value='queue_activation_requires_review'
+ print(json.dumps({'ok':False,'phase':'requires_review','failure_code':value,'next_action':'retain_instance_state; return_this_result_without_repeating_start'}))
+ raise SystemExit(2)
+'''
+        result=subprocess.run([str(environment/'bin/python'),'-I','-B','-c',code,str(stage/'payload'),args.instance,SHA256],cwd='/tmp',
+            env={'PATH':'/usr/sbin:/usr/bin:/bin','LANG':'C.UTF-8','PYTHONDONTWRITEBYTECODE':'1','MALLOC_ARENA_MAX':'2'},timeout=300)
+        raise SystemExit(result.returncode)
+
+
+if __name__=='__main__':
+    try:main()
+    except Exception:
+        print(json.dumps({'ok':False,'phase':'download_or_preflight_refused','next_action':'keep_existing_instance_and_state; report_without_repeating_start'}));raise SystemExit(2)

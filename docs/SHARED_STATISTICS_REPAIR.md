@@ -56,3 +56,10 @@ Validation and publication receipts are kept in the maintainer's isolated
 `validation/stats-repair` workspace. Actual public-provider gameplay is not
 part of synthetic qualification. Publication/queue receipts distinguish a
 prepared artifact from an installed host.
+
+## First successor admission follow-up — v7.2.11
+
+Live safe-queue admission exposed a separate v7.2.9/v7.2.10 root/service UID
+read mismatch. The strict service-owned projection is now read under its service
+identity. See UPDATE_QUEUE_ACTIVATION.md for affected-host activation. The stats
+repair and private-participation behavior above are unchanged.
