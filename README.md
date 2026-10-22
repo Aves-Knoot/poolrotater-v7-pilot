@@ -1,6 +1,6 @@
 # PoolRotater distributed host
 
-Current release: **v7.2.11**, shared-statistics repair and private-room player totals.
+Current release: **v7.2.12**, shared-statistics repair and private-room player totals.
 Use the installer ZIP asset of an accepted GitHub release; source archives do
 not install a protected runtime.
 

@@ -50,14 +50,14 @@ transport/collector change. Normal automatic installation waits for the host's
 safe empty-room boundary; a forced occupied-room restart is unnecessary.
 Explicit stopped slots, private settings, titles, OAuth, catalogs and history
 must remain intact. Supported predecessor transitions are pinned to the exact
-published v7.2.6, v7.2.7, v7.2.8 and v7.2.9 runtime inventories.
+published v7.2.6 through v7.2.11 runtime inventories.
 
 Validation and publication receipts are kept in the maintainer's isolated
 `validation/stats-repair` workspace. Actual public-provider gameplay is not
 part of synthetic qualification. Publication/queue receipts distinguish a
 prepared artifact from an installed host.
 
-## First successor admission follow-up — v7.2.11
+## First successor admission follow-up — v7.2.12
 
 Live safe-queue admission exposed a separate v7.2.9/v7.2.10 root/service UID
 read mismatch. The strict service-owned projection is now read under its service

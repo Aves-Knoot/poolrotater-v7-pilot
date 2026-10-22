@@ -1,2 +1,2 @@
 """Distributed PoolRotater host and managed-host administration."""
-__version__ = '7.2.11'
+__version__ = '7.2.12'

@@ -102,6 +102,10 @@ class Client:
                 if sha in (installed, *baselines): return []
                 if sha in visiting or sha not in releases: return None
                 item = releases[sha]
+                # A signed direct predecessor is sufficient; descriptor hash
+                # ordering must not force an unnecessary intermediate update.
+                if any(before in (installed, *baselines) for before in item['from_sha256']):
+                    return [item]
                 for before in item['from_sha256']:
                     chain = path_to(before, visiting | {sha})
                     if chain is not None and (not chain or chain[-1]['sequence'] < item['sequence']):

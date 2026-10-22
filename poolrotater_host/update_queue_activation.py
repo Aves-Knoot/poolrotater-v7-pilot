@@ -39,7 +39,7 @@ def command(instance, expected_sha256):
     digest(expected_sha256)
     target,marker,parent=administrative_binding(instance)
     runtime=validate_runtime(parent,target['prefix'])
-    require(runtime['manifest']['version']in('v7.2.9','v7.2.10','v7.2.11'),
+    require(runtime['manifest']['version']in('v7.2.9','v7.2.10','v7.2.11','v7.2.12'),
             'queue_activation_runtime_requires_review')
     if parent['bundle_sha256']==expected_sha256:
         return {'ok':True,'phase':'already_installed','queue_only':True,'rooms_stopped':False,
