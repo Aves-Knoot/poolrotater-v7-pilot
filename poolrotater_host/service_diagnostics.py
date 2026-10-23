@@ -170,6 +170,69 @@ FAILURE_CODES = FAILURE_CODES | frozenset((
     'maintenance_requires_running_controller','maintenance_room_topology_changed',
 ))
 
+# These internal validators also use NetworkError. Preserve their reviewed
+# codes without treating them as transport outages or retryable failures.
+FAILURE_CODES = FAILURE_CODES | frozenset((
+    'room_ownership_requires_review', 'room_generation_changed', 'room_not_found',
+    'invalid_managed_generation', 'invalid_managed_alias',
+    'invalid_managed_room_projection', 'foreign_managed_room_projection',
+    'managed_room_topology_requires_review', 'invalid_managed_policy',
+    'foreign_managed_policy', 'invalid_managed_rooms', 'invalid_managed_phase',
+    'invalid_managed_result', 'host_identity_mismatch',
+    'unsafe_log_database', 'private_log_root_required', 'unsafe_log_root',
+    'booking_policy_refused', 'booking_policy_directory_refused',
+    'booking_local_state_uncertain', 'booking_native_state_unavailable',
+    'booking_native_state_uncertain', 'foreign_booking_native_state',
+    'invalid_integer', 'invalid_json', 'invalid_text', 'unexpected_fields',
+))
+
+CONTROLLER_COMPONENTS = frozenset((
+    'startup', 'configuration', 'deployment_settings', 'protected_requests',
+    'maintenance', 'bookings', 'managed_rooms', 'booking_panels', 'workers',
+    'rollout_requests', 'discord_commands', 'status', 'idle',
+))
+
+
+def controller_failure(error, release, component=None):
+    """Bounded source-only evidence; never inspect locals, args, or source text."""
+    from pathlib import Path
+    import os
+    root = Path(os.path.abspath(release))
+    frames = []
+    seen = set()
+    pending = [error]
+    while pending and len(seen) < 16 and len(frames) < 12:
+        item = pending.pop()
+        if id(item) in seen: continue
+        seen.add(id(item))
+        trace = item.__traceback__
+        visited = 0
+        while trace is not None and visited < 128:
+            visited += 1
+            code = trace.tb_frame.f_code
+            try: relative = Path(os.path.abspath(code.co_filename)).relative_to(root)
+            except ValueError: relative = None
+            if (relative is not None and relative.suffix == '.py'
+                    and (len(relative.parts) == 1 or relative.parts[0] in
+                         ('bot', 'rolling', 'poolrotater_host'))
+                    and all(re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', part)
+                            for part in relative.parts)
+                    and re.fullmatch(r'[A-Za-z0-9_<>]{1,100}', code.co_name)):
+                frames.append({'file': relative.as_posix(), 'function': code.co_name,
+                               'line': trace.tb_lineno})
+                frames = frames[-12:]
+            trace = trace.tb_next
+        pending.extend(e for e in (item.__cause__, item.__context__)
+                       if isinstance(e, BaseException))
+    name = type(error).__name__
+    kinds = frozenset(('NetworkError', 'AuthError', 'ConfigError', 'ValueError',
+                      'TypeError', 'KeyError', 'OSError', 'RuntimeError',
+                      'HubDisconnected', 'HubTransportError', 'PeerClosed'))
+    return {**failure_details(error),
+            'exception_type': name if name in kinds else 'Exception',
+            'component': component if type(component) is str and component in CONTROLLER_COMPONENTS else 'startup',
+            'frames': frames}
+
 
 def failure_code(error):
     return failure_details(error)['failure_code']

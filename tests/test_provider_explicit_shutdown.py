@@ -92,9 +92,15 @@ class ExplicitInstalledEntryStopTests(RoomCase):
   saved=[]
   def observe(phase,owner,workers):
    if phase=='running':
-    w,=workers;self.occupied(owner,w);saved.append(w);w.broker.hub.roster_fenced=True;owner.request_shutdown()
-  self.fixed(observe)
-  # Explicit coordinated shutdown closes confirmed owned rooms even when the
-  # live player roster is fenced; normal gameplay mutation still needs a roster.
-  self.assertEqual(self.backend.authenticated_calls.count('CloseRoom'),1);self.assertFalse(self.backend.rooms);self.assertIsNotNone(saved[0].process.poll())
+    w,=workers;self.occupied(owner,w);saved.append(w)
+    # Keep an actual ordering gap unresolved throughout cleanup. A bare flag
+    # can be cleared by an already queued roster event and makes this test race.
+    w.broker.hub.roster_fenced=True
+    w.broker.hub.roster_progress=lambda:(1,2,True)
+    owner.request_shutdown()
+  with self.assertRaises(ConfigError):self.fixed(observe)
+  # Explicit shutdown does not bypass the broker's ordered-event fence.
+  self.assertEqual(self.backend.authenticated_calls.count('CloseRoom'),0)
+  self.assertTrue(self.backend.rooms);self.assertIsNotNone(saved[0].process.poll())
+  self.assertEqual(read_json(self.root/'state/rolling/ownership.json')['rooms']['room1']['phase'],'recovery_required')
 if __name__=='__main__':unittest.main()

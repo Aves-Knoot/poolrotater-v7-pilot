@@ -1,6 +1,7 @@
 """One installed provider lifecycle; the fixed upstream entry is release-disabled."""
 import os
 import logging
+import json
 from pathlib import Path
 import signal
 import threading
@@ -18,10 +19,17 @@ WORKER_FAILURE_CLEANUP_SECONDS = 30
 @contextmanager
 def _managed_service_controller(*args, **kwargs):
     """A fatal service exit coordinates closure before account transports stop."""
+    on_failure = kwargs.pop('_on_failure', None)
     with provider_host_controller(*args, **kwargs) as supervisor:
         try:
             yield supervisor
-        except BaseException:
+        except BaseException as error:
+            # Capture the original cause BEFORE cleanup can fail or be killed.
+            # This callback has no lifecycle authority and cannot grant retries.
+            if on_failure is not None:
+                try: on_failure(error, supervisor)
+                except Exception:
+                    logging.getLogger(__name__).warning('controller failure evidence unavailable')
             # The service is exiting, so retaining occupied siblings would
             # orphan them. This does not bypass uncertainty or roster fences.
             supervisor.request_shutdown()
@@ -71,9 +79,18 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                 for number in (signal.SIGTERM, signal.SIGINT)}
     last_usage_log = 0.
     failing_workers = {}
+    def capture_failure(error, owner):
+        from .service_diagnostics import controller_failure
+        detail = controller_failure(error, release, getattr(owner, '_tick_component', None))
+        failure.update({k: detail[k] for k in ('failure_code', 'failure_http_status') if k in detail})
+        # Separate private evidence file avoids changing existing status contracts.
+        atomic_json(root / 'state/controller-failure.json', {
+            'format': 1, 'at': time.time(), 'pid': os.getpid(), **detail})
+        logging.getLogger(__name__).error('controller failure before cleanup: %s',
+                                         json.dumps(detail, sort_keys=True))
     try:
         with _managed_service_controller(root, release, authentication=authentication,
-                                      api=api, hub=hub) as supervisor:
+                                      api=api, hub=hub, _on_failure=capture_failure) as supervisor:
             acquired = True
             private = getattr(supervisor, 'private_pilot', None)
             selected = (private.alias,) if private is not None else tuple(supervisor.configs)
@@ -173,7 +190,8 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
         observer('stopped', supervisor, workers)
     except Exception as error:
         from .service_diagnostics import failure_details
-        failure = failure_details(error)
+        if not failure:
+            failure = failure_details(error)
         if acquired: observer('failed', supervisor, workers)
         raise
     finally:

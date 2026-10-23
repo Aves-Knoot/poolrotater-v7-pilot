@@ -696,6 +696,7 @@ class RollingSupervisor:
             self.shared.lock.release()
 
     def tick(self):
+        self._tick_component = 'configuration'
         if self.config_loader is not None:
             try:
                 self.config_loader()
@@ -704,19 +705,26 @@ class RollingSupervisor:
                 if self.config_error != type(exc).__name__:
                     log.warning('native configuration refresh rejected; retaining running room settings (%s)', type(exc).__name__)
                 self.config_error = type(exc).__name__
+        self._tick_component = 'deployment_settings'
         self.reload_deployment_settings()
         # Consume protected cancellation before choosing the next empty alias.
         # A completed handoff must not immediately launch its sibling ahead of
         # an already queued cancellation acknowledgement.
+        self._tick_component = 'protected_requests'
         self._protected_requests()
         from poolrotater_host.operator_maintenance import poll as maintenance_poll
+        self._tick_component = 'maintenance'
         maintenance_poll(self)
         managed=getattr(self,'managed',None)
         bookings=getattr(self,'bookings',None)
+        self._tick_component = 'bookings'
         if bookings is not None:bookings.tick()
+        self._tick_component = 'managed_rooms'
         if managed is not None:managed.tick()
         booking_panels=getattr(self,'booking_panels',None)
+        self._tick_component = 'booking_panels'
         if booking_panels is not None:booking_panels.tick()
+        self._tick_component = 'workers'
         now = time.monotonic()
         for alias, worker in list(self.workers.items()):
             if alias == self.rollout_alias:
@@ -782,9 +790,13 @@ class RollingSupervisor:
         if self.schema_baseline is None and len(self.workers) == len(self.configs) and all(
                 w.fresh() and w.status.get("ready") for w in self.workers.values()):
             self.schema_baseline = schemas(list(self.configs.values()))
+        self._tick_component = 'rollout_requests'
         self._requests()
+        self._tick_component = 'discord_commands'
         self._discord_commands()
+        self._tick_component = 'status'
         self.write_status()
+        self._tick_component = 'idle'
 
     def _discord_commands(self):
         for _ in range(16):
