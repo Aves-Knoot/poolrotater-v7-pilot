@@ -207,7 +207,8 @@ function makeDocument() {
   for (const action of ['start', 'abort', 'skip', 'end']) append('owner-controls', 'button', action, { action });
   document.getElementById('owner-controls').append(document.getElementById('invite-block'));
   document.getElementById('session-section').append(
-    document.getElementById('private-details'), document.getElementById('map-queue-block'),
+    document.getElementById('private-details'), document.getElementById('activity-status'),
+    document.getElementById('map-queue-block'),
     document.getElementById('owner-controls'),
     document.getElementById('roster-block'), document.getElementById('settings-block'),
   );
@@ -270,6 +271,8 @@ test('booking portal widgets preserve drafts, roles, revisions, and uncertain re
     players: [{ user_id: 222, username: '<img src=x onerror=alert(1)>', role: friendRole }],
     operations: [], cooldown_until: cooldownUntil,
     join_url: 'https://osu.ppy.sh/multiplayer/rooms/123', password: 'secret-room',
+    activity: { condition: 'no_gameplay', closes_at: Date.now() / 1000 + 200 },
+    activity_updated_at: Date.now() / 1000,
     current_map: { beatmap_id: 123, label: '<img src=x onerror=alert(1)>', stars: 4.25, hit_length: 95,
       url: 'javascript:alert(1)' },
     queue: Array.from({ length: 7 }, (_value, index) => ({
@@ -347,6 +350,11 @@ test('booking portal widgets preserve drafts, roles, revisions, and uncertain re
   assert.equal(document.getElementById('roster-list').querySelector('.roster-name').textContent,
     '<img src=x onerror=alert(1)>');
   assert.equal(document.getElementById('map-queue-block').hidden, false);
+  assert.match(document.getElementById('activity-status').textContent,
+    /30 minutes without meaningful gameplay/);
+  assert.match(document.getElementById('activity-status').textContent,
+    /Current host close estimate: \d+:\d{2}/);
+  assert.equal(document.getElementById('activity-status').className, 'notice notice-warning');
   assert.equal(document.getElementById('current-map').textContent,
     '<img src=x onerror=alert(1)>4.25★ · 1:35');
   assert.equal(document.getElementById('current-map').querySelector('a').href,

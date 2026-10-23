@@ -53,11 +53,21 @@ def queue_info(value):
     require(type(value)is list and len(value)<=5,'booking_invalid_queue')
     return [map_info(item)for item in value]
 
+def activity_info(value):
+    fields(value,('condition','closes_at'))
+    require(value['condition'] in ('empty','no_gameplay','map_in_progress','unknown'),
+            'booking_invalid_activity')
+    if value['closes_at'] is not None:
+        number(value['closes_at'])
+    require((value['condition'] == 'unknown') == (value['closes_at'] is None),
+            'booking_invalid_activity')
+    return dict(value)
+
 def observation(value):
     required={'sequence','phase','room_id','incarnation','roster','roster_known','updated_at',
               'ready','closed','effective_settings','cleanup_complete','ownership_known',
               'operation_receipts','installation_id','generation','session_generation','alias'}
-    optional={'terminal_reason','reason','claim_deadline','settings_revision','failure_code','current_map','queue','queue_known'}
+    optional={'terminal_reason','reason','claim_deadline','settings_revision','failure_code','current_map','queue','queue_known','activity'}
     require(type(value)is dict and required<=set(value) and not set(value)-required-optional
             and not({'terminal_reason','reason'}<=set(value)),'booking_invalid_observation')
     integer(value['sequence'],0)
@@ -91,4 +101,5 @@ def observation(value):
     if 'current_map'in value:map_info(value['current_map'])
     if 'queue'in value:queue_info(value['queue'])
     if 'queue_known'in value:require(type(value['queue_known'])is bool,'booking_invalid_queue')
+    if 'activity' in value:activity_info(value['activity'])
     require(len(canonical(value))<=65536,'booking_invalid_observation');return value

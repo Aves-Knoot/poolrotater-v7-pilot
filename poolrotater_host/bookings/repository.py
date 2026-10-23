@@ -19,7 +19,7 @@ import uuid
 
 from ..network.contracts import NetworkError, canonical, identifier, require, text
 from ..config import PRESETS
-from .contracts import SAFE_OPERATION_ERRORS
+from .contracts import SAFE_OPERATION_ERRORS, activity_info
 from ..diagnostic_logs.common import check_database, private_database
 
 PROTOCOL_VERSION = 1
@@ -460,6 +460,14 @@ class Repository:
             require(role in ('owner', 'controller'), 'booking_forbidden', 403)
         operations = db.execute('SELECT id,action,phase,error,application FROM operations WHERE booking_id=? ORDER BY created,id', (booking_id,)).fetchall()
         observation = _json(row['observation']) or {}
+        activity = {'condition': 'unknown', 'closes_at': None}
+        activity_report = observation.get('activity')
+        updated_at = observation.get('updated_at')
+        now = _now(self.clock())
+        if (not ended and row['phase'] == 'active' and activity_report is not None and
+                type(updated_at) in (int, float) and 0 <= now - updated_at <= 30 and
+                observation.get('roster_known') is True):
+            activity = dict(activity_report)
         slot = db.execute('SELECT cooldown_until FROM slots WHERE slot_id=?', (row['slot_id'],)).fetchone()
         players = []
         if not ended:
@@ -472,6 +480,8 @@ class Repository:
                 'slot_id': row['slot_id'], 'preset': row['preset'], 'room_id': None if ended else row['room_id'],
                 'join_url': join_url, 'password': None if ended else row['password'],
                 'claim_deadline': row['claim_deadline'], 'roster_known': False if ended else observation.get('roster_known', False), 'players': players,
+                'activity': activity,
+                'activity_updated_at': updated_at if not ended and type(updated_at) in (int, float) else None,
                 'settings': _json(row['settings']), 'applied_settings': _json(row['applied_settings']) if row['applied_settings'] else {},
                 'settings_revision':observation.get('settings_revision',0),
                 'failure_code':observation.get('failure_code'),
@@ -687,7 +697,7 @@ class Repository:
         required = {'sequence', 'phase', 'room_id', 'incarnation', 'roster', 'roster_known', 'updated_at',
                     'ready', 'closed', 'effective_settings', 'cleanup_complete', 'ownership_known',
                     'operation_receipts', 'installation_id', 'generation', 'session_generation', 'alias'}
-        optional = {'terminal_reason', 'reason'}
+        optional = {'terminal_reason', 'reason', 'activity'}
         optional.update(('claim_deadline','settings_revision','failure_code','current_map','queue','queue_known'))
         require(required <= set(observation) and not set(observation) - required - optional
                 and not ({'terminal_reason', 'reason'} <= set(observation)), 'invalid_observation')
@@ -707,6 +717,7 @@ class Repository:
         if 'current_map'in observation:map_info(observation['current_map'])
         if 'queue'in observation:queue_info(observation['queue'])
         if 'queue_known'in observation:require(type(observation['queue_known'])is bool,'invalid_queue')
+        if 'activity'in observation:activity_info(observation['activity'])
         require(type(observation['ready']) is bool and type(observation['closed']) is bool, 'invalid_observation')
         identifier(observation['installation_id']); identifier(observation['generation'])
         require(type(observation['session_generation']) is str and re.fullmatch(r'[a-f0-9]{32}', observation['session_generation'])
@@ -734,7 +745,7 @@ class Repository:
             require(application is None or application in ('live', 'next_map', 'recreate'), 'invalid_operation_receipt')
             safe_receipts.append({'operation_id': item['operation_id'], 'phase': item['phase'], 'error': error, 'application': application})
         sanitized = {key: observation[key] for key in required}
-        for key in ('settings_revision','failure_code','current_map','queue','queue_known'):
+        for key in ('settings_revision','failure_code','current_map','queue','queue_known','activity'):
             if key in observation:sanitized[key]=observation[key]
         if 'claim_deadline' in observation:
             sanitized['claim_deadline'] = reported_claim_deadline

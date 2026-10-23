@@ -245,6 +245,7 @@ class BookingPortal {
       this.pollTimer = window.setInterval(() => this.poll(), POLL_MS);
       this.clockTimer = window.setInterval(() => {
         this.renderCountdown();
+        if (this.booking) this.renderActivity(this.booking, ['owner', 'controller'].includes(this.booking.role));
         if (this.booking && !byId('settings-block').hidden) this.renderSettingsStatus();
       }, 1000);
     } catch {
@@ -738,6 +739,7 @@ class BookingPortal {
     show(byId('operation-block'), privateAllowed && operations.length > 0);
     this.renderOperations(operations);
     this.renderCountdown();
+    this.renderActivity(booking, privateAllowed);
   }
 
   phaseCopy(booking) {
@@ -830,6 +832,33 @@ class BookingPortal {
     const deadline = this.booking?.claim_deadline;
     if (!deadline) { byId('claim-countdown').textContent = 'Arrival window starts when the room is ready'; return; }
     byId('claim-countdown').textContent = formatTime(deadline);
+  }
+
+  renderActivity(booking, privateAllowed) {
+    const status = byId('activity-status');
+    const visible = privateAllowed && booking.phase === 'active';
+    show(status, visible);
+    if (!visible) return;
+    status.className = 'field-help';
+    const activity = booking.activity;
+    const observedAt = Number(booking.activity_updated_at);
+    const reportAge = Date.now() / 1000 - observedAt;
+    const fresh = Number.isFinite(observedAt) && reportAge >= 0 && reportAge <= 30;
+    if (!fresh || !activity || activity.condition === 'unknown' || activity.closes_at == null) {
+      status.textContent = 'Activity timing is delayed or unavailable. The countdown stays hidden until a fresh, verified host report includes it.';
+      return;
+    }
+    const description = activity.condition === 'empty'
+      ? 'An empty lobby may close after 30 continuous minutes empty, or earlier if 30 minutes pass without meaningful gameplay.'
+      : activity.condition === 'no_gameplay'
+        ? 'The host closes a lobby after 30 minutes without meaningful gameplay.'
+        : 'A verified map is in progress. The host uses its expected end plus a short grace when estimating inactivity closure.';
+    const remaining = Math.max(0, (Number(activity.closes_at) - Date.now() / 1000));
+    const countdown = remaining === 0
+      ? 'The reported timer has elapsed; waiting for a fresh host report to confirm status.'
+      : `Current host close estimate: ${formatTime(activity.closes_at)}. Fresh host reports can change the estimate.`;
+    status.textContent = `${description} ${countdown}`;
+    if (remaining > 0 && remaining <= 300) status.className = 'notice notice-warning';
   }
 
   renderRoster(players, privateAllowed) {

@@ -1,5 +1,6 @@
 """Real Chromium qualification against the shipped portal routes and UI."""
 import json
+import re
 import os
 import ssl
 import subprocess
@@ -117,7 +118,7 @@ class BrowserPortalServer(PortalServer):
         self.sequences[booking["id"]] = 1
         self._observe(booking, lease, roster=[], sequence=1, phase="awaiting_claim")
 
-    def set_roster(self, booking, roster, *, receipt=None, effective_settings=None):
+    def set_roster(self, booking, roster, *, receipt=None, effective_settings=None, activity=None):
         lease, = self.repository.leases(HOST, INSTALLATION, GENERATION)
         current = self.repository.view(booking["id"], OWNER)
         sequence = self.sequences[booking["id"]] + 1
@@ -130,6 +131,7 @@ class BrowserPortalServer(PortalServer):
             "current_map": {"beatmap_id": 9871, "label": "Invented current map", "stars": 4.2, "hit_length": 180},
             "queue": [{"beatmap_id": 9872, "label": "Invented queued map", "stars": 4.4, "hit_length": 205}],
             "queue_known": True,
+            "activity": activity if activity is not None else current["activity"],
             "ownership_known": True, "operation_receipts": [receipt] if receipt else [],
             "installation_id": INSTALLATION, "generation": GENERATION,
             "session_generation": lease["session_generation"], "alias": "room1",
@@ -218,6 +220,8 @@ class RealBrowserQualification(unittest.TestCase):
             public = page.evaluate("fetch('/private-lobbies/api/slots').then((r) => r.text())")
             for private_value in ("password", "room_id", "players", "join_url", str(OWNER)):
                 self.assertNotIn(private_value, public)
+            self.assertNotIn('"activity"', public)
+            self.assertNotIn('"activity_updated_at"', public)
 
             page.keyboard.press("Tab")
             self.assertEqual(page.evaluate("document.activeElement.id"), "sign-in")
@@ -296,10 +300,12 @@ class RealBrowserQualification(unittest.TestCase):
                           if item["booking_id"] == booking["id"] and item["action"] == "configure"]
             page.evaluate("window.__privateBookingPortal.poll()")
             expect(page.locator("#operation-list .operation-state").first).to_have_text("Applying", timeout=5000)
+            activity_deadline = self.clock() + 180
             self.server.set_roster(
                 booking, [{"user_id": FRIEND, "username": "Invented Guest"}],
                 receipt={"operation_id": configure["operation_id"], "phase": "applied", "application": "next_map"},
                 effective_settings=configure["payload"],
+                activity={"condition": "no_gameplay", "closes_at": activity_deadline},
             )
             expect(page.get_by_text("Invented Guest")).to_be_visible(timeout=7000)
             expect(page.locator("#session-state")).to_have_text("The private lobby is active.")
@@ -309,6 +315,73 @@ class RealBrowserQualification(unittest.TestCase):
             expect(page.locator("#settings-effects")).to_contain_text(
                 "The current map and maps already in the visible queue stay unchanged.")
             expect(page.locator("#operation-list .operation-state").first).to_have_text("Applied for next map")
+            expect(page.locator("#activity-status")).to_contain_text("30 minutes without meaningful gameplay")
+            expect(page.locator("#activity-status")).to_contain_text("Current host close estimate:")
+            expect(page.locator("#activity-status")).to_contain_text(re.compile(r"\d+:\d{2}"))
+            self.assertIn("notice-warning", page.locator("#activity-status").get_attribute("class"))
+
+            # A sleeping/offline page must age its cached report locally instead of
+            # keeping the prior deadline visible until a successful poll arrives.
+            page.evaluate("() => { window.__bookingNowOffset += 31000; window.__privateBookingPortal.renderActivity(window.__privateBookingPortal.booking, true); }")
+            expect(page.locator("#activity-status")).to_contain_text("Activity timing is delayed or unavailable.")
+            self.assertNotIn("Current host close estimate:", page.locator("#activity-status").inner_text())
+            page.evaluate("() => { window.__bookingNowOffset -= 31000; window.__privateBookingPortal.renderActivity(window.__privateBookingPortal.booking, true); }")
+            expect(page.locator("#activity-status")).to_contain_text("Current host close estimate:")
+
+            short_deadline = self.clock() + 15
+            self.server.set_roster(booking, [{"user_id": FRIEND, "username": "Invented Guest"}],
+                                   activity={"condition": "no_gameplay", "closes_at": short_deadline})
+            page.evaluate("window.__privateBookingPortal.poll()")
+            page.evaluate("() => { window.__bookingNowOffset += 16000; window.__privateBookingPortal.renderActivity(window.__privateBookingPortal.booking, true); }")
+            expect(page.locator("#activity-status")).to_contain_text(
+                "The reported timer has elapsed; waiting for a fresh host report to confirm status.")
+            expect(page.locator("#session-state")).to_have_text("The private lobby is active.")
+            self.assertNotIn("ended", page.locator("#session-state").inner_text().lower())
+            page.evaluate("() => { window.__bookingNowOffset -= 16000; window.__privateBookingPortal.renderActivity(window.__privateBookingPortal.booking, true); }")
+            self.server.set_roster(booking, [{"user_id": FRIEND, "username": "Invented Guest"}],
+                                   activity={"condition": "no_gameplay", "closes_at": activity_deadline})
+            page.evaluate("window.__privateBookingPortal.poll()")
+
+            # Age the last host observation past the existing freshness bound. A page poll
+            # must hide the deadline; a later host report retains its original absolute time.
+            self.clock.advance(31)
+            page.evaluate("() => { window.__bookingNowOffset += 31000; window.__privateBookingPortal.renderActivity(window.__privateBookingPortal.booking, true); }")
+            expect(page.locator("#activity-status")).to_contain_text(
+                "Activity timing is delayed or unavailable.", timeout=7000)
+            self.assertNotIn("Current host close estimate:", page.locator("#activity-status").inner_text())
+            page.evaluate("window.__privateBookingPortal.poll()")
+            expect(page.locator("#activity-status")).to_contain_text(
+                "Activity timing is delayed or unavailable.", timeout=7000)
+            self.server.set_roster(booking, [{"user_id": FRIEND, "username": "Invented Guest"}],
+                                   activity={"condition": "no_gameplay", "closes_at": activity_deadline})
+            page.evaluate("window.__privateBookingPortal.poll()")
+            expect(page.locator("#activity-status")).to_contain_text("Current host close estimate:", timeout=7000)
+            current_activity = self.repository.view(booking["id"], OWNER)["activity"]
+            self.assertEqual(current_activity["closes_at"], activity_deadline,
+                             "browser polling must not extend the host's absolute deadline")
+            self.assertLess(current_activity["closes_at"], self.clock() + 1800)
+            self.server.set_roster(booking, [],
+                                   activity={"condition": "empty", "closes_at": activity_deadline})
+            page.evaluate("window.__privateBookingPortal.poll()")
+            expect(page.locator("#activity-status")).to_contain_text(
+                "30 continuous minutes empty, or earlier if 30 minutes pass without meaningful gameplay",
+                timeout=7000)
+            self.assertEqual(self.repository.view(booking["id"], OWNER)["activity"]["closes_at"],
+                             activity_deadline)
+            self.server.set_roster(booking, [{"user_id": FRIEND, "username": "Invented Guest"}],
+                                   activity={"condition": "no_gameplay", "closes_at": activity_deadline})
+            page.evaluate("window.__privateBookingPortal.poll()")
+            map_deadline = self.clock() + 4120
+            self.server.set_roster(booking, [{"user_id": FRIEND, "username": "Invented Guest"}],
+                                   activity={"condition": "map_in_progress", "closes_at": map_deadline})
+            page.evaluate("window.__privateBookingPortal.poll()")
+            expect(page.locator("#activity-status")).to_contain_text(
+                "A verified map is in progress. The host uses its expected end plus a short grace")
+            expect(page.locator("#activity-status")).to_contain_text("Current host close estimate:")
+            self.assertNotIn("notice-warning", page.locator("#activity-status").get_attribute("class"))
+            self.server.set_roster(booking, [{"user_id": FRIEND, "username": "Invented Guest"}],
+                                   activity={"condition": "no_gameplay", "closes_at": activity_deadline})
+            page.evaluate("window.__privateBookingPortal.poll()")
             roster_revision = self.repository.view(booking["id"], OWNER)["revision"]
             page.wait_for_function("revision => window.__privateBookingPortal?.booking?.revision === revision",
                                    arg=roster_revision, timeout=7000)
@@ -442,6 +515,7 @@ class RealBrowserQualification(unittest.TestCase):
             post_logout = page.evaluate("fetch('/private-lobbies/api/slots').then(r => r.text())")
             for private_value in ("password", "room_id", "players", "join_url", "selection_filters"):
                 self.assertNotIn(private_value, post_logout)
+            self.assertNotIn('"activity_updated_at"', post_logout)
             self.assertEqual(errors, [], f"browser console exceptions: {errors}")
             context.close()
             browser.close()

@@ -95,6 +95,39 @@ def test_leases_bind_full_session_and_active_user_view(tmp_path):
     assert repo.leases(HOST, INSTALL, 'dddddddd-dddd-4ddd-8ddd-dddddddddddd') == []
 
 
+def test_activity_deadline_is_private_and_requires_fresh_known_roster(tmp_path):
+    repo, clock, _ = make_repo(tmp_path)
+    booking = reserve(repo)
+    activity = {'condition': 'empty', 'closes_at': clock.value + 180}
+    repo.observe(HOST, booking['id'], observation(booking, clock, activity=activity))
+    private = repo.view(booking['id'], 10)
+    assert private['activity'] == activity
+    assert 'activity' not in repo.public_slots()[0]
+    with pytest.raises(NetworkError) as forbidden:
+        repo.view(booking['id'], 999)
+    assert forbidden.value.code == 'booking_forbidden'
+
+    clock.value += 31
+    stale_view = repo.view(booking['id'], 10)
+    assert stale_view['activity'] == {'condition': 'unknown', 'closes_at': None}
+    assert clock.value - stale_view['activity_updated_at'] > 30
+
+    fresh_unknown = observation(booking, clock, sequence=2, roster_known=False, activity=activity)
+    repo.observe(HOST, booking['id'], fresh_unknown)
+    unknown_view = repo.view(booking['id'], 10)
+    assert unknown_view['activity'] == {'condition': 'unknown', 'closes_at': None}
+    assert unknown_view['activity_updated_at'] == clock.value
+
+
+def test_invalid_activity_snapshot_is_refused(tmp_path):
+    repo, clock, _ = make_repo(tmp_path)
+    booking = reserve(repo)
+    invalid = {'condition': 'unknown', 'closes_at': clock.value + 30}
+    with pytest.raises(NetworkError) as error:
+        repo.observe(HOST, booking['id'], observation(booking, clock, activity=invalid))
+    assert error.value.code == 'booking_invalid_activity'
+
+
 def test_creation_lease_is_immutable_after_observation_role_and_settings_changes(tmp_path):
     repo, clock, _ = make_repo(tmp_path)
     booking = reserve(repo)
@@ -584,6 +617,12 @@ def test_contract_observation_matches_repository_envelope_and_rejects_missing_bi
         validate_booking_observation({k: v for k, v in value.items() if k != 'ready'})
     value['claim_deadline'] = clock.value + 600
     assert validate_booking_observation(value) is value
+    value['activity'] = {'condition': 'no_gameplay', 'closes_at': clock.value + 1800}
+    assert validate_booking_observation(value) is value
+    value['activity'] = {'condition': 'unknown', 'closes_at': clock.value + 1800}
+    with pytest.raises(NetworkError):
+        validate_booking_observation(value)
+    del value['activity']
     value['claim_deadline'] = True
     with pytest.raises(NetworkError):
         validate_booking_observation(value)

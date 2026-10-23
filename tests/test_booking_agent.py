@@ -386,6 +386,61 @@ def test_reports_private_queue_current_map_and_unavailable_phase(tmp_path):
     assert observation['failure_code'] == 'booking_preparation_failed'
 
 
+def test_activity_snapshot_uses_host_lifecycle_deadline_and_hides_stale_status(tmp_path):
+    agent, _, store, _, clock = make_agent(tmp_path)
+    booking = lease()
+    store.install(booking, BASE)
+
+    def native_observation(*, roster, match=None, updated_at=None):
+        return {'ready': True, 'room_id': 998, 'incarnation': 'owned-room',
+                'roster_known': True, 'players': roster, 'match': match,
+                'closed': False, 'ownership_known': True,
+                'updated_at': clock.value if updated_at is None else updated_at}
+
+    owner = {'user_id': OWNER, 'username': 'Invented Owner'}
+    first = native_observation(roster=[owner])
+    store.advance(booking['id'], first)
+    clock.value += 100
+    quiet = native_observation(roster=[owner])
+    store.advance(booking['id'], quiet)
+    report = agent._reported_observation(store.get(booking['id']), {
+        'phase': 'active', 'room_id': 998, 'incarnation': 'owned-room',
+        'roster': [owner], 'roster_known': True, 'ready': True, 'closed': False,
+        'ownership_known': True, 'updated_at': clock.value,
+    }, 1, clock.value)
+    assert report['activity'] == {'condition': 'no_gameplay', 'closes_at': 2800.0}
+
+    clock.value += 100
+    running_match = {'id': 'invented-long-map', 'started_at': clock.value,
+                     'expected_end': clock.value + 4000, 'ended_at': None,
+                     'completed': False, 'aborted': False}
+    playing = native_observation(roster=[owner], match=running_match)
+    store.advance(booking['id'], playing)
+    report = agent._reported_observation(store.get(booking['id']), {
+        'phase': 'active', 'room_id': 998, 'incarnation': 'owned-room',
+        'roster': [owner], 'roster_known': True, 'ready': True, 'closed': False,
+        'ownership_known': True, 'updated_at': clock.value, 'match': running_match,
+    }, 2, clock.value)
+    assert report['activity'] == {'condition': 'map_in_progress', 'closes_at': clock.value + 4120}
+
+    stale = agent._reported_observation(store.get(booking['id']), {
+        'phase': 'active', 'room_id': 998, 'incarnation': 'owned-room',
+        'roster': [owner], 'roster_known': True, 'ready': True, 'closed': False,
+        'ownership_known': True, 'updated_at': clock.value,
+    }, 3, clock.value + 31)
+    assert stale['activity'] == {'condition': 'unknown', 'closes_at': None}
+
+    clock.value += 31
+    empty = native_observation(roster=[])
+    store.advance(booking['id'], empty)
+    report = agent._reported_observation(store.get(booking['id']), {
+        'phase': 'active', 'room_id': 998, 'incarnation': 'owned-room',
+        'roster': [], 'roster_known': True, 'ready': True, 'closed': False,
+        'ownership_known': True, 'updated_at': clock.value,
+    }, 4, clock.value)
+    assert report['activity'] == {'condition': 'empty', 'closes_at': 2800.0}
+
+
 def test_unknown_failure_code_is_refused_without_disclosing_provider_text(tmp_path):
     booking = lease()
     secret = 'provider exception containing private account details'

@@ -158,6 +158,42 @@ def _warning(effects, code):
     effects.append({'type': 'warning', 'code': code})
 
 
+def _activity_window(state, observation, now):
+    """Return the same effective inactivity condition/deadline used by advance."""
+    player_ids = {p['user_id'] for p in observation['players']}
+    idle_deadline = (state['last_gameplay_at'] if state['last_gameplay_at'] is not None
+                     else state['claimed_at']) + IDLE_SECONDS
+    match = observation['match']
+    active_match = (match is not None and match['ended_at'] is None and not match['aborted'] and
+                    match['started_at'] <= now and now <= match['expected_end'] + MATCH_GRACE_SECONDS)
+    if (active_match and state['match_expected_end'] is not None and
+            state['match_started_at'] is not None):
+        idle_deadline = max(idle_deadline, state['match_expected_end'] + MATCH_GRACE_SECONDS)
+    empty_deadline = state['empty_since'] + IDLE_SECONDS if state['empty_since'] is not None else None
+    deadlines = [idle_deadline]
+    if empty_deadline is not None:
+        deadlines.append(empty_deadline)
+    condition = 'empty' if not player_ids else 'map_in_progress' if active_match else 'no_gameplay'
+    return condition, min(deadlines), empty_deadline, active_match
+
+
+def activity_snapshot(state, observation, now):
+    """Project a host-authored inactivity countdown only from fresh, known state."""
+    _validate_state(state)
+    observation = _observation(observation)
+    _require(_number(now))
+    fresh = 0 <= now - observation['updated_at'] <= FRESH_SECONDS
+    high = state['clock_high_water']
+    clock_rollback = high is not None and now < high
+    confirmed_room = (observation['ready'] and observation['ownership_known'] and
+                      observation['room_id'] is not None and observation['incarnation'] is not None)
+    if (state['phase'] != 'active' or not fresh or clock_rollback or not confirmed_room or
+            not observation['roster_known']):
+        return {'condition': 'unknown', 'closes_at': None}
+    condition, closes_at, _, _ = _activity_window(state, observation, now)
+    return {'condition': condition, 'closes_at': closes_at}
+
+
 def _close(state, effects, reason):
     state['phase'] = 'closing'
     state['close_requested'] = True
@@ -288,17 +324,7 @@ def advance(state, observation, now):
         new['match_expected_end'] = None
         new['match_participant_since'] = {}
 
-    idle_deadline = (new['last_gameplay_at'] if new['last_gameplay_at'] is not None else new['claimed_at']) + IDLE_SECONDS
-    active_match = (match is not None and match['ended_at'] is None and not match['aborted'] and
-                    match['started_at'] <= now and now <= match['expected_end'] + MATCH_GRACE_SECONDS)
-    if (active_match and new['match_expected_end'] is not None and
-            new['match_started_at'] is not None):
-        idle_deadline = max(idle_deadline, new['match_expected_end'] + MATCH_GRACE_SECONDS)
-    empty_deadline = new['empty_since'] + IDLE_SECONDS if new['empty_since'] is not None else None
-    deadlines = [idle_deadline]
-    if empty_deadline is not None:
-        deadlines.append(empty_deadline)
-    expiry = min(deadlines)
+    _, expiry, empty_deadline, active_match = _activity_window(new, observation, now)
     remaining = expiry - now
 
     # Unknown roster state cannot prove either a no-show or an expired idle room.

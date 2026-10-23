@@ -10,6 +10,7 @@ from ..config import ConfigError, PRESETS
 from ..layout import LeaseBusy, atomic_json, contained, file_lease, read_json
 from ..network.contracts import NetworkError, canonical, identifier, require
 from .contracts import FAILURES, PATH, map_info as contract_map_info, queue_info as contract_queue_info
+from .lifecycle import activity_snapshot
 from .local import LocalSessions
 
 FORMAT = 1
@@ -267,6 +268,11 @@ class Agent:
         if not ended and 'queue_known' in supplied:
             require(type(supplied['queue_known']) is bool, 'booking_invalid_queue')
             observation['queue_known'] = supplied['queue_known']
+        if not ended and supplied:
+            lifecycle_source = dict(supplied)
+            lifecycle_source.setdefault('updated_at', now)
+            observation['activity'] = activity_snapshot(
+                state, self._lifecycle_observation(lifecycle_source), now)
         if not ended and 'failure_code' in supplied:
             failure_code = supplied['failure_code']
             require(failure_code is None or failure_code in FAILURES,
