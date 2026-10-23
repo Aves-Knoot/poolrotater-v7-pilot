@@ -1,4 +1,4 @@
-# Controller failure evidence — unreleased
+# Controller failure evidence — v7.3.2
 
 The v7.2.12 and v7.3.1 community incidents ended after an internal `NetworkError`
 escaped `supervisor.tick()`. The original validation code was reduced to
@@ -21,8 +21,10 @@ This isolated change records failure evidence before fatal cleanup starts:
 
 This is diagnostic hardening, not a demonstrated fix for either incident's
 unknown failing check. Do not blanket-retry `NetworkError` or infer permission to
-clear ownership. No runtime has been built, signed, published or deployed from
-this branch. The signed/published v7.3.1 artifact remains unchanged.
+clear ownership. It requires a coordinated controller update through the normal
+empty-room gate. Existing v7.3.1 artifacts remain immutable. Failed services with
+running room intent may first require the supported managed start/admission
+workflow; an ordinary stopped heartbeat alone cannot authorize installation.
 
 Xikeon's returned inventory proves its registration and dependency environment
 match v7.3.1, its previous update was cancelled before commit, all workers were
