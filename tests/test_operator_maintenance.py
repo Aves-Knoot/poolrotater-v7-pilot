@@ -159,6 +159,31 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(read_json(self.root/operations.RECEIPT)['phase'],'complete')
         self.supervisor.workers['sibling'].peer.call.assert_not_called()
 
+    def test_selected_rooms_close_individually_as_each_becomes_empty(self):
+        self.job['rooms'] = ['room1', 'sibling']
+        sibling = SimpleNamespace(
+            status={'room_id': 2, 'state': 'PLAYING', 'operator_maintenance': {
+                'id': self.job['id'], 'phase': 'waiting_empty'}},
+            fresh=lambda: True, idle_empty=Mock(return_value=False),
+            broker=SimpleNamespace(known=True, close_room=Mock()), peer=Mock())
+        self.supervisor.workers['sibling'] = sibling
+        def disposed(worker):
+            alias = 'room1' if worker is self.worker else 'sibling'
+            self.rows[alias] = dict(phase='parked', operation='closed', room_id=None,
+                                    ownership_unknown=False)
+            self.supervisor.workers.pop(alias)
+        self.supervisor.dispose.side_effect = disposed
+        operations.poll(self.supervisor)
+        self.worker.broker.close_room.assert_called_once_with(1, require_empty=True)
+        sibling.broker.close_room.assert_not_called()
+        self.assertEqual(read_json(self.root / operations.RECEIPT)['phase'], 'draining')
+        sibling.status.update(state='IDLE', operator_maintenance={
+            'id': self.job['id'], 'phase': 'ready'})
+        sibling.idle_empty.return_value = True
+        operations.poll(self.supervisor)
+        sibling.broker.close_room.assert_called_once_with(2, require_empty=True)
+        self.assertEqual(read_json(self.root / operations.RECEIPT)['phase'], 'complete')
+
     def test_late_join_or_stale_worker_does_not_close(self):
         self.worker.idle_empty.return_value=False
         operations.poll(self.supervisor);self.worker.broker.close_room.assert_not_called()

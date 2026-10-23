@@ -28,6 +28,90 @@ GATE_SECONDS = 300
 ADMISSION_SECONDS = 240
 
 
+def configuration_retryable(job):
+    """Only a never-admitted configuration hold can return to observation."""
+    return (job.get('phase') == 'held'
+            and job.get('reason') == 'configuration_changed_since_queue'
+            and not any(job.get(key) is not None for key in
+                        ('commit_started_at', 'commit_admitted_at', 'services_stopped_at',
+                         'upgrade_transition', 'startup_attempted_at')))
+
+
+def _configuration_snapshot(target, parent):
+    """Validate current operator settings without materializing or building pools.
+
+    The queued configuration is a migration baseline, not a settings freeze.
+    No configuration value is copied back from an older update job.
+    """
+    from .ratings.operations import _identity
+    from .layout import load
+    from .runtime_config import render
+    from .managed_host.projection import read as managed_projection
+    before = _config_hashes(target['root'])
+    with _identity(parent['service_uid']):
+        marker, host = load(target['root'])
+        if any(marker[key] != parent[key] for key in ('installation_id', 'generation')):
+            raise ConfigError('update_configuration_binding_changed')
+        render(target['root'])  # read-only schema, integration and catalog bindings
+        projection = managed_projection(target['root'], marker)
+    after = _config_hashes(target['root'])
+    if before != after:
+        return None
+    return {'configuration': after,
+            'rooms': sorted(room['alias'] for room in host['rooms']),
+            'managed_before': projection}
+
+
+def _configuration_unprepared(target, job):
+    """A recorded migration's original/planned bytes remain immutable."""
+    pending = _control(target['prefix'] / 'pilot-upgrade.json', optional=True,
+                       maximum=512 * 1024)
+    if pending and pending.get('phase') == 'prepared':
+        return False
+    return not os.path.lexists(target['prefix'] / ('managed-preparation-' + job['id'] + '.json'))
+
+
+def _adopt_configuration(job, snapshot, save):
+    from .network.contracts import fingerprint
+    save(**snapshot, configuration_previous_fingerprint=fingerprint(job['configuration']),
+         configuration_baseline_revision=job.get('configuration_baseline_revision', 0) + 1,
+         configuration_refreshed_at=time.time())
+
+
+def _refresh_waiting_configuration(target, parent, job, save):
+    if _config_hashes(target['root']) == job['configuration']:
+        return False
+    if not _configuration_unprepared(target, job):
+        raise ConfigError('update_configuration_migration_already_prepared')
+    if job['phase'] == 'locking':
+        _gate(target, parent, job, None)
+    # Drop old empty/identity evidence before validating a changed topology.
+    save(phase='waiting_empty', empty_since=None, locked_since=None,
+         reason='revalidating_current_configuration')
+    try:
+        snapshot = _configuration_snapshot(target, parent)
+    except ConfigError:
+        save(reason='waiting_for_valid_current_configuration')
+        return True
+    if snapshot is None:
+        save(reason='waiting_for_stable_current_configuration')
+        return True
+    _adopt_configuration(job, snapshot, save)
+    save(reason='configuration_refreshed_waiting_for_fresh_empty_window')
+    return True
+
+
+def _refresh_closed_configuration(target, parent, job, save):
+    if _config_hashes(target['root']) == job['configuration']:
+        return
+    if not _configuration_unprepared(target, job):
+        raise ConfigError('update_configuration_migration_already_prepared')
+    snapshot = _configuration_snapshot(target, parent)
+    if snapshot is None or set(snapshot['rooms']) != set(job['rooms']):
+        raise ConfigError('update_configuration_changed_during_closed_admission')
+    _adopt_configuration(job, snapshot, save)
+
+
 def _config_hashes(root):
     if any(p.is_symlink() for p in (root/'config').rglob('*')):
         raise ConfigError('configuration contains an unreviewed link')
@@ -406,12 +490,13 @@ def step(instance):
             return result
     with file_lease(target['prefix'] / 'deployment-admission.lock'),file_lease(target['prefix'] / 'controller-update-admin.lock'):
         path = target['prefix'] / NAME; job = _control(path)
-        if job.get('phase') in ('complete','cancelled','held'):
+        retry_configuration = configuration_retryable(job)
+        if job.get('phase') in ('complete','cancelled','held') and not retry_configuration:
             disarm(instance)
             return {'ok':True, 'phase':job['phase'], 'reason':job.get('reason')}
         def save(**values):
             job.update(values); _write(path, job)
-        if job.get('phase') not in ('waiting_empty','locking'):
+        if job.get('phase') not in ('waiting_empty','locking') and not retry_configuration:
             save(phase='held', reason='interrupted_commit_requires_review',
                  failure_stage=job.get('stage','recovery_validation'),
                  failure_code='update_recovery_limit' if job.get('automatic_recovery') else 'update_interrupted_commit',
@@ -426,18 +511,24 @@ def step(instance):
             save(phase='waiting_empty',empty_since=None,locked_since=None,reason='private_booking_reserved_or_active')
             return {'ok':True,'phase':'waiting_empty','reason':job['reason']}
         service=_service_state(instance)
-        if (current==parent and service['MainPID']==0 and service['ActiveState'] in ('inactive','failed')
-                and _step_managed_stopped(instance,target,parent,job,save)):
-            return {'ok':job['phase']!='held','phase':job['phase'],'reason':job.get('reason')}
+        if current==parent and service['MainPID']==0 and service['ActiveState'] in ('inactive','failed'):
+            if retry_configuration:
+                save(phase='waiting_empty', empty_since=None, locked_since=None,
+                     reason='revalidating_current_configuration')
+            if _refresh_waiting_configuration(target, parent, job, save):
+                return {'ok':True,'phase':job['phase'],'reason':job['reason']}
+            if _step_managed_stopped(instance,target,parent,job,save):
+                return {'ok':job['phase']!='held','phase':job['phase'],'reason':job.get('reason')}
         try: same_process=_process(service['MainPID']) == job['process']
         except (ConfigError, OSError): same_process=False
         if current != parent or not same_process:
             save(phase='held', reason='controller_identity_changed')
             return {'ok':False,'phase':'held','reason':job['reason']}
-        if _config_hashes(target['root']) != job['configuration']:
-            if job['phase']=='locking': _gate(target,parent,job,None)
-            save(phase='held', reason='configuration_changed_since_queue')
-            return {'ok':False,'phase':'held','reason':job['reason']}
+        if retry_configuration:
+            save(phase='waiting_empty', empty_since=None, locked_since=None,
+                 reason='revalidating_current_configuration')
+        if _refresh_waiting_configuration(target, parent, job, save):
+            return {'ok':True,'phase':job['phase'],'reason':job['reason']}
         # Long empty-room waits never extend a release approval's expiry.
         # Recheck before admission/stop; interrupted commits use explicit native
         # recovery rather than a new unattended expiry exception.
@@ -565,6 +656,9 @@ def _commit_quiescent(instance,target,parent,job,save):
     _systemctl('stop',target['unit'],timeout=100); _systemctl('disable',target['unit'])
     checkpoint(save,'cleanup')
     wait_stopped(target['root'],parent['service_uid'],save=save)
+    # Workers may persist their last valid preferences during clean shutdown.
+    # Quiescence is the last safe baseline refresh before any migration writes.
+    _refresh_closed_configuration(target, parent, job, save)
     if job.get('admission_kind')=='managed_intentionally_stopped':
         from .managed_host.admission import stopped_host
         if stopped_host(target,parent,reconcile=True) is None:

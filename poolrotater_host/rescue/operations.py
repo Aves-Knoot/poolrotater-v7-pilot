@@ -133,6 +133,14 @@ class Backend:
             if job is None:
                 frame.update(registration='current',upgrade='absent',configuration='not-applicable')
                 return frame
+            # Fixed diagnostic vocabulary only, not raw root job/config data.
+            if job.get('reason') in (
+                    'configuration_changed_since_queue',
+                    'revalidating_current_configuration',
+                    'waiting_for_valid_current_configuration',
+                    'waiting_for_stable_current_configuration',
+                    'configuration_refreshed_waiting_for_fresh_empty_window'):
+                frame['update_reason'] = job['reason']
             for record in (job['before'],job['after']):
                 require(all(record.get(k)==self.pinned[k] for k in (
                     'installation_id','generation','host_root','prefix','service_uid'))

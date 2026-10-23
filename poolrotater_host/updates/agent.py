@@ -137,7 +137,7 @@ class Agent:
                         self._save(state,phase='held',error='update_deployment_receipt_missing')
                         return self.summary(state,consent)
                     if phase!='absent':
-                        self._save(state,phase='waiting_empty',waiting_rooms=result.get('waiting_rooms',[]))
+                        self._save(state,phase='waiting_empty',waiting_rooms=result.get('waiting_rooms',[]),error=None)
                         # Controller admission is one bounded native step per
                         # timer tick. Native interrupted commits are held.
                         if operation['release']['kind']=='controller':self.backend.advance(operation)

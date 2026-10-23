@@ -168,6 +168,15 @@ class Backend:
                 from ..runtime_lifecycle import validate_runtime
                 validate_runtime(parent,target['prefix'])
             result={'phase':job['phase']}
+            # A reviewed successor can revalidate a never-admitted settings
+            # hold. Let the normal timer advance its protected entry; do not
+            # clear a partially committed transaction or execute old code.
+            from ..controller_update import configuration_retryable
+            from .contracts import version as version_tuple
+            if (configuration_retryable(job) and parent == job.get('before')
+                    and version_tuple(_control(protected(Path(job['after']['release'])/'release.json'))['version'])
+                    >= version_tuple('v7.3.1')):
+                result['phase'] = 'waiting_empty'
         else:
             from ..worker_deployment import read_job,result_path
             job=read_job(parent)
