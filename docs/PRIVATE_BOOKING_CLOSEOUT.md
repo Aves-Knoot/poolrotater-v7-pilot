@@ -1,56 +1,61 @@
-# Private booking technical acceptance reopened — 2026-10-22
+# Private booking technical closeout — 2026-10-22
 
-The prior completion statement was premature. The focused 223-test receipt,
-installed donor checks and prepared candidate are real evidence, but they do
-not close unexplained broad-regression failures or substitute for a real browser.
+Source, exact-package browser, and installed donor validation have passed for
+the current candidate. The unpublished host/hub handoff archives, inventories and checksums are verified and reproducible. This closeout records isolated technical evidence;
+it does not authorize production deployment or public enablement.
 
-Active objective: user attachment
-0528b727-8dcb-40b4-a24a-d4ca57c39812/pasted-text-1.txt, incorporating all ten
-sections of attachment 387a9d87-b6e7-483d-a5d2-063bf318a3d8/pasted-text-1.txt.
-No production change, publication, feed update or actual room test is authorized.
-The two-hour recreation change is already complete and excluded from this batch.
+## Current evidence
 
-## Current acceptance work
-
-| Requirement group | Existing evidence | Work still required |
+| Area | Result | Scope limit |
 |---|---|---|
-| Original 1: state/contract/settings inventory | Development contract; pure tests | Check each original invariant against execution and tests |
-| Original 2: atomic reservations/capacity/replays | Repository, eligibility, exchange tests | Concurrency and integrated reservation/reuse audit |
-| Original 3: independent lifecycle/cleanup/update holds | Reducer, native-engine, guard tests | Integrated HTTP-to-native restart/outage/closure scenario |
-| Original 4: session roles/parity/revocation | Repository/local/game tests | Pending grant cancellation, execution and late ACK audit |
-| Original 5: settings/filters/Apply/revisions | Selection, preview, worker tests; full catalogs | Concurrent dirty drafts, failed apply, real-browser controls |
-| Original 6: OAuth/private UI/security | Simulated HTTP and custom DOM | Real browser with simulated OAuth; keyboard/focus/forms/layout/clipboard |
-| Original 7: public availability/privacy/statistics | Projection/panel/reporting tests | Browser-public privacy and unchanged public behavior review |
-| Original 8: mixed versions/preservation/recovery | Donor 63-file preservation; compatibility slices | Relevant broad regressions and final exact candidate checks |
-| Original 9: comprehensive acceptance | 223 focused passes; prior broad run 1132 passes,285 failures,25 errors | Per-case or proven-group resolution; fresh-process suites; no unexplained relevant failures |
-| Original 10: release artifacts/docs/pilot | Reproducible old candidate and drafts | Rebuild after repairs, qualify final hash, update all receipts/handoffs |
+| Source tests | **1,577 passed, 1 skipped, 0 failures, 0 errors** unique evidence: 1,564-pass/1-skip fresh-process regression plus 13 distinct cases (6 settings, 3 activity, 4 closeout). All 310 original aggregate failures/errors have case-specific resolution evidence. `final-booking-closeout.xml` has 110 passing cases that overlap those receipts and is not summed again. | The historical aggregate invocation remains non-green; resolved cases were individually replayed and mapped. No actual rooms or production services were used. |
+| Browser | Dedicated source Chromium and exact-package Chromium each passed 1 test; exact package passed in 33.950 seconds against the runtime hash below. Coverage includes forms, keyboard/focus, cookie flags, foreign-Origin denial/no CORS, owner/friend access, privacy, settings effects and inactivity estimate freshness. | Synthetic OAuth and observations only; production OAuth and live-room acceptance remain human gates. |
+| Compatibility | Pinned v7.2.14 HubServer with new host and new hub with prior-version host both pass isolated TLS tests. The v7.2.14 catalog-rollout merge and exact-version fleet gate are preserved. | Mixed-version hosts may wait at the gate until eligible. No fleet deployment was performed. |
+| Settings | Six per-preset tests assert booking settings do not recreate a room or change ruleset mid-session. Player controls use live or next-map application only; no recreation-required setting is exposed. | The separate host-reported recreate branch is not reachable through the player allowlist. |
+| Installed upgrade | Current-hash donor upgrade passed. It preserved 63 files and 64 database-table logical rowsets, including synthetic rating/player-history records, and did not start a service. | Isolated donor fixture; no actual provider or rooms. |
+| Full donor booking | Current-hash receipt passed 9 native lifecycle cases, 3 simulated browser HTTP cases, 1 authenticated TLS portal-to-hub/agent/coordinator/engine integration, 1 real database-guard case, and all 6 preset previews over 5 full-mode catalogs. `PrivateNetwork=yes`; no real provider/rooms; peak RSS 740,156 KiB. | No production multi-user load test. |
+| Candidate | Frozen v7.3.0 runtime SHA-256: `fa15a041bb3ae7469ff668fc306f69b8b61e63c46a4e43dd447a32cbfe1cef92`. Source commit `1a713e9`, parent `6cbf86d`. This includes the v7.2.14 catalog-rollout merge and supersedes `1c4ca...` and `67d545...`. | Host/hub archive checks and independent archive reproducibility passed; final hashes are in `../candidate/HANDOFF.json`. |
 
-## Execution and receipts
+The donor admission initially refused because the disposable host did not have
+the required 5-GiB reserve. Two old QA exports were freed (292 MB (about 279 MiB)) without
+weakening guards or changing the donor journal; the final installed upgrade and
+booking qualification then passed.
 
-New regression receipts live outside source under ../reports/ and ../regression-*.log.
-Tests run in the verified ordinary namespace; fixture providers are loopback-only.
-Use fresh test processes to avoid cross-suite contamination and capture JUnit
-node IDs so the original 310 failures/errors can be reconciled to exact evidence.
-A bounded dedicated browser namespace may relax the virtual-address-space limit
-only with an actual-memory bound; production filesystem/network remains absent.
+## Release and rollback boundaries
 
-Parallel ownership: authority repository/local; real browser/static UI; native
-lifecycle/agent/system integration. Primary owns security review, regression
-infrastructure, compatibility, artifact freezing and acceptance audit.
+Both portal and host booking opt-ins remain off. No actual room, production
+OAuth app, public route, service, deployment, signing, publication, or feed
+promotion was performed.
 
-## Remaining human gates
+The supported immediate rollback is feature-off: disable new reservations,
+retain hub/host ledgers, and resolve existing sessions with current code. A
+binary downgrade is outside this qualification and requires a separately
+reviewed stopped transition or consistent closed-state backup; do not blindly
+downgrade or overwrite active ledgers. Keep the v7.2.14 exact-version fleet
+gate; mixed hosts may wait there until eligible.
 
-Production website OAuth registration/configuration, publication, deployment,
-actual osu! room/private-pilot authorization and public enablement remain separate.
-None blocks this isolated technical closeout.
+Remaining human gates are production identify-only OAuth configuration, an
+explicit one-slot live pilot (gameplay, expiry, confirmed closure and reuse),
+and separate publication/signing/feed approval. The unpublished candidate handoff and checksums are verified. Passing isolated validation does not
+authorize those actions.
 
-## Concurrent v7.2.14 compatibility
+## Prepared result and next action
 
-User reported the separate v7.2.14 catalog-rollout release. Its clean frozen
-source commit bd99502 was read without modification. The catalog feature was
-merged into this isolated booking checkout, preserving the future successor
-behavior rather than reverting it. Final candidate freeze must qualify the exact
-v7.2.14 runtime as an additional predecessor. Native catalog handoff now also
-holds the shared booking admission mutex and refuses booked aliases, including
-empty rooms awaiting arrival. No v7.2.14 checkout, feed, controller or deployment
-was altered. Donor qualification must inspect current binding before any use.
+The final unpublished kits are in `validation/private-booking/candidate/`:
+`poolrotater-v7.3.0-private-booking-candidate.zip` and
+`poolrotater-v7.3.0-hub-candidate.zip`. `HANDOFF.json` records their SHA-256
+hashes; `ARTIFACT_VALIDATION.json` confirms internal inventories and identical
+independent archive rebuilds. Runtime bytes are pinned above. No feed is signed
+or changed. Both handoffs point here, and disposable duplicate candidate archives
+were removed while retaining manifests, receipts and the required predecessor.
+
+`../reports/donor-quiescence.json` confirms all six dedicated service MainPIDs
+are zero and no process remains under the synthetic instance UID. The v7.2.14
+checkout remains clean at `bd995021eb1ef170e8e932baf0c67ded3e9b8c44`.
+
+No independent coding or isolated acceptance blocker remains. The next human
+action is to authorize the controlled one-slot pilot and configure its separate
+identify-only website OAuth client locally. Publication/deployment and public
+booking enablement require their own explicit approvals. Real osu! OAuth and
+rooms, production load, Firefox/WebKit and assistive-technology certification
+were not executed.

@@ -1,6 +1,10 @@
 # Private bookings: current operator workflow
 
-Status: implementation and isolated qualification only. No production portal,
+Status: source, exact-package browser, and installed donor qualification passed.
+Frozen unpublished v7.3.0 runtime SHA-256 is
+`fa15a041bb3ae7469ff668fc306f69b8b61e63c46a4e43dd447a32cbfe1cef92`, from
+source commit `1a713e9` (prior `6cbf86d`), superseding `1c4ca...` and `67d545...`.
+The unpublished host/hub kits have verified inventories, checksums and reproducible archives; see `../candidate/HANDOFF.json` and `ARTIFACT_VALIDATION.json`. No production portal,
 OAuth client, service unit, proxy route, private slot, or live room has been
 configured. Keep both booking opt-ins disabled until a separate human review
 authorizes a pilot.
@@ -100,7 +104,8 @@ choices, and boolean toggles when that preset supports them. Standard
 auto/fixed presets additionally expose DT mode (`auto`, `off`, `mixed`, or
 `full`). The website keeps edits as a draft until the user explicitly applies
 them; the server enforces revisions and a shared ten-second apply cooldown.
-Receipts distinguish queued work from a change applied by the room.
+Receipts distinguish queued work, live application, next-map application and
+failure. The player allowlist has no control that requires room recreation.
 
 Selection filters expose only metadata-qualified AR and map length. Map length
 is available for all supported booking presets. AR is unavailable for Mania
@@ -117,14 +122,16 @@ than releasing an alias. The established stopped-host reconciliation path
 retains booking lease identity and performs verified cleanup; do not edit the
 booking databases, clear an alias, or stop a room manually to get past a hold.
 
-For a future pilot rollback, first stop new reservations by disabling the
-portal config, then stop the portal process through its reviewed service
-manager procedure. Keep the booking ledger and host state intact while any
+For an approved immediate rollback, use feature-off: stop new reservations by
+disabling the portal config, then stop the portal process through its reviewed
+service-manager procedure. Keep the booking ledger and host state intact while any
 booking or cleanup is active or uncertain. The host `managed-bookings` policy
 cannot release an alias held by an active lease; disable or remove aliases only
 after cleanup is confirmed. Restarting the existing host agent is needed when
 the managed booking policy changes from disabled to enabled. Rollback does
-not require deleting session or booking history.
+not require deleting session or booking history. A binary downgrade is
+separately reviewed and requires a stopped transition or a consistent
+closed-state backup; do not blindly downgrade or overwrite active ledgers.
 
 ## Local validation
 
@@ -134,10 +141,19 @@ register credentials, access a production catalog, or create a live room. See
 [`PRIVATE_BOOKING_UI_VALIDATION.md`](PRIVATE_BOOKING_UI_VALIDATION.md) for the
 qualified test commands and the DOM fixture's browser limitations.
 
+The frozen runtime's exact-package Chromium portal run passed 1 test in
+33.950 seconds. The installed donor upgrade preserved 63 files and 64
+database-table rowsets, including synthetic ratings/player history, and did
+not start a service. The current full-system donor receipt passed 9 native
+lifecycle cases, 3 simulated browser HTTP cases, 1 authenticated TLS
+portal-to-hub/agent/coordinator/engine integration, 1 real database guard, and
+all 6 preset previews across 5 full-mode catalogs. It ran privately with no
+real provider or rooms. These receipts do not authorize production activity.
+
 ## Measured portal memory budget
 
-The installed donor run with the full five-mode catalogs and all six preset
-previews peaked at737,060KiB RSS while also loading the native/browser test
+The current installed donor run with the full five-mode catalogs and all six
+preset previews peaked at740,156KiB RSS while also loading native/browser test
 helpers. The optional portal unit therefore reserves a1GiB memory ceiling,
 with two cached pools,50%of one CPU andNice19. The earlier512MiB template
 was not sufficient evidence of a qualified budget and is superseded. Review
@@ -151,6 +167,9 @@ an observed production portal load or a multi-user load-test result.
    hashes, desired stopped slots, room defaults, capacity and ownership status.
 2. Upgrade the hub with the additive kit first. Old hosts remain ordinary hosts;
    the booking endpoint and browser service do not grant them booking capability.
+   Preserve the exact-version v7.2.14 fleet rollout gate from the catalog
+   rollout. Mixed-version hosts may wait at that gate until eligible; do not
+   bypass it to complete the booking rollout.
 3. Upgrade hosts through the established signed controller-update admission.
    The candidate is a controller release: it waits for all native boundaries,
    and any reserved/active/unclean booking holds the whole host update. Verify
@@ -173,13 +192,15 @@ an observed production portal load or a multi-user load-test result.
 8. Public release signing, update-feed promotion and website/wiki publication
    remain separate explicit owner decisions; the local candidate does none.
 
-Operational rollback disables new reservations and the portal while retaining
+Immediate supported rollback is feature-off: disable new reservations and the portal while retaining
 all host/hub ledgers. Resolve/finish existing sessions through the current code
 before removing designation. Do not blindly downgrade or copy old DBs over
 active state. A binary rollback needs a separately reviewed stopped transition
 or a consistent closed-state backup; retaining the current runtime with the
-feature disabled is the supported immediate rollback. Existing hosting OAuth
-and catalogs need no reset.
+feature disabled is the supported immediate rollback. Binary downgrade is
+outside this qualification; it requires a separately reviewed stopped
+transition or consistent closed-state backup. Existing hosting OAuth and
+catalogs need no reset.
 
 ## Future enablement input examples
 

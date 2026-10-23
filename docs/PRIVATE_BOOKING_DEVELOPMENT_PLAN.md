@@ -1,7 +1,8 @@
 # Self-service private booking — development contract
 
-Status: technical acceptance REOPENED. Implementation and an unpublished v7.3.0 candidate exist, but remaining regression classification, real-browser qualification and integrated acceptance must finish before technical completion. See PRIVATE_BOOKING_CLOSEOUT.md. No booking feature is deployed or publicly enabled.
-Source baseline e217ccf / v7.2.13. Authoritative checkout:
+Status: isolated technical acceptance and unpublished release preparation are complete. Source regression, source/exact-package browser, and installed donor qualification passed. Frozen unpublished v7.3.0 runtime SHA-256 is `fa15a041bb3ae7469ff668fc306f69b8b61e63c46a4e43dd447a32cbfe1cef92`, built from source commit `1a713e9` (parent `6cbf86d`). The unpublished host/hub kits have verified inventories, checksums and reproducible archives; see `../candidate/HANDOFF.json` and `ARTIFACT_VALIDATION.json`. See PRIVATE_BOOKING_CLOSEOUT.md. No booking feature is deployed or publicly enabled.
+Source baseline e217ccf / v7.2.13 with the released v7.2.14 catalog-rollout
+implementation merged. Authoritative checkout:
 work/validation/private-booking/source. Objective is the complete user attachment
 387a9d87-b6e7-483d-a5d2-063bf318a3d8/pasted-text-1.txt, all ten sections.
 No live room/provider calls, production services/configuration/data writes,
@@ -130,14 +131,15 @@ Private statistics continue using existing collector without new disclosure.
 
 ## Isolated acceptance evidence (live acceptance remains pending)
 
-- [ ] All requirements independently audited against current implementation and acceptance evidence (reopened).
+- [x] All requirements independently audited against current implementation and acceptance evidence; see `PRIVATE_BOOKING_REQUIREMENTS.md`.
 - [x] Concurrent reservation/quota/idempotency/no-show abuse.
 - [x] Host restart/claim/inactivity/gameplay/clock/closure/cleanup/update holds.
 - [x] Ownership/revocation/stale sessions/website and in-game parity.
 - [x] Atomic settings/cooldown/revisions/full catalog/filter support.
 - [x] OAuth/browser/CSRF/private/public status and mixed host versions.
-- [ ] Complete integrated packaged acceptance, real-browser qualification and final donor qualification (partial receipts exist).
-- [x] Reproducible candidate + hashes/docs/rollback/pilot, no publication.
+- [x] Complete integrated source/package/browser/donor acceptance for the frozen runtime.
+- [x] Final unpublished host/hub archives, inventories, checksums and independent archive reproducibility verified.
+- [x] Frozen reproducible candidate hash and docs/pilot/feature-off rollback instructions, no publication.
 - [x] Human-required OAuth configuration and live pilot explicitly pending.
 
 ## Integration checkpoint — 2026-10-22
@@ -345,24 +347,50 @@ reuse checks remain unexecuted. Publication/signing/feed promotion and wider
 public booking rollout need separate explicit approval after pilot evidence.
 No independent coding blocker remains for the authorized isolated batch.
 
-## Final candidate checkpoint — 2026-10-22
+## Superseded candidate checkpoint — 2026-10-22
 
-Supersedes the preceding9bf runtime only for a website config-validation fix:
-OAuth secrets now validate independently of whether previews are configured;
-disabled preview-only config needs no OAuth pair. Local fix commit:e0cb9ff.
-Final runtime SHA256:
-67d545890aad4de8b3ae2829cf8bfc8f791b0b15903ff6223672fea63902db59.
-Final feature suite:223passed,1full-catalog case deselected. Final installed
-native upgrade again preserved63files. Exact installed donor booking receipt
-is green:9native,3browser,1guard plus6full-catalog preset previews. PeakRSS
-737060KiB. Donor stages:upgrade /opt/poolrotater-v7-test/runs/booking-d9585900a9;
-booking /opt/poolrotater-v7-booking-129e92117c. The native/provider/bookkeeping
-behavior otherwise retains the preceding qualification and unchanged full
-catalog contents. Runtime payload matches source, builds reproducibly, and
-remains unqueued/unpublished. Final kit hashes are in ../candidate/HANDOFF.json;
-archive/inventory/reproducibility validation in ARTIFACT_VALIDATION.json.
-All authorized isolated implementation/preparation is complete. Proceed only
-through the documented separately approved OAuth/site/one-slot live pilot and
-publication gates. Do not resume autonomous production deployment from this
-checkpoint. Independent two-hour timer request remains applied and verified
-for all12configured owner/community slots without occupied-room restarts.
+Runtime `67d545...` incorporated the website config-validation fix, but it has
+been superseded by the current source/candidate checkpoint below. Its donor and
+package receipts do not qualify runtime `fa15...`. The independent two-hour
+timer request remains applied and verified for all 12 configured owner/
+community slots without occupied-room restarts.
+
+## Current source and candidate closeout — 2026-10-22
+
+The catalog-rollout implementation from released v7.2.14 is merged into this
+isolated booking source. The exact-version v7.2.14 fleet rollout gate remains
+preserved; mixed-version hosts can wait at that gate until eligible. Tests cover
+the pinned v7.2.14 hub with a new host and a new hub with a prior-version host.
+This compatibility evidence does not authorize deployment.
+
+Fresh per-module source regression completed with **1,564 passed, 1 skipped,
+0 failures, 0 errors** across 118 receipts. After adding 13 distinct source
+tests (6 settings, 3 activity, 4 closeout), unique source evidence is **1,577
+passed, 1 skipped**. The focused 110-case closeout receipt overlaps those
+results and is not summed. All **310** cases from the original
+aggregate failures/errors have named resolution evidence in
+`../reports/REGRESSION_RECONCILIATION.json`; the original aggregate run itself
+is not represented as green. The 19-case application-contract suite, including
+six preset cases of `test_booking_settings_do_not_recreate_room_or_change_ruleset_mid_session`,
+is recorded in `../reports/booking-application-contract.xml`. The tested
+allowlist supports live and next-map changes; settings requiring room
+recreation are excluded. An integrated long-map test keeps a friend's session
+active beyond the ordinary inactivity deadline, then permits closure after map
+completion and continuous emptiness.
+
+The dedicated Chromium run passed 1 test against the exact final package in 33.950 seconds against runtime SHA-256
+`fa15a041bb3ae7469ff668fc306f69b8b61e63c46a4e43dd447a32cbfe1cef92`.
+Installed donor upgrade preserved 63 files and 64 database-table rowsets,
+including synthetic ratings/player history, and left the service stopped. The
+current full-system donor receipt passed 9 native lifecycle cases, 3 simulated
+browser HTTP cases, 1 authenticated TLS portal-to-hub/agent/coordinator/engine
+integration, 1 real database-guard case, and all six preset previews over all
+five mode catalogs. Peak RSS was 740,156 KiB; no real provider or rooms were
+used. Source commit `1a713e9` includes the v7.2.14 catalog-rollout merge and
+retains its exact-version fleet gate; mixed hosts may wait there until eligible.
+
+Host/hub archive checks and independent archive reproducibility passed; final hashes are in `../candidate/HANDOFF.json`.
+Actual production OAuth, live-room pilot and publication/signing remain separate
+human gates. Immediate rollback is feature-off with ledgers retained. Binary
+downgrade is outside this qualification and requires a separately reviewed
+stopped transition or consistent closed-state backup.

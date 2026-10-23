@@ -5,7 +5,17 @@ production portal, OAuth client, public route, service, private slot, or live
 booking has been configured. This checklist grants no permission to perform
 those actions.
 
-The source tree is based on released v7.2.13. The unpublished v7.3.0 candidate is built reproducibly and has passed isolated and installed donor synthetic checks. Its runtime SHA256 is `67d545890aad4de8b3ae2829cf8bfc8f791b0b15903ff6223672fea63902db59`. It is unsigned, unpublished, not queued, and has no actual osu! room acceptance. See PRIVATE_BOOKING_ACCEPTANCE.md for evidence and limits.
+The isolated source includes the v7.2.14 catalog-rollout merge. Unique source
+evidence is 1,577 passed and 1 skipped, with no failures/errors; all 310
+original aggregate failure/error cases have case-specific resolution evidence.
+Dedicated source and exact-package Chromium runs passed, as did exact-hash
+installed donor upgrade and full booking/catalog qualification. Frozen
+unpublished v7.3.0 runtime SHA-256 is
+`fa15a041bb3ae7469ff668fc306f69b8b61e63c46a4e43dd447a32cbfe1cef92`, from
+source commit `1a713e9`, superseding `1c4ca...` and `67d545...`. Candidate
+handoff archives and checksums are verified and independently reproducible. It is unsigned, unpublished,
+not queued, and has no actual osu! room acceptance. See
+PRIVATE_BOOKING_ACCEPTANCE.md for evidence and limits.
 
 ## Human approvals required before pilot preparation
 
@@ -35,10 +45,12 @@ slot, or enable a host alias.
 - [ ] Complete the required isolated feature, browser, compatibility, native,
   and regression suites. Preserve the runner outputs and record failures,
   skips, and environment limits. Do not describe component fixtures as a real
-  browser or live-service test.
-- [ ] Install the frozen candidate into an isolated donor installation using
-  the supported installer/upgrade path. Verify rollback and state migration
-  with a copy of representative state; retain the original state.
+  browser or live-service test. Source, exact-package browser, and installed
+  donor qualification now pass; preserve the current exact-hash receipts.
+- [ ] Review current-hash installed-upgrade preservation and service-stopped
+  receipts against representative donor state; retain the original state.
+  Immediate rollback is feature-off with booking ledgers retained. Binary
+  downgrade is outside this pilot checklist and requires separate review.
 - [ ] Confirm complete, verified catalogs for every preset offered by the
   pilot. Supported presets are Standard Auto, Standard Fixed, Standard Loved,
   Mania 4K, Mania 7K, and Catch. A missing or partial catalog makes that preset
@@ -133,7 +145,8 @@ this checklist.
 ## Settings, catalogs, and version checks
 
 - [ ] Test settings draft versus applied state. No native change occurs before
-  Apply; the website shows queued, failed, or applied receipts accurately.
+  Apply; the website shows queued, failed, live, and next-map receipts
+  accurately. The player allowlist has no room-recreation control.
   Apply is limited by the shared 10-second cooldown and revision checks. A
   stale settings revision is refused rather than silently overwriting a newer
   local change.
@@ -155,8 +168,9 @@ this checklist.
   host in an isolated environment. Older hosts remain booking-disabled by
   default; an unsupported host or route is reported unavailable. No fallback
   can create a public room, repurpose an alias, or bypass host eligibility.
-  Test the exact supported upgrade chain and legacy behavior before making any
-  compatibility claim.
+  The v7.2.14 exact-version fleet rollout gate remains in force; mixed hosts may
+  wait at that gate until eligible. Test the exact supported upgrade chain and
+  legacy behavior before making any compatibility claim.
 
 ## Uncertainty, rollback, and acceptance
 
@@ -166,11 +180,17 @@ ownership record. Do not clear a policy, delete a database, stop a live room,
 or reuse an alias to get past an uncertainty. Keep the slot held and escalate
 through the reviewed operator recovery process.
 
-For an approved rollback, first disable new reservations in the local portal
-configuration and stop the portal only through its reviewed service-manager
+For an approved immediate rollback, use feature-off: first disable new
+reservations in the local portal configuration and stop the portal only
+through its reviewed service-manager
 procedure. Preserve the hub and host state. Remove a host alias from booking
 policy only after its booking cleanup is confirmed. Do not delete OAuth or
-booking history as a rollback shortcut.
+booking history as a rollback shortcut. A binary downgrade is separate and
+requires a reviewed stopped transition or consistent closed-state backup; do
+not overwrite active ledgers.
 
-Isolated candidate, full-catalog, donor, compatibility, privacy/role and lifecycle evidence is recorded in PRIVATE_BOOKING_ACCEPTANCE.md. Actual live acceptance remains pending the separately approved real OAuth/browser/gameplay, expiry, reused-slot and operator review steps in this checklist. Passing isolated tests alone is not pilot authorization or release
-acceptance.
+Isolated source, compatibility, privacy/role and lifecycle evidence is recorded
+in PRIVATE_BOOKING_ACCEPTANCE.md. Exact-package browser and donor qualification passed. Actual live acceptance remains pending and requires separately
+approved real OAuth/browser/gameplay, expiry, reused-slot and operator review
+steps in this checklist. Passing isolated tests alone is not pilot authorization
+or release acceptance.

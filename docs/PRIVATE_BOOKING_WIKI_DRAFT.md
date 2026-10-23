@@ -1,8 +1,14 @@
 # Private lobby bookings
 
 **Draft for review. Private bookings are not currently published or enabled.**
-The current released baseline is v7.2.13. The v7.3.0 candidate has been built reproducibly and passed isolated/donor synthetic qualification. It has not been signed, published or accepted through a real osu! pilot. This page is
-not a promise that private bookings are available on any host.
+The current released version is v7.2.14. The isolated v7.3.0 candidate includes
+the v7.2.14 catalog rollout and is frozen at runtime SHA-256
+`fa15a041bb3ae7469ff668fc306f69b8b61e63c46a4e43dd447a32cbfe1cef92`,
+superseding `1c4ca...` and `67d545...`. Source regressions, source and exact-
+package Chromium, and current-hash donor qualification passed. The candidate
+handoff archives and checksums are verified and independently reproducible. It is unsigned, unpublished
+and has no real osu! pilot acceptance. This page is not a promise that private
+bookings are available on any host.
 
 Private bookings let an osu! player request an explicitly designated private
 host room for a session. They do not reserve a public room or make a public
@@ -54,7 +60,9 @@ and `.length <seconds>`. Unsupported commands remain unavailable in a private
 booking. The website accepts only the preset's server-provided settings
 inventory. Edits remain a draft until Apply. Apply has a shared 10-second
 cooldown, and stale settings revisions are rejected instead of overwriting
-newer settings.
+newer settings. Receipts distinguish queued work, live application,
+next-map application and failure. The player allowlist has no control that
+requires room recreation.
 
 ## Session timers
 
@@ -107,9 +115,9 @@ stop a live room, or reuse the alias to clear a warning.
 
 | Version state | Private booking behavior |
 | --- | --- |
-| Released v7.2.13 baseline | Private bookings are not part of the published feature set. |
-| Proposed v7.3.0 candidate | Development target only; unavailable until candidate qualification, human approval, and separate publication approval. |
-| Older or mixed-version host without the booking capability | Booking remains disabled or the slot is unavailable. No public-room fallback is used. |
+| Released v7.2.14 | Private bookings are not part of the published feature set. The exact-version catalog-rollout fleet gate remains in force. |
+| Frozen v7.3.0 candidate (`fa15...`) | Development target only; isolated technical acceptance and release preparation passed; human pilot and separate publication approvals remain pending. |
+| Older or mixed-version host without the booking capability | Booking remains disabled or the slot is unavailable. The exact-version v7.2.14 fleet gate remains in force, so a mixed-version host may wait until eligible. No public-room fallback is used. |
 | Future approved release with explicit host and portal opt-ins | The feature may be offered only for compatible hosts, complete catalogs, and configured private slots. |
 
 This draft should be published only after the exact released candidate and
