@@ -175,13 +175,89 @@ class Repository:
                 db.execute('ALTER TABLE bookings ADD COLUMN applied_settings TEXT')
             if 'lease_envelope' not in columns:
                 db.execute('ALTER TABLE bookings ADD COLUMN lease_envelope TEXT')
-            for row in db.execute('SELECT * FROM bookings WHERE lease_envelope IS NULL').fetchall():
+            for row in db.execute("SELECT * FROM bookings WHERE lease_envelope IS NULL AND phase!='ended'").fetchall():
                 request = db.execute('SELECT response FROM requests WHERE booking_id=? ORDER BY rowid LIMIT 1',
                                      (row['id'],)).fetchone()
                 source = _json(request['response']) if request is not None else dict(row)
                 db.execute('UPDATE bookings SET lease_envelope=? WHERE id=?',
                            (canonical(_creation_lease(source)).decode(), row['id']))
             db.execute("UPDATE bookings SET phase='unavailable' WHERE phase='failed'")
+            # A terminal row means the host reported owned closure and
+            # completed restoration. Scrub pre-existing ended rows on upgrade
+            # too, so restart never rehydrates their creation password.
+            for row in db.execute("SELECT id,revision FROM bookings WHERE phase='ended' AND (password!='' OR lease_envelope IS NOT NULL OR room_id IS NOT NULL OR incarnation IS NOT NULL OR role_data!='{}')").fetchall():
+                self._scrub_terminal_booking(db, row['id'], row['revision'])
+
+    def _scrub_terminal_booking(self, db, booking_id, revision):
+        """Remove session access material while retaining request/receipt identity."""
+        booking = db.execute('SELECT * FROM bookings WHERE id=? AND phase=?',
+                             (booking_id, 'ended')).fetchone()
+        require(booking is not None, 'booking_not_closed', 409)
+        observation = _json(booking['observation']) or {}
+        observation.update(roster=[], roster_known=False, room_id=None, incarnation=None,
+                           current_map=None, queue=[], queue_known=False)
+        db.execute('''UPDATE bookings SET password='',lease_envelope=NULL,room_id=NULL,
+            incarnation=NULL,role_data='{}',observation=? WHERE id=?''',
+                   (canonical(observation).decode(), booking_id))
+        # Operation UUIDs, actors, payload hashes, phases, and receipts remain
+        # useful for idempotency/audit. Their old envelopes and payloads are no
+        # longer executable after terminal cleanup and may contain role IDs.
+        db.execute("UPDATE operations SET payload='{}',envelope='{}' WHERE booking_id=?",
+                   (booking_id,))
+        terminal_receipt = {
+            'id': booking_id, 'booking_id': booking_id,
+            'protocol_version': PROTOCOL_VERSION, 'phase': 'ended',
+            'revision': revision, 'password': None, 'join_url': None,
+            'room_id': None, 'players': [], 'current_map': None,
+            'queue': [], 'queue_known': False,
+        }
+        db.execute('UPDATE requests SET response=? WHERE booking_id=?',
+                   (canonical(terminal_receipt).decode(), booking_id))
+
+        # Exact exchange replay is retained while a lease can still be active.
+        # Once confirmed cleanup retires that lease, its password/commands must
+        # not survive in the cached response or be delivered after alias reuse.
+        # Only retire the exact ended binding; never add new commands to an old
+        # sequence or scrub an uncertain lease.
+        reports_path = self.root / 'bookings-hosts.sqlite3'
+        if os.path.lexists(reports_path):
+            check_database(reports_path)
+            attached = {row['name'] for row in db.execute('PRAGMA database_list')}
+            if 'booking_reports' not in attached:
+                db.execute('ATTACH DATABASE ? AS booking_reports', (str(reports_path),))
+                db.execute('PRAGMA booking_reports.secure_delete=ON')
+            columns = {row['name'] for row in db.execute(
+                'PRAGMA booking_reports.table_info(reports)')}
+            if columns:
+                require({'host','response'} <= columns, 'booking_exchange_storage_uncertain', 503)
+                for report in db.execute('SELECT host,response FROM booking_reports.reports').fetchall():
+                    response = _json(report['response'])
+                    require(type(response) is dict and type(response.get('leases')) is list
+                            and type(response.get('commands')) is list,
+                            'booking_exchange_storage_uncertain', 503)
+                    retired = {**response,
+                        'leases': [lease for lease in response['leases'] if lease.get('id') != booking_id],
+                        'commands': [command for command in response['commands']
+                                     if command.get('booking_id') != booking_id]}
+                    if retired != response:
+                        db.execute('UPDATE booking_reports.reports SET response=? WHERE host=?',
+                                   (canonical(retired).decode(), report['host']))
+
+        # Browser invite hashes live in their own private ledger. Attach it only
+        # when it already exists; a hub without the portal must remain inert.
+        browser_path = self.root / 'booking-browser.sqlite3'
+        if os.path.lexists(browser_path):
+            check_database(browser_path)
+            attached = {row['name'] for row in db.execute('PRAGMA database_list')}
+            if 'booking_browser' not in attached:
+                db.execute('ATTACH DATABASE ? AS booking_browser', (str(browser_path),))
+                db.execute('PRAGMA booking_browser.secure_delete=ON')
+            columns = {row['name'] for row in db.execute(
+                'PRAGMA booking_browser.table_info(join_invites)')}
+            if columns:
+                require('booking' in columns, 'booking_invite_storage_uncertain', 503)
+                db.execute('DELETE FROM booking_browser.join_invites WHERE booking=?',
+                           (booking_id,))
 
     @staticmethod
     def _booking(row):
@@ -315,6 +391,13 @@ class Repository:
             old_req = db.execute('SELECT * FROM requests WHERE user_id=? AND request_id=?', (user_id, request_id)).fetchone()
             if old_req:
                 require(old_req['payload_hash'] == payload_hash, 'idempotency_conflict', 409)
+                ended = db.execute("SELECT id,revision FROM bookings WHERE id=? AND phase='ended'",
+                                   (old_req['booking_id'],)).fetchone()
+                if ended is not None:
+                    self._scrub_terminal_booking(db, ended['id'], ended['revision'])
+                    old_req = db.execute('SELECT response FROM requests WHERE user_id=? AND request_id=?',
+                                         (user_id, request_id)).fetchone()
+                    return _json(old_req['response'])
                 return _json(old_req['response'])
             cooldown = db.execute('SELECT cooldown_until FROM no_show_cooldowns WHERE user_id=?', (user_id,)).fetchone()
             require(cooldown is None or now >= cooldown['cooldown_until'], 'no_show_cooldown', 409)
@@ -415,7 +498,13 @@ class Repository:
                 row = db.execute('SELECT * FROM bookings WHERE id=?', (booking_id,)).fetchone()
                 require(row is not None, 'booking_not_found', 404)
                 roles = _json(row['role_data'])
-                require(roles.get(str(user_id)) in ('owner', 'controller'), 'booking_forbidden', 403)
+                # The owner may retry an operation after a lost reply even if
+                # that operation ended the booking and cleanup erased roles.
+                # A revoked controller cannot use an old request ID to regain
+                # access to its prior response.
+                require(user_id == row['user_id'] or
+                        roles.get(str(user_id)) == 'controller',
+                        'booking_forbidden', 403)
                 require(prior['payload_hash'] == request_hash, 'idempotency_conflict', 409)
                 return dict(prior)
             row = db.execute('SELECT * FROM bookings WHERE id=?', (booking_id,)).fetchone()
@@ -446,6 +535,8 @@ class Repository:
                 require(set(payload) == {'user_id'}, 'invalid_action_payload')
                 friend = payload.get('user_id')
                 require(type(friend) is int and friend > 0 and friend != row['user_id'], 'invalid_friend')
+                require(roles.get(str(friend)) not in ('owner', 'controller', 'grant_pending'),
+                        'invalid_controller', 409)
                 roster_observation = _json(row['observation']) or {}
                 roster = roster_observation.get('roster', [])
                 require(roster_observation.get('roster_known') is True and now - roster_observation.get('updated_at', -1) <= 30
@@ -455,7 +546,9 @@ class Repository:
             elif action == 'revoke':
                 require(set(payload) == {'user_id'}, 'invalid_action_payload')
                 friend = payload.get('user_id')
-                require(type(friend) is int and friend > 0 and roles.get(str(friend)) == 'controller', 'invalid_controller', 409)
+                require(type(friend) is int and friend > 0 and
+                        roles.get(str(friend)) in ('controller', 'grant_pending'),
+                        'invalid_controller', 409)
                 target = str(friend)
                 roles.pop(target, None)
                 queued = db.execute("SELECT id,action,payload,user_id,phase FROM operations WHERE booking_id=? AND phase IN ('pending','dispatched')", (booking_id,)).fetchall()
@@ -676,6 +769,7 @@ class Repository:
                 require(terminal,'booking_closed',409)
                 # Hosts retain a bounded terminal history to recover lost replies.
                 # New report sequences may repeat confirmed cleanup, never reopen it.
+                self._scrub_terminal_booking(db, booking_id, current['revision'])
                 db.execute('INSERT OR REPLACE INTO host_observations VALUES(?,?,?,?)',
                            (booking_id,observation['sequence'],digest,canonical(receipt).decode()))
                 return receipt
@@ -721,6 +815,9 @@ class Repository:
                 if op['phase'] == 'cancelled':
                     if op['host_receipt'] is None:
                         db.execute('UPDATE operations SET host_receipt=? WHERE id=?', (wire_receipt, op['id']))
+                    else:
+                        require(op['host_receipt'] == wire_receipt,
+                                'operation_receipt_conflict', 409)
                     continue
                 if op['phase'] in ('applied', 'failed'):
                     require((op['phase'], op['error'], op['application']) ==
@@ -758,6 +855,8 @@ class Repository:
                         canonical(sanitized).decode(), claim_deadline, reason if terminal else None, canonical(roles).decode(),
                         canonical(safe_settings).decode(), canonical(safe_settings).decode(),booking_id))
             db.execute('INSERT OR REPLACE INTO host_observations VALUES(?,?,?,?)', (booking_id, observation['sequence'], digest, canonical(receipt).decode()))
+            if terminal:
+                self._scrub_terminal_booking(db, booking_id, new_revision)
             return receipt
 
     def observe_receipts(self, host_id, receipts):
@@ -816,6 +915,9 @@ class Repository:
                     if op['host_receipt'] is None:
                         db.execute('UPDATE operations SET host_receipt=? WHERE id=?',
                                    (pinned, op['id']))
+                    else:
+                        require(op['host_receipt'] == pinned,
+                                'operation_receipt_conflict', 409)
                     continue
                 if op['phase'] in ('applied', 'failed'):
                     require((op['phase'], op['error'], op['application']) ==

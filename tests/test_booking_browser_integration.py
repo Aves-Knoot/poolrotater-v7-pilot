@@ -241,16 +241,18 @@ def test_invite_html_escapes_password_uses_fixed_join_origin_and_ends_cleanly(tm
         ledger.observe(HOST, booking['id'], ended)
         status, _, ended_html = _request(port, 'GET',
             '/private-lobbies/join?invite=' + next_invite, headers={'Accept': 'text/html'})
-        assert status == 200
-        assert b'This private booking has ended.' in ended_html
+        # Confirmed cleanup revokes and removes joining grants, including the
+        # last invitation. An old URL no longer exposes even its session state.
+        assert status == 403
         assert b'osu.ppy.sh/multiplayer/rooms/' not in ended_html
         assert injected_password.encode() not in ended_html
         status, _, ended_json = _request(port, 'GET',
             '/private-lobbies/join?invite=' + next_invite)
-        assert status == 200
-        ended_value = json.loads(ended_json)['joining']
-        assert ended_value == {'booking_id': booking['id'], 'phase': 'ended',
-                               'join_url': None, 'password': None}
+        assert status == 403
+        assert json.loads(ended_json)['error'] == 'booking_invite_expired'
+        assert ledger.join_info(booking['id']) == {
+            'booking_id': booking['id'], 'phase': 'ended',
+            'join_url': None, 'password': None}
     finally:
         server.shutdown()
         server.server_close()

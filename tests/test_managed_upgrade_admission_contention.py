@@ -74,6 +74,10 @@ class UpgradeAdmissionContention(unittest.TestCase):
  def test_stopped_upgrade_entry_rechecks_binding_after_wait(self):
   prefix=self.base/'prefix';prefix.mkdir();target={'prefix':prefix,'root':self.root};marker={'installation_id':'invented'};record={'service_uid':self.uid}
   self.enterContext(patch.object(upgrade,'_admin'));binding=self.enterContext(patch.object(upgrade,'_binding',return_value=(target,marker,prefix/'record.json',record)))
+  from contextlib import nullcontext
+  identity=self.enterContext(patch('poolrotater_host.ratings.operations._identity',return_value=nullcontext()))
+  booking_hold=self.enterContext(patch('poolrotater_host.bookings.policy.holds_updates',return_value=False))
   state=self.enterContext(patch.object(upgrade,'_unit_state'));self.check.side_effect=[CleanupPending('update_children_still_running','invented late reader'),None]
   with upgrade._locked('invented')as observed:self.assertEqual(observed,(target,marker,prefix/'record.json',record))
   self.assertEqual(binding.call_count,2);self.assertEqual(state.call_count,2);self.assertEqual(self.check.call_count,2);self.assert_unlocked()
+  identity.assert_called_once_with(self.uid);booking_hold.assert_called_once_with(self.root)

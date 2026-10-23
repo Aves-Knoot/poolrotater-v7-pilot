@@ -118,12 +118,16 @@ class BookingPortal {
     this.slotRenderKey = null;
     this.polling = false;
     this.inviteUrl = null;
+    this.reserveTrigger = null;
     this.bind();
   }
 
   bind() {
     byId('reserve-form').addEventListener('submit', (event) => { event.preventDefault(); this.reserve(); });
-    byId('cancel-reserve').addEventListener('click', () => show(byId('reserve-section'), false));
+    byId('cancel-reserve').addEventListener('click', () => {
+      show(byId('reserve-section'), false);
+      this.reserveTrigger?.focus?.();
+    });
     byId('slot-list').addEventListener('click', (event) => {
       const button = event.target.closest('[data-reserve-slot]');
       if (button) this.openReserve(button.dataset.reserveSlot);
@@ -140,6 +144,7 @@ class BookingPortal {
       this.submitAction(button.dataset.roleAction, { user_id: id });
     });
     byId('apply-settings').addEventListener('click', () => this.applySettings());
+    byId('reload-settings').addEventListener('click', () => this.reloadCurrentSettings());
     byId('preview-settings').addEventListener('click', () => this.previewSettings());
     byId('reserve-preset').addEventListener('change', () => this.loadReserveSchema());
     byId('sign-out').addEventListener('click', () => this.logout());
@@ -313,7 +318,9 @@ class BookingPortal {
     }
     this.reserveInventory = slot.basic_settings_schema || slot.settings_schema || {};
     this.reserveDefaults = slot.base_settings || {};
+    this.reserveTrigger = document.activeElement;
     show(byId('reserve-section'));
+    byId('reserve-title').focus?.();
     this.loadReserveSchema();
   }
 
@@ -499,6 +506,7 @@ class BookingPortal {
         this.conflict = false;
         show(byId('reserve-section'), false);
         await this.loadSession();
+        byId('session-title').focus?.();
         this.setMutationsDisabled(false);
       } else if (operation.kind === 'invite') {
         this.inviteUrl = this.safeInviteUrl(result.invite_url);
@@ -565,12 +573,69 @@ class BookingPortal {
   }
 
   receiptMessage(operation) {
+    if (operation?.action === 'configure') return this.settingsOutcomeMessage(operation);
     const phase = operation?.phase;
-    const application = operation?.application;
     if (phase === 'queued') return 'Request queued. The room will update when the host confirms it.';
-    if (application === 'applied' || phase === 'applied') return 'Change applied by the room.';
+    if (phase === 'applied') return 'Change applied by the room.';
     if (phase === 'refused' || operation?.error) return 'The room could not apply that change. Review the current settings.';
     return 'Request received. Waiting for the room to confirm the result.';
+  }
+
+  settingsOutcomeMessage(operation) {
+    if (!operation) return 'Draft matches server settings.';
+    if (operation.phase === 'failed' || operation.phase === 'refused' || operation.error) {
+      return 'Settings were not confirmed. Review the room’s current settings before trying again.';
+    }
+    if (operation.phase === 'cancelled') return 'The settings update was cancelled.';
+    if (['queued', 'pending'].includes(operation.phase)) return 'Settings queued for the room.';
+    if (operation.phase === 'dispatched') return 'Settings are applying in the room.';
+    if (operation.phase === 'applied') {
+      if (operation.application === 'live') return 'Settings applied live in the room.';
+      if (operation.application === 'next_map') return 'Settings applied for the next map selection.';
+      if (operation.application === 'recreate') return 'The room reports that a new session is needed for these settings.';
+      return 'The room confirmed the settings but did not report when they take effect.';
+    }
+    return 'Draft matches server settings.';
+  }
+
+  settingsEffectMessage(operation, dirty = false) {
+    if (this.conflict) {
+      return 'This draft has not been applied. Reload current settings to discard it; the current map and visible queue stay as they are.';
+    }
+    if (dirty) {
+      return 'These edits are still a draft. Apply them before the room changes; the current map and visible queue will stay as they are.';
+    }
+    if (operation?.phase === 'failed' || operation?.phase === 'refused' || operation?.error) {
+      return 'The room did not confirm this update. Review its current settings before applying again.';
+    }
+    if (operation?.phase === 'cancelled') return 'The update was cancelled before the room confirmed it.';
+    if (['queued', 'pending', 'dispatched'].includes(operation?.phase)) {
+      return 'The current map and maps already in the visible queue stay as they are while the room processes this update.';
+    }
+    if (operation?.phase === 'applied' && operation.application === 'live') {
+      return 'Room controls covered by this update use the new settings now. The current map and visible queue stay unchanged.';
+    }
+    if (operation?.phase === 'applied' && operation.application === 'next_map') {
+      return 'Map selection settings apply to new selections. The current map and maps already in the visible queue stay unchanged.';
+    }
+    if (operation?.phase === 'applied' && operation.application === 'recreate') {
+      return 'The room reports that a new session is required before these settings take effect. The current map and visible queue stay unchanged while this session continues.';
+    }
+    return 'Settings guide room controls and future map choices. They do not change the current map or remove maps already in the visible queue.';
+  }
+
+  settingsOperationLabel(operation) {
+    if (operation.phase === 'failed' || operation.phase === 'refused' || operation.error) return 'Not applied';
+    if (operation.phase === 'cancelled') return 'Cancelled';
+    if (['queued', 'pending'].includes(operation.phase)) return 'Queued';
+    if (operation.phase === 'dispatched') return 'Applying';
+    if (operation.phase === 'applied') {
+      if (operation.application === 'live') return 'Applied live';
+      if (operation.application === 'next_map') return 'Applied for next map';
+      if (operation.application === 'recreate') return 'New session needed';
+      return 'Applied';
+    }
+    return operation.phase || 'Received';
   }
 
   async poll() {
@@ -679,6 +744,7 @@ class BookingPortal {
     const messages = {
       reserved: 'Reserved. The room is preparing.', preparing: 'The room is preparing.',
       ready: 'Room is ready. The owner or designated friend must arrive before the timer ends.',
+      awaiting_claim: 'Room is ready. The owner or designated friend must arrive before the timer ends.',
       active: 'The private lobby is active.', closing: 'The room is closing and cleaning up.', ended: 'This booking has ended.',
       unavailable: 'The room is temporarily unavailable. Please wait for an updated status.',
     };
@@ -808,19 +874,7 @@ class BookingPortal {
       this.renderUnsupportedFilters(container);
       this.settingsRenderKey = renderKey;
     }
-    const dirty = JSON.stringify(this.draft) !== JSON.stringify(this.appliedSettings);
-    const cooldownUntil = number(this.booking.cooldown_until, 0);
-    const now = Date.now() / 1000;
-    const cooldown = Math.max(0, cooldownUntil - now);
-    const latestConfigure = [...(this.booking.operations || [])].reverse().find((item) => item.action === 'configure');
-    const disabled = !dirty || Boolean(this.pendingMutation) || cooldown > 0;
-    byId('apply-settings').disabled = disabled;
-    byId('settings-state').textContent = this.conflict
-      ? 'The server changed. Your draft is retained; review the values before applying.'
-      : cooldown > 0 ? `Shared apply cooldown: ${Math.ceil(cooldown)} seconds`
-        : dirty ? 'Draft has unapplied changes' : ['queued', 'pending', 'dispatched'].includes(latestConfigure?.phase)
-          ? 'Settings queued; waiting for the room' : latestConfigure?.application === 'applied' || latestConfigure?.phase === 'applied'
-            ? 'Settings applied by the room' : 'Draft matches server settings';
+    this.renderSettingsStatus();
   }
 
   addFilterControl(container, key, descriptor, current) {
@@ -897,28 +951,43 @@ class BookingPortal {
     const dirty = JSON.stringify(this.draft) !== JSON.stringify(this.appliedSettings);
     const cooldownUntil = number(this.booking?.cooldown_until, 0);
     const cooldown = Math.max(0, cooldownUntil - Date.now() / 1000);
-    byId('apply-settings').disabled = !dirty || Boolean(this.pendingMutation) || cooldown > 0;
+    const latest = [...(this.booking?.operations || [])].reverse().find((item) => item.action === 'configure');
+    byId('apply-settings').disabled = !dirty || Boolean(this.pendingMutation) || cooldown > 0 || this.conflict;
+    show(byId('reload-settings'), this.conflict);
     byId('settings-state').textContent = this.conflict
       ? 'The server changed. Your draft is retained; review the values before applying.'
-      : cooldown > 0 ? `Shared apply cooldown: ${Math.ceil(cooldown)} seconds`
-        : dirty ? 'Draft has unapplied changes' : this.latestConfigureState();
+      : dirty && cooldown > 0
+        ? `Draft has unapplied changes. Shared apply cooldown: ${Math.ceil(cooldown)} seconds`
+        : dirty ? 'Draft has unapplied changes'
+        : cooldown > 0 && ['queued', 'pending', 'dispatched', 'applied', 'failed', 'cancelled', 'refused'].includes(latest?.phase)
+          ? `${this.settingsOutcomeMessage(latest)} Shared apply cooldown: ${Math.ceil(cooldown)} seconds`
+          : cooldown > 0 ? `Shared apply cooldown: ${Math.ceil(cooldown)} seconds`
+            : this.latestConfigureState();
+    byId('settings-effects').textContent = this.settingsEffectMessage(latest, dirty);
   }
 
   latestConfigureState() {
     const latest = [...(this.booking?.operations || [])].reverse().find((item) => item.action === 'configure');
-    if (['queued', 'pending', 'dispatched'].includes(latest?.phase)) return 'Settings queued; waiting for the room';
-    if (latest?.application === 'applied' || latest?.phase === 'applied') return 'Settings applied by the room';
-    if (latest?.phase === 'refused' || latest?.error) return 'The room refused the latest settings';
-    return 'Draft matches server settings';
+    return this.settingsOutcomeMessage(latest);
   }
 
   applySettings() {
-    if (!this.can('configure') || !this.draft || !this.schema().length || this.pendingMutation) return;
+    if (!this.can('configure') || !this.draft || !this.schema().length || this.pendingMutation || this.conflict) return;
     const payload = this.settingsPayload();
     this.mutate({ path: '/action', method: 'POST', kind: 'configure', body: {
       request_id: makeRequestId(), booking_id: this.booking.id,
       expected_revision: this.booking.revision, action: 'configure', payload,
     } });
+  }
+
+  reloadCurrentSettings() {
+    if (!this.conflict || !this.booking || !this.can('configure')) return;
+    this.draft = structuredClone(this.booking.settings || {});
+    this.appliedSettings = structuredClone(this.booking.settings || {});
+    this.conflict = false;
+    this.settingsRenderKey = null;
+    this.renderSession();
+    byId('settings-controls').querySelector('input, select, button')?.focus?.();
   }
 
   previewSettings() {
@@ -952,8 +1021,10 @@ class BookingPortal {
     for (const operation of operations.slice(-8).reverse()) {
       const row = el('li', 'operation-row');
       const name = String(operation.action || 'Action').replaceAll('_', ' ');
-      const state = operation.application === 'applied' || operation.phase === 'applied'
-        ? 'Applied' : operation.phase === 'queued' ? 'Queued for host' : operation.phase || 'Received';
+      const state = operation.action === 'configure'
+        ? this.settingsOperationLabel(operation)
+        : operation.application === 'applied' || operation.phase === 'applied'
+          ? 'Applied' : operation.phase === 'queued' ? 'Queued for host' : operation.phase || 'Received';
       row.append(el('span', '', name), el('span', 'operation-state', state));
       list.append(row);
     }

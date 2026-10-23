@@ -195,21 +195,21 @@ class PromptFeedbackTests(unittest.TestCase):
         from pathlib import Path
         from bot.standard_pool import StandardPool
         from bot.mania_pool import ManiaPool
-        root=Path(__file__).resolve().parents[1]
-        prepared=root/'validation/owner-pilot/conversion-catalog-qualification/prepared'
+        from full_catalog_fixtures import full_export
         bot=self.ready(self.owner)
         for index,(mode,keys,minimum) in enumerate((('standard',None,100000),('mania4',4,19000),('mania7',7,4000))):
-            path=prepared/mode/'catalog.db'
+            folder=full_export(mode)
+            path=folder/'catalog.db'
             with sqlite3.connect(path.as_uri()+'?mode=ro',uri=True) as db:
                 table='beatmaps' if keys is None else 'maps'
                 self.assertGreater(db.execute('SELECT COUNT(*) FROM '+table).fetchone()[0],minimum)
             options=dict(sr_min=3,sr_max=6,max_length=240,min_passcount=1000,limit=200,
                          ratings_db=bot.ratings.path,ratings_reader=bot.ratings.reader)
             if keys is None:
-                pool=StandardPool(str(path),standard_dt_db=str(prepared/mode/'dt.db'),**options)
+                pool=StandardPool(str(path),standard_dt_db=str(folder/'dt.db'),**options)
             else:
                 pool=ManiaPool(str(path),mania_keys=keys,mania_farm_enabled=True,
-                               mania_farm_db=str(prepared/mode/'farm.db'),**options)
+                               mania_farm_db=str(folder/'farm.db'),**options)
             self.assertTrue(pool.maps)
             bot.last_played_map=pool.maps[0]
             self.now[0]=1001+index*5;self.command(bot,700+index,'.bad')

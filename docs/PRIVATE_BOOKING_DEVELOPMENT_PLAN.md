@@ -1,6 +1,6 @@
 # Self-service private booking — development contract
 
-Status: isolated implementation, donor qualification and release preparation complete. Unpublished v7.3.0 candidate awaits website OAuth configuration, controlled real pilot and publication authorization. No booking feature is deployed or publicly enabled.
+Status: technical acceptance REOPENED. Implementation and an unpublished v7.3.0 candidate exist, but remaining regression classification, real-browser qualification and integrated acceptance must finish before technical completion. See PRIVATE_BOOKING_CLOSEOUT.md. No booking feature is deployed or publicly enabled.
 Source baseline e217ccf / v7.2.13. Authoritative checkout:
 work/validation/private-booking/source. Objective is the complete user attachment
 387a9d87-b6e7-483d-a5d2-063bf318a3d8/pasted-text-1.txt, all ten sections.
@@ -130,13 +130,13 @@ Private statistics continue using existing collector without new disclosure.
 
 ## Isolated acceptance evidence (live acceptance remains pending)
 
-- [x] All requirements in user objective mapped to tests/current code.
+- [ ] All requirements independently audited against current implementation and acceptance evidence (reopened).
 - [x] Concurrent reservation/quota/idempotency/no-show abuse.
 - [x] Host restart/claim/inactivity/gameplay/clock/closure/cleanup/update holds.
 - [x] Ownership/revocation/stale sessions/website and in-game parity.
 - [x] Atomic settings/cooldown/revisions/full catalog/filter support.
 - [x] OAuth/browser/CSRF/private/public status and mixed host versions.
-- [x] Real isolated HTTPS end-to-end and donor installed qualification.
+- [ ] Complete integrated packaged acceptance, real-browser qualification and final donor qualification (partial receipts exist).
 - [x] Reproducible candidate + hashes/docs/rollback/pilot, no publication.
 - [x] Human-required OAuth configuration and live pilot explicitly pending.
 

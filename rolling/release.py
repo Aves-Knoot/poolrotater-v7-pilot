@@ -35,6 +35,7 @@ SHARED += ("poolrotater_host/managed_host/__init__.py", "poolrotater_host/manage
            "poolrotater_host/managed_host/settings.py", "poolrotater_host/managed_host/state.py",
            "poolrotater_host/managed_bootstrap.py")
 SHARED += ("poolrotater_host/discord_relay/fleet.py",)
+SHARED += ("poolrotater_host/managed_host/catalog_rollout.py", "poolrotater_host/managed_host/catalog_fleet.py")
 # Booking ledgers, authorization and lifecycle are controller contracts.
 # A future change cannot silently roll only one worker against older authority.
 SHARED += (

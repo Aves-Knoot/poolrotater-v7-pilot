@@ -34,7 +34,7 @@ class FailedServiceRecoveryTests(unittest.TestCase):
         self.enterContext(patch('poolrotater_host.ratings.operations._identity',side_effect=lambda _:nullcontext()))
         self.wait=self.enterContext(patch('poolrotater_host.update_lifecycle.wait_stopped'))
         self.validation=self.enterContext(patch('poolrotater_host.runtime_lifecycle.validate_runtime',
-            return_value={'release':Path(self.record['release'])}))
+            return_value={'release':Path(self.record['release']), 'manifest':{'files':{}}}))
         self.run=self.enterContext(patch('subprocess.run',return_value=SimpleNamespace(returncode=0)))
         self.enterContext(patch('poolrotater_host.rescue.operations._control',side_effect=lambda path,*a,**kw:
             _control(path,os.geteuid(),**kw)))

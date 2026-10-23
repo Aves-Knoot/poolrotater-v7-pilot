@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Private lobbies</title>
-  <link rel="stylesheet" href="/private-lobbies/static/app.css">
-  <script type="module" src="/private-lobbies/static/app.js"></script>
+  <link rel="stylesheet" href="/private-lobbies/app.css">
+  <script type="module" src="/private-lobbies/app.js"></script>
 </head>
 <body>
   <main class="page-shell">
@@ -37,7 +37,7 @@
       <div class="section-heading">
         <div>
           <p class="eyebrow">New booking</p>
-          <h2 id="reserve-title">Set up your lobby</h2>
+          <h2 id="reserve-title" tabindex="-1">Set up your lobby</h2>
         </div>
       </div>
       <form id="reserve-form" class="form-grid">
@@ -63,7 +63,7 @@
       <div class="section-heading">
         <div>
           <p class="eyebrow" id="session-eyebrow">Private session</p>
-          <h2 id="session-title">Your lobby</h2>
+          <h2 id="session-title" tabindex="-1">Your lobby</h2>
           <p id="session-state" class="lede"></p>
         </div>
         <span id="role-badge" class="role-badge"></span>
@@ -119,10 +119,12 @@
         <div class="section-heading compact-heading">
           <div><h3>Rotation settings</h3><p class="muted">Edits stay as a draft until you apply them.</p></div>
         </div>
+        <p id="settings-effects" class="field-help" role="status" aria-live="polite">Settings guide room controls and future map choices. They do not change the current map or remove maps already in the visible queue.</p>
         <div id="settings-controls" class="settings-grid"></div>
         <div class="settings-footer">
           <span id="settings-state" class="muted" aria-live="polite"></span>
           <button id="preview-settings" class="button button-secondary" type="button">Preview selection</button>
+          <button id="reload-settings" class="button button-secondary" type="button" hidden>Reload current settings</button>
           <button id="apply-settings" class="button" type="button">Apply settings</button>
         </div>
         <div id="preview-result" class="preview-result" role="status" aria-live="polite" hidden></div>

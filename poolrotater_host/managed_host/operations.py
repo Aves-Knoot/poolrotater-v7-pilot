@@ -130,6 +130,9 @@ def tick(instance):
         if job is not None and job.get('phase') not in ('complete','cancelled'):
             return {'ok':True,'phase':'update-in-progress','rooms_started':False,
                     'administration_agent_checked':True}
+        from .catalog_rollout import prepare_pending
+        _,catalog_requests,_=_desired(target['root'],uid)
+        prepare_pending(target,record,catalog_requests)
         service=pilot._service_state(instance)
         if service['MainPID'] or service['ActiveState'] in ('active','activating','deactivating'):
             return {'ok':True,'phase':'controller-running','rooms_started':False}

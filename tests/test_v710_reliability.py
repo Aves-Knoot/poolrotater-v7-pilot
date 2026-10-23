@@ -52,7 +52,11 @@ class IdentityBoundaryTests(unittest.TestCase):
         self.assertEqual(self.native_dump(),before)
         self.assertEqual({e['payload']['user_id']for e in self.events()},{3})
         status=self.collector.status()['identity_exclusions_last_scan']
-        for kind in ('join','presence','match'):self.assertEqual(status[kind],1)
+        # Both owner's and player's distinct join and presence rows were
+        # changed to the internal ID above, so each is counted separately.
+        self.assertEqual(status['join'],2)
+        self.assertEqual(status['presence'],2)
+        self.assertEqual(status['match'],1)
         self.ack();self.collector.collect();self.assertEqual(self.events(),[])
 
     def native_match(self):
@@ -240,7 +244,8 @@ class AdmissionUncertaintyTests(unittest.TestCase):
             patch('poolrotater_host.pilot_operations._service_state',return_value={'MainPID':123}), \
             patch('poolrotater_host.updates.approval.require_upgrade'),patch.object(update,'_write'), \
             patch.object(update,'_rows',side_effect=AssertionError('uncertain admission must not become empty waiting')), \
-            patch.object(update,'_gate')as gate,patch.object(update,'_commit')as commit,patch.object(update,'disarm'):
+            patch.object(update,'_gate')as gate,patch.object(update,'_commit')as commit,patch.object(update,'disarm'), \
+            patch('poolrotater_host.ratings.operations._identity',return_value=nullcontext()):
             result=update.step('fixture')
         self.assertEqual(result['phase'],'held');self.assertEqual(result['failure_stage'],'admission')
         self.assertEqual(result['failure_code'],'update_maintenance_outcome_requires_review')

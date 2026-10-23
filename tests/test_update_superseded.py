@@ -82,7 +82,8 @@ class SupersededAgentTests(UpdateAgentTests):
         self.backend.recover.assert_called_once_with(op,'supersede')
         # A predecessor still polling before the queued controller switches
         # must be able to read the reconciled state without any new enum.
-        with zipfile.ZipFile(Path(__file__).resolve().parents[1]/'inputs/v7.1.11-runtime.zip') as archive:
+        from full_catalog_fixtures import historical_runtime
+        with zipfile.ZipFile(historical_runtime('v7.1.11')) as archive:
             code=archive.read('payload/poolrotater_host/updates/agent.py')
         namespace={'__name__':'poolrotater_host.updates.old_agent_compat','__package__':'poolrotater_host.updates'}
         exec(compile(code,'verified_predecessor_agent.py','exec'),namespace)

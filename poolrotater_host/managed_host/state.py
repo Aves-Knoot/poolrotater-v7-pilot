@@ -392,7 +392,7 @@ class State:
             if old:
                 require(old['digest']==pin,'managed_operation_conflict',409)
                 return self._receipt(old)
-            require(now<value['expires_at']<=now+1800,'operation_expired',409)
+            require(now<value['expires_at']<=now+(7*86400 if value['action']=='catalog' else 1800),'operation_expired',409)
             room=self._room(db,value['alias'])
             require(room['revision']==value['expected_revision'],'configuration_revision_changed',409)
             require(room['room_generation']==value['expected_room_generation'],'room_generation_changed',409)
@@ -441,7 +441,8 @@ class State:
                 db.execute("UPDATE rooms SET phase='applying' WHERE alias=?",(op['alias'],))
             else:
                 desired='stopped' if value['action']=='close' else 'running' if value['action'] in ('open','restart') else room['desired']
-                settings=merge(json.loads(room['config']),value['patch'])
+                settings=(json.loads(room['config']) if value['action']=='catalog'
+                          else merge(json.loads(room['config']),value['patch']))
                 revision=room['revision']+int(value['action'] in ('open','close','restart','configure'))
                 db.execute("UPDATE operations SET phase='applying',desired_before=?,revision_after=?,previous_config=?,changed=? WHERE id=?",
                            (room['desired'],revision,room['config'],self.clock(),id))
@@ -490,8 +491,10 @@ class State:
     def _finish(self,db,op,phase,error,result):
         # Result is a fixed controller projection; never serialize arbitrary errors,
         # configuration/passwords or provider bodies into public telemetry.
-        require(result is None or type(result) is dict and not set(result)-{'room_id','revision','application'},'invalid_managed_result')
+        require(result is None or type(result) is dict and not set(result)-{'room_id','revision','application','catalog_content_id','catalog_set_id'},'invalid_managed_result')
         if result is not None:
+            for key in ('catalog_content_id','catalog_set_id'):
+                if key in result:require(type(result[key]) is str and re.fullmatch('[a-f0-9]{64}',result[key]) is not None,'invalid_managed_result')
             if 'room_id' in result and result['room_id'] is not None:integer(result['room_id'],1,2**63-1)
             if 'revision' in result:integer(result['revision'],0,2**53-1)
             if 'application' in result:require(result['application'] in ('live','next_map','recreate','lifecycle','inspect','cancel'),'invalid_managed_result')

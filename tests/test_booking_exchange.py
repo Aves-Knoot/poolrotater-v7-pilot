@@ -353,3 +353,54 @@ def test_no_policy_is_inert_and_legacy_unknown_route_maps_to_upgrade_required(tm
     result = Agent(legacy, clock=Clock()).step()
     assert result['phase'] == 'hub-upgrade-required'
     assert result['live_rooms_affected'] is False
+
+
+def test_tls_cached_creation_lease_is_retired_only_after_confirmed_cleanup(hub, tmp_path):
+    import json
+    from poolrotater_host.bookings.hub import Repository as HubBookingRepository
+    host_root = tmp_path / 'host'
+    setup_agent_root(host_root)
+    managed = ManagedState({'host_id': hub['host_id'], **hub['binding']})
+    client = HostClient(host_root, managed.binding, hub['host_id'], hub['token'],
+                        hub['transport'], managed)
+    local = LocalSessions(host_root, managed.binding, clock=hub['clock'])
+    agent = Agent(client, store=local, clock=hub['clock'])
+    assert agent.step()['phase'] == 'connected'
+    publish_stopped_private_managed_report(hub)
+    repository = HubBookingRepository(hub['store'])
+    ledger = repository.ledger
+    ledger.eligibility = lambda host_id, alias: {
+        **managed.binding, 'fresh': True, 'supported': True,
+        'effective_limit': 4, 'capacity_used': 0, 'observed_booking_ids': [],
+        'supported_presets': ['standard-fixed']}
+    ledger.configure_slot('retired-slot', hub['host_id'], 'room1', 'Private slot',
+                          ['standard-fixed'], {'sr_min': 1, 'sr_max': 10}, enabled=True)
+    booking = ledger.reserve(1001, str(uuid.uuid4()), 'retired-slot', 'standard-fixed', {})
+    assert agent.step()['phase'] == 'connected'
+    with transaction(repository.path) as db:
+        report = dict(db.execute('SELECT * FROM reports WHERE host=?', (hub['host_id'],)).fetchone())
+    assert booking['password'] in report['response']
+    accepted = json.loads(report['payload'])
+    replay = hub['transport'].request('POST', '/v1/hosts/self/bookings',
+                                       body=accepted, token=hub['token'])
+    assert replay['leases'][0]['password'] == booking['password']
+
+    terminal = {
+        'sequence': 1, 'phase': 'ended', 'room_id': None, 'incarnation': None,
+        'roster': [], 'roster_known': True, 'updated_at': hub['clock'](),
+        'ready': False, 'closed': True, 'effective_settings': {},
+        'cleanup_complete': False, 'ownership_known': True, 'operation_receipts': [],
+        'installation_id':hub['binding']['installation_id'], 'generation':hub['binding']['generation'],
+        'session_generation': booking['session_generation'], 'alias': 'room1'}
+    # An unconfirmed cleanup must retain both capacity and exact replay material.
+    ledger.observe(hub['host_id'], booking['id'], terminal)
+    assert hub['transport'].request('POST', '/v1/hosts/self/bookings',
+                                    body=accepted, token=hub['token']) == replay
+    terminal.update(sequence=2, cleanup_complete=True)
+    ledger.observe(hub['host_id'], booking['id'], terminal)
+    retired = hub['transport'].request('POST', '/v1/hosts/self/bookings',
+                                       body=accepted, token=hub['token'])
+    assert retired == {**replay, 'leases': [], 'commands': []}
+    with transaction(repository.path) as db:
+        stored = db.execute('SELECT response FROM reports WHERE host=?', (hub['host_id'],)).fetchone()['response']
+    assert booking['password'] not in stored

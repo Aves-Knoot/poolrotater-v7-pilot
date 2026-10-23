@@ -168,6 +168,37 @@ def test_roster_player_grant_applies_after_ack_and_revoke_is_immediate(tmp_path)
     assert receipts[controller_action['operation_id']]['origin'] == 'local'
 
 
+def test_pending_grant_revoke_cancels_dispatch_and_pins_late_ack(tmp_path):
+    local, clock, row = make_local(tmp_path)
+    booking_id = row['lease']['id']
+    local.advance(booking_id, observation(clock.value, players=[OWNER, FRIEND]))
+    grant = local.receive(command(row, 'grant', sequence=0, payload={'user_id': FRIEND}))
+    assert local.pending(booking_id)[0]['operation_id'] == grant['operation_id']
+
+    revoke = local.receive(command(row, 'revoke', sequence=1,
+                                   payload={'user_id': FRIEND}))
+    assert revoke['phase'] == 'pending'
+    assert local.authorize(booking_id, FRIEND, 'configure') is False
+    assert [item['operation_id'] for item in local.pending(booking_id)] == [revoke['operation_id']]
+
+    late = local.acknowledge(grant['operation_id'], 'applied',
+                             application={'role': 'controller'})
+    assert late['phase'] == 'cancelled'
+    assert local.authorize(booking_id, FRIEND, 'configure') is False
+    with pytest.raises(NetworkError) as conflict:
+        local.acknowledge(grant['operation_id'], 'failed', error='native_rejected')
+    assert conflict.value.code == 'operation_receipt_conflict'
+
+
+def test_duplicate_pending_grant_is_rejected(tmp_path):
+    local, clock, row = make_local(tmp_path)
+    local.advance(row['lease']['id'], observation(clock.value, players=[OWNER, FRIEND]))
+    first = local.receive(command(row, 'grant', sequence=0, payload={'user_id': FRIEND}))
+    duplicate = local.receive(command(row, 'grant', sequence=1, payload={'user_id': FRIEND}))
+    assert first['phase'] == 'pending'
+    assert (duplicate['phase'], duplicate['error']) == ('failed', 'invalid_controller')
+
+
 def test_configure_commits_only_after_applied_ack_and_enforces_cooldown(tmp_path):
     local, clock, row = make_local(tmp_path)
     first = command(row, 'configure', sequence=0, payload={'sr_min': 4.0})

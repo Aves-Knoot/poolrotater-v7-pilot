@@ -17,9 +17,10 @@ from poolrotater_host.network.projection import project
 from poolrotater_host.network.display import room_v2
 from rolling.worker import make_worker_pool
 
+from full_catalog_fixtures import full_export, loved_source, historical_runtime
 BASE=Path(__file__).resolve().parents[1]
-FULL_SOURCE=BASE/'inputs/loved-source.db'
-FULL_BUNDLE=BASE/'prepared/loved'
+FULL_SOURCE=loved_source()
+FULL_BUNDLE=full_export('loved')
 
 class LovedExportTests(unittest.TestCase):
  @classmethod
@@ -114,8 +115,8 @@ class LovedSignedStoreTests(unittest.TestCase):
   cls.bundles={m:Path.cwd()/'validation/owner-pilot/conversion-catalog-qualification/prepared'/m for m in ('standard','mania4','mania7')}
   # Existing prepared fixtures lack their archived manifests; use verified public
   # exports copied once into isolated inputs by the preparation step instead.
-  cls.bundles={m:BASE/'inputs'/m for m in ('standard','mania4','mania7')}
-  cls.bundles['catch']=BASE/'inputs/catch'
+  cls.bundles={m:full_export(m) for m in ('standard','mania4','mania7')}
+  cls.bundles['catch']=full_export('catch')
   cls.bundles['loved']=FULL_BUNDLE
   cls.feed={'format':1,'revision':2,'events':[{'kind':'beatmap','id':1549496,'modes':['standard','mania4','mania7','loved'],'action':'exclude','reason':'missing_audio','memberships':{}}]}
   cls.result=Publisher(cls.base/'signers').publish(cls.bundles,exclusions=cls.feed)
@@ -192,7 +193,13 @@ class LovedDeliveryAndCompatibilityTests(LovedSignedStoreTests):
    self.assertLess(server.bytes_sent-before,32768)
  def test_previous_release_reads_standard_and_catch_with_loved_published(self):
   import subprocess,sys
-  old=BASE.parent/'roster-recovery725/source'
+  old=self.base/'verified-old-reader'
+  import zipfile
+  with zipfile.ZipFile(historical_runtime('v7.2.5')) as archive:
+   for member in archive.namelist():
+    relative=Path(member)
+    if member.startswith('payload/poolrotater_host/') and '..' not in relative.parts and not member.endswith('/'):
+     destination=old/Path(*relative.parts[1:]);destination.parent.mkdir(parents=True,exist_ok=True);destination.write_bytes(archive.read(member))
   code="""import sys,json
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
@@ -218,7 +225,7 @@ class LovedPublicationPermissionsTests(unittest.TestCase):
    root=Path(folder);previous=os.umask(0o077)
    try:
     initialize(root/'signers',root/'public')
-    bundles={m:BASE/'inputs'/m for m in ('standard','mania4','mania7','catch')};bundles['loved']=FULL_BUNDLE
+    bundles={m:full_export(m) for m in ('standard','mania4','mania7','catch')};bundles['loved']=FULL_BUNDLE
     result=Publisher(root/'signers').publish(bundles)
    finally:os.umask(previous)
    self.assertEqual(stat.S_IMODE((root/'signers').stat().st_mode),0o700)

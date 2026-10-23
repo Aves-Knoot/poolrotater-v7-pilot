@@ -1,6 +1,8 @@
 """Focused isolated tests for the private booking ledger."""
 import json
+import sqlite3
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -154,6 +156,91 @@ def test_owner_controller_permissions_and_live_roster_grant_ack(tmp_path):
     assert denied.value.status == 403
 
 
+def test_pending_grant_can_be_revoked_and_late_ack_stays_cancelled(tmp_path):
+    repo, clock, _ = make_repo(tmp_path)
+    booking = reserve(repo)
+    repo.observe(HOST, booking['id'], observation(booking, clock,
+                 roster=[{'user_id': 11, 'username': 'friend'}]))
+    grant = repo.submit(booking['id'], 10, str(uuid.uuid4()), 'grant',
+                        {'user_id': 11}, 1)
+    revoke = repo.submit(booking['id'], 10, str(uuid.uuid4()), 'revoke',
+                         {'user_id': 11}, 2)
+
+    with pytest.raises(NetworkError) as denied:
+        repo.view(booking['id'], 11)
+    assert denied.value.status == 403
+    assert [item['operation_id'] for item in repo.pending(HOST)] == [revoke['id']]
+
+    late = {'operation_id': grant['id'], 'booking_id': booking['id'],
+            'session_generation': booking['session_generation'], 'alias': 'room1',
+            'phase': 'applied'}
+    assert repo.observe_receipts(HOST, [late]) == {'accepted': 0}
+    with pytest.raises(NetworkError) as conflict:
+        repo.observe_receipts(HOST, [{**late, 'phase': 'failed'}])
+    assert conflict.value.code == 'operation_receipt_conflict'
+    with pytest.raises(NetworkError):
+        repo.view(booking['id'], 11)
+
+
+def test_duplicate_pending_grant_is_rejected(tmp_path):
+    repo, clock, _ = make_repo(tmp_path)
+    booking = reserve(repo)
+    repo.observe(HOST, booking['id'], observation(booking, clock,
+                 roster=[{'user_id': 11, 'username': 'friend'}]))
+    repo.submit(booking['id'], 10, str(uuid.uuid4()), 'grant', {'user_id': 11}, 1)
+    with pytest.raises(NetworkError) as duplicate:
+        repo.submit(booking['id'], 10, str(uuid.uuid4()), 'grant', {'user_id': 11}, 2)
+    assert duplicate.value.code == 'invalid_controller'
+
+
+def test_owner_can_retry_end_after_lost_reply_and_terminal_role_cleanup(tmp_path):
+    repo, clock, _ = make_repo(tmp_path)
+    booking = reserve(repo)
+    repo.observe(HOST, booking['id'], observation(booking, clock))
+    request_id = str(uuid.uuid4())
+    ending = repo.submit(booking['id'], 10, request_id, 'end', {}, 1)
+    repo.observe(HOST, booking['id'], observation(
+        booking, clock, sequence=2, phase='ended', room_id=None, incarnation=None,
+        ready=False, closed=True, cleanup_complete=True,
+        operation_receipts=[{'operation_id': ending['id'], 'phase': 'applied'}]))
+    with repo._transaction() as db:
+        db.execute("UPDATE bookings SET role_data='{}' WHERE id=?", (booking['id'],))
+
+    retry = repo.submit(booking['id'], 10, request_id, 'end', {}, 1)
+    assert retry['id'] == ending['id'] and retry['phase'] == 'applied'
+
+
+def test_concurrent_identical_reservations_return_one_durable_operation(tmp_path):
+    repo, clock, _ = make_repo(tmp_path)
+    second_handle = Repository(repo.root, clock=clock, eligibility=repo.eligibility)
+    request_id = str(uuid.uuid4())
+    args = (10, request_id, 'slot-a', 'standard-auto', {'sr_min': 2})
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda index: (repo if index % 2 else second_handle).reserve(*args),
+                                range(8)))
+    assert all(result == results[0] for result in results)
+
+
+def test_competing_reservations_atomically_allocate_a_slot_once(tmp_path):
+    repo, clock, _ = make_repo(tmp_path, capacity=4)
+    repo.configure_slot('slot-b', HOST, 'room2', 'Pool B', ['standard-auto'],
+                        {'sr_min': 1, 'sr_max': 5}, enabled=True)
+    second_handle = Repository(repo.root, clock=clock, eligibility=repo.eligibility)
+
+    def attempt(index):
+        handle = repo if index % 2 else second_handle
+        try:
+            return handle.reserve(index + 100, str(uuid.uuid4()), 'slot-a',
+                                  'standard-auto', {'sr_min': 2})['id']
+        except NetworkError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        outcomes = list(pool.map(attempt, range(8)))
+    assert sum(item not in ('slot_unavailable',) for item in outcomes) == 1
+    assert outcomes.count('slot_unavailable') == 7
+
+
 def test_revoked_controller_cannot_replay_private_operation_response(tmp_path):
     repo, clock, _ = make_repo(tmp_path)
     booking = reserve(repo)
@@ -177,6 +264,14 @@ def test_failed_or_incomplete_closure_keeps_slot_and_terminal_hides_credentials(
                          cleanup_complete=False)
     repo.observe(HOST, booking['id'], failed)
     assert repo.view(booking['id'], 10)['phase'] == 'unavailable'
+    with repo._transaction() as db:
+        row = db.execute('SELECT password,lease_envelope FROM bookings WHERE id=?',
+                         (booking['id'],)).fetchone()
+        cached, = db.execute('SELECT response FROM requests WHERE booking_id=?',
+                             (booking['id'],)).fetchone()
+    assert row['password'] == booking['password']
+    assert json.loads(row['lease_envelope'])['password'] == booking['password']
+    assert json.loads(cached)['password'] == booking['password']
     with pytest.raises(NetworkError):
         repo.reserve(11, str(uuid.uuid4()), 'slot-a', 'standard-auto', {})
     closed = observation(booking, clock, sequence=2, phase='ended', room_id=None,
@@ -185,6 +280,91 @@ def test_failed_or_incomplete_closure_keeps_slot_and_terminal_hides_credentials(
     terminal = repo.view(booking['id'], 10)
     assert terminal['phase'] == 'ended'
     assert terminal['password'] is None and terminal['join_url'] is None
+    with repo._transaction() as db:
+        row = db.execute('SELECT password,lease_envelope,room_id,incarnation,role_data,observation '
+                         'FROM bookings WHERE id=?', (booking['id'],)).fetchone()
+        cached, = db.execute('SELECT response FROM requests WHERE booking_id=?',
+                             (booking['id'],)).fetchone()
+    assert row['password'] == '' and row['lease_envelope'] is None
+    assert row['room_id'] is None and row['incarnation'] is None and row['role_data'] == '{}'
+    assert json.loads(row['observation'])['roster'] == []
+    assert json.loads(cached)['password'] is None
+
+
+def test_end_replay_is_terminal_and_scrubs_session_material_before_alias_reuse(tmp_path):
+    repo, clock, _ = make_repo(tmp_path)
+    request_id = str(uuid.uuid4())
+    original = repo.reserve(10, request_id, 'slot-a', 'standard-auto', {'sr_min': 2})
+    private_map = {'beatmap_id': 123, 'label': 'Private map', 'stars': 4.5,
+                   'hit_length': 120}
+    repo.observe(HOST, original['id'], observation(
+        original, clock, roster=[{'user_id': 10, 'username': 'Owner'},
+                                 {'user_id': 11, 'username': 'Friend'}],
+        current_map=private_map, queue=[private_map], queue_known=True))
+    grant = repo.submit(original['id'], 10, str(uuid.uuid4()), 'grant',
+                        {'user_id': 11}, repo.view(original['id'], 10)['revision'])
+    repo.pending(HOST)
+    repo.observe(HOST, original['id'], observation(
+        original, clock, sequence=2,
+        roster=[{'user_id': 10, 'username': 'Owner'},
+                {'user_id': 11, 'username': 'Friend'}],
+        current_map=private_map, queue=[private_map], queue_known=True,
+        operation_receipts=[{'operation_id': grant['id'], 'phase': 'applied'}]))
+    assert repo.view(original['id'], 11)['role'] == 'controller'
+
+    # Invites live in the portal's separate private browser ledger.
+    browser_path = repo.root / 'booking-browser.sqlite3'
+    with sqlite3.connect(browser_path) as db:
+        db.execute('''CREATE TABLE join_invites(
+            token TEXT PRIMARY KEY,booking TEXT NOT NULL,owner INTEGER NOT NULL,
+            expires REAL NOT NULL,revoked INTEGER NOT NULL)''')
+        db.execute('INSERT INTO join_invites VALUES(?,?,?,?,0)',
+                   ('invite-digest', original['id'], 10, clock.value + 1800))
+    browser_path.chmod(0o600)
+
+    ended = observation(original, clock, sequence=3, phase='ended', room_id=None,
+                        incarnation=None, roster=[], roster_known=True, ready=False,
+                        closed=True, cleanup_complete=True, ownership_known=True)
+    repo.observe(HOST, original['id'], ended)
+    with repo._transaction() as db:
+        row = db.execute('SELECT password,lease_envelope,room_id,incarnation,role_data,observation '
+                         'FROM bookings WHERE id=?', (original['id'],)).fetchone()
+        operations = db.execute('SELECT action,payload,envelope FROM operations '
+                                'WHERE booking_id=?', (original['id'],)).fetchall()
+        cached, = db.execute('SELECT response FROM requests WHERE booking_id=?',
+                             (original['id'],)).fetchone()
+    assert row['password'] == '' and row['lease_envelope'] is None
+    assert row['room_id'] is None and row['incarnation'] is None and row['role_data'] == '{}'
+    observation_data = json.loads(row['observation'])
+    assert observation_data['roster'] == []
+    assert observation_data['current_map'] is None and observation_data['queue'] == []
+    assert all(json.loads(item['payload']) == {} and json.loads(item['envelope']) == {}
+               for item in operations)
+    assert not any('Private map' in item or 'Friend' in item for item in
+                   (row['observation'], row['role_data'], row['lease_envelope'] or ''))
+    with sqlite3.connect(browser_path) as db:
+        assert db.execute('SELECT COUNT(*) FROM join_invites WHERE booking=?',
+                          (original['id'],)).fetchone()[0] == 0
+    cached_response = json.loads(cached)
+    assert cached_response['id'] == original['id']
+    assert cached_response['phase'] == 'ended'
+    assert cached_response['password'] is None and cached_response['join_url'] is None
+    assert cached_response['players'] == [] and cached_response['current_map'] is None
+    assert cached_response['queue'] == []
+
+    retry = repo.reserve(10, request_id, 'slot-a', 'standard-auto', {'sr_min': 2})
+    assert retry['id'] == original['id'] and retry['phase'] == 'ended'
+    assert retry['password'] is None and retry['join_url'] is None
+    assert retry['players'] == [] and retry['current_map'] is None and retry['queue'] == []
+    with pytest.raises(NetworkError) as conflict:
+        repo.reserve(10, request_id, 'slot-a', 'standard-auto', {'sr_min': 3})
+    assert conflict.value.code == 'idempotency_conflict'
+
+    reused = repo.reserve(20, str(uuid.uuid4()), 'slot-a', 'standard-auto', {})
+    assert reused['id'] != original['id']
+    retry_after_reuse = repo.reserve(10, request_id, 'slot-a', 'standard-auto', {'sr_min': 2})
+    assert retry_after_reuse['id'] == original['id']
+    assert retry_after_reuse['phase'] == 'ended' and retry_after_reuse['password'] is None
 
 
 def test_ended_owner_can_read_only_terminal_receipt_after_role_cleanup(tmp_path):
@@ -295,6 +475,14 @@ def test_cancelled_dispatched_action_late_receipt_is_recorded_without_restoring_
     assert denied.value.status == 403
     op = next(item for item in repo.view(booking['id'], 10)['operations'] if item['id'] == skip['id'])
     assert op['phase'] == 'cancelled'
+    conflicting_late = observation(booking, clock, sequence=4,
+                                   roster=[{'user_id': 11, 'username': 'friend'}],
+                                   operation_receipts=[{'operation_id': skip['id'],
+                                                        'phase': 'failed',
+                                                        'error': 'provider_failure'}])
+    with pytest.raises(NetworkError) as conflict:
+        repo.observe(HOST, booking['id'], conflicting_late)
+    assert conflict.value.code == 'operation_receipt_conflict'
 
 
 def test_invalid_late_receipt_does_not_advance_observation_and_error_is_redacted(tmp_path):

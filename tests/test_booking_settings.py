@@ -66,3 +66,15 @@ def test_booking_only_patch_still_validates_merged_native_combinations():
     current = {'preset': 'standard-fixed', 'required_mods': ['HD'], 'dt_mode': 'mixed'}
     refused({'selection_filters': {'length': {'min': 0, 'max': 120, 'mode': 'prefer'}}},
             current=current)
+
+
+@pytest.mark.parametrize('preset', [
+    'standard-auto', 'standard-fixed', 'standard-loved',
+    'mania-4k', 'mania-7k', 'catch-fixed'])
+def test_booking_settings_do_not_recreate_room_or_change_ruleset_mid_session(preset):
+    from poolrotater_host.managed_host.settings import RECREATE
+    schema = inventory(preset)
+    assert not set(schema['fields']) & RECREATE
+    assert set(schema['application'].values()) <= {'live', 'next_map'}
+    for forbidden in ('preset', 'ruleset_id', 'visibility', 'password', 'room_name'):
+        refused({forbidden: 'invented replacement'}, preset=preset)

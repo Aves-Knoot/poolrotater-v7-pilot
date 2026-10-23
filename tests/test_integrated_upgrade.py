@@ -35,7 +35,8 @@ class IntegratedUpgradeTests(unittest.TestCase):
         # grants and all executable policy code against the exact public base.
         import ast,zipfile
         from pathlib import Path
-        baseline=Path(__file__).resolve().parents[1]/'validation/baseline-v7.1.20.zip'
+        from full_catalog_fixtures import historical_runtime
+        baseline=historical_runtime('v7.1.20')
         with zipfile.ZipFile(baseline)as archive:
             before=ast.parse(archive.read('payload/poolrotater_host/integrated_upgrade.py'))
         after=ast.parse(Path(integrated_upgrade.__file__).read_bytes())
@@ -43,9 +44,26 @@ class IntegratedUpgradeTests(unittest.TestCase):
             node=next(n for n in tree.body if isinstance(n,ast.Assign) and any(
                 isinstance(t,ast.Name) and t.id=='REVIEWED_TRANSITIONS' for t in n.targets))
             pairs=ast.literal_eval(node.value);tree.body.remove(node)
+            for extra in list(tree.body):
+                if isinstance(extra,ast.AugAssign) and isinstance(extra.target,ast.Name) and extra.target.id=='REVIEWED_TRANSITIONS':
+                    self.assertIsInstance(extra.op,ast.Add)
+                    additions=ast.literal_eval(extra.value)
+                    self.assertIsInstance(additions,tuple)
+                    for pair in additions:
+                        self.assertEqual(len(pair),2)
+                        for endpoint in pair:
+                            self.assertEqual(set(endpoint),{'shared','storage'})
+                            for group in endpoint.values():
+                                self.assertIsInstance(group,dict)
+                                for digest in group.values():
+                                    self.assertRegex(digest,r'^[0-9a-f]{64}$')
+                    pairs+=additions;tree.body.remove(extra)
             return pairs,ast.dump(tree,include_attributes=False)
         old_pairs,old_code=split(before);new_pairs,new_code=split(after)
-        self.assertEqual(new_pairs[:len(old_pairs)],old_pairs)
+        # Reviewed sets may be reordered by later frozen releases; membership
+        # and executable policy are invariant, not tuple insertion order.
+        for pair in old_pairs:
+            self.assertIn(pair,new_pairs)
         self.assertEqual(new_code,old_code)
         with self.assertRaises(ConfigError):
             require_repair_compatible(self.before, self.after)

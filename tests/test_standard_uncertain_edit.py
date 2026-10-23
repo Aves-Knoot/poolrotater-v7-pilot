@@ -12,8 +12,9 @@ import test_standard_dt as fixtures
 class UncertainStandardEditTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        folder=Path(__file__).resolve().parents[1]
-        manifest=json.loads((folder/'catalog-manifest.json').read_text());files={entry['role']:entry for entry in manifest['files']}
+        from full_catalog_fixtures import full_export
+        folder=full_export('standard')
+        manifest=json.loads((folder/'manifest.json').read_text());files={entry['role']:entry for entry in manifest['files']}
         assert files['catalog']['tables']['beatmaps']>100000 and files['dt']['tables']['dt_maps']>100000
         for item in files.values():assert hashlib.sha256((folder/item['name']).read_bytes()).hexdigest()==item['sha256']
         cls.pool=StandardPool(str(folder/files['catalog']['name']),standard_dt_db=str(folder/files['dt']['name']),

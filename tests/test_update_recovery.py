@@ -44,6 +44,10 @@ class ControllerRecoveryTests(unittest.TestCase):
   self.enterContext(patch.object(recovery,'_write',side_effect=atomic_json))
   self.enterContext(patch.object(native,'_write',side_effect=atomic_json))
   self.enterContext(patch.object(recovery,'_upgrade',side_effect=lambda *args:self.upgrade))
+  # This suite qualifies root orchestration with fake systemd/registration.
+  # The managed migration's protected-root installer is separately exercised
+  # in installed qualification, not via a user-owned temporary directory.
+  self.managed_prepare=self.enterContext(patch('poolrotater_host.managed_host.upgrade.prepare',return_value=None))
   self.approval=self.enterContext(patch.object(recovery,'_approval'))
   self.fresh=self.enterContext(patch.object(recovery,'_fresh_running',return_value={'room1':{'players':2}}))
   self.gate=self.enterContext(patch.object(native,'_gate'))
@@ -58,7 +62,8 @@ class ControllerRecoveryTests(unittest.TestCase):
   self.ready=self.enterContext(patch('poolrotater_host.pilot_operations._wait_ready'))
   self.stopped=self.enterContext(patch('poolrotater_host.pilot_installation._stopped',side_effect=lambda *a:nullcontext()))
   self.enterContext(patch('poolrotater_host.pilot_installation.require_no_service_processes'))
-  def start(instance,action):
+  def start(instance,action,*,preserve_managed_intent,admission_held):
+   self.assertTrue(preserve_managed_intent);self.assertTrue(admission_held)
    self.assertEqual(action,'start');self.service.update(MainPID=222,ActiveState='active');return {'ok':True}
   self.lifecycle=self.enterContext(patch('poolrotater_host.pilot_operations.lifecycle',side_effect=start))
   def finish(*a,**kw):
@@ -172,7 +177,8 @@ class ControllerRecoveryTests(unittest.TestCase):
   self.assert_no_lifecycle()
  def test_recovered_start_may_materialize_only_expected_new_version(self):
   path=self.versioned_room('7.0.6');self.service.update(MainPID=0,ActiveState='inactive')
-  def start(*args):
+  def start(*args,**kwargs):
+   self.assertEqual(kwargs,{'preserve_managed_intent':True,'admission_held':True})
    atomic_json(path,{'version':'7.0.8','countdown_seconds':23,'admins':[888]})
    self.service.update(MainPID=222,ActiveState='active');return{'ok':True}
   self.lifecycle.side_effect=start

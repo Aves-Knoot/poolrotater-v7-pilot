@@ -538,7 +538,7 @@ class LocalSessions:
                                 0 <= now - row['roster_updated_at'] <= 30)
                 require(roster_fresh and any(p['user_id'] == target for p in roster),
                         'player_not_in_roster', 409)
-                require(roles.get(str(target)) not in ('owner', 'controller'),
+                require(roles.get(str(target)) not in ('owner', 'controller', 'grant_pending'),
                         'invalid_controller', 409)
                 roles[str(target)] = 'grant_pending'
                 db.execute('UPDATE host_bookings SET roles=? WHERE booking_id=?',
@@ -662,6 +662,11 @@ class LocalSessions:
                              (operation_id,)).fetchone()
             require(row is not None, 'operation_not_found', 404)
             if row['phase'] == 'cancelled' and row['acknowledgement_hash'] is None:
+                # Cancellation remains authoritative when a dispatched native
+                # action returns late. Pin the late result for idempotency, but
+                # never turn the cancelled operation back into an applied one.
+                db.execute('UPDATE host_commands SET acknowledgement_hash=? WHERE operation_id=?',
+                           (ack_hash, operation_id))
                 return self._receipt(row)
             if row['phase'] in ('applied', 'failed', 'cancelled'):
                 require(row['acknowledgement_hash'] == ack_hash, 'operation_receipt_conflict', 409)
