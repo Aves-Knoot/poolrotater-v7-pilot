@@ -27,7 +27,7 @@ def route(value):
         raise ConfigError('catalog_route_refused')
     if re.fullmatch(r'metadata/(timestamp\.json|[1-9][0-9]{0,9}\.(root|targets|snapshot|timestamp)\.json)',name):
         return name,ROOT_LIMIT if name.endswith('.root.json') else METADATA_LIMIT
-    if re.fullmatch(r'targets/([a-f0-9]{64}\.exclusions(?:-v2|-loved)?\.json|(standard|mania4|mania7|catch|loved)/[a-f0-9]{64}\.(manifest\.json|bundle\.tar\.gz|catalog\.db|dt\.db|farm\.db|converts\.db))',name):
+    if re.fullmatch(r'targets/([a-f0-9]{64}\.exclusions(?:-v2|-loved|-taiko)?\.json|(standard|mania4|mania7|catch|loved|taiko)/[a-f0-9]{64}\.(manifest\.json|bundle\.tar\.gz|catalog\.db|dt\.db|farm\.db|converts\.db))',name):
         return name,MAX_FILE
     raise ConfigError('catalog_route_refused')
 

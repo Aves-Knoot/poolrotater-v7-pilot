@@ -33,7 +33,7 @@ from .managed_host.settings import ROOM_JSON_LIMIT,HOST_JSON_LIMIT
 def default_room_title(preset):
     return {'standard-auto':'AutoHost|Type .help|', 'standard-fixed':'AutoHost|Type .help|',
             'mania-4k':'AutoHost 4K|Type .help|', 'mania-7k':'AutoHost 7K|Type .help|',
-            'catch-fixed':'PoolRotater | Catch', 'standard-loved':'AutoHost Loved|Type .help|'}[preset]
+            'catch-fixed':'PoolRotater | Catch', 'taiko-fixed':'AutoHost Taiko|Type .help|', 'taiko-auto':'AutoHost Taiko|Type .help|', 'standard-loved':'AutoHost Loved|Type .help|'}[preset]
 
 
 def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=None, _preparation=None) -> dict:
@@ -106,6 +106,7 @@ def render(root: Path, *, account_id=None, room_alias=None, catalog_reference=No
             'farm_db': catalog if spec['ruleset'] == 0 else '',
             'mania_db': catalog if spec['ruleset'] == 3 else '',
             **({'catch_catalog': catalog} if spec['ruleset'] == 2 else {}),
+            **({'taiko_catalog': catalog} if spec['ruleset'] == 1 else {}),
             'loved_db': catalog if room['preset']=='standard-loved' else '', 'loved_mode': room['preset']=='standard-loved', 'mania_farm_db': '',
             'mania_farm_enabled': False, 'mania_convert_db': '',
             'max_length': 240, 'min_passcount': 0 if room['preset']=='standard-loved' else 1000, 'pool_limit': 200,
@@ -234,7 +235,7 @@ def validate_room_data(data: dict, base: dict):
     if (base['ruleset_id'] in (2, 3) or base.get('loved_mode')) and data.get('auto_difficulty', False):
         raise ConfigError('Catch and Mania require fixed difficulty')
     owner_integrations.validate_settings({k:v for k,v in data.items() if k in EDITABLE_STAFF}, set())
-    preset = ('mania-' + str(base['mania_keys']) + 'k') if base['ruleset_id'] == 3 else 'catch-fixed' if base['ruleset_id'] == 2 else 'standard-loved' if base.get('loved_mode') else 'standard-auto'
+    preset = ('mania-' + str(base['mania_keys']) + 'k') if base['ruleset_id'] == 3 else ('taiko-auto' if base.get('auto_difficulty') else 'taiko-fixed') if base['ruleset_id']==1 else 'catch-fixed' if base['ruleset_id'] == 2 else 'standard-loved' if base.get('loved_mode') else 'standard-auto'
     validate_settings({k: v for k, v in data.items() if k in GAMEPLAY_KEYS}, preset=preset)
     if base['ruleset_id'] == 2:
         from bot.mode import validate_catch_config

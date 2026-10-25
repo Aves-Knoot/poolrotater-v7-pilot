@@ -38,19 +38,27 @@ code file and reports fixed paths. It reads no TLS key, OAuth token or private
 player database. Staging requires the sealed artifact digest, explicit existing
 public owner account ID, old inventory digest and a fresh private destination:
 
+Set these paths to the reviewed runtime archive and a new private destination
+on the maintainer workstation before running the staging command:
+
+```bash
+reviewed_runtime=/path/to/qualified-v7.1.0-runtime.zip
+transition_destination=/path/to/new-private-hub-transition
+```
+
 ```bash
 nice -n 15 /usr/bin/python3.12 -I -S -B scripts/prepare_v71_hub_transition.py stage \
-  --runtime /root/poolrotater-v7.0/validation/v7.1.0-release-final2/runtime.zip \
+  --runtime "$reviewed_runtime" \
   --runtime-sha256 8c0971747c77a22a992749a6171363d60eb4a3bdc5f87460c55f88d881a21d35 \
-  --destination /root/poolrotater-v7.0/validation/v7.1.0-hub-transition-final2 \
+  --destination "$transition_destination" \
   --old-inventory-sha256 REVIEWED_OLD_INVENTORY_DIGEST \
   --owner-account-id REVIEWED_PUBLIC_OWNER_ACCOUNT_ID
 ```
 
-The already prepared package's exact values are in
-`validation/v7.1.0/hub-transition-plan.json`, `hub-transition-stage.json` and its
-private `transition.json`. Review those local files; do not publish the maintainer
-package as an operator installer. It contains no copied production state or keys.
+For an already prepared package, review its plan, stage receipt and private
+transition receipt in the protected preparation area. Do not publish the
+maintainer package as an operator installer. It contains no copied production
+state or keys.
 
 Staging validates the whole runtime hash, extracts only declared Python payloads,
 and invokes that sealed source's existing `network.hub_service.prepare` in an
@@ -65,7 +73,7 @@ qualification and maintainer review. Do not copy placeholders literally. Set
 `hub_transition_package` to the reviewed private package's absolute path:
 
 ```bash
-hub_transition_package=/root/poolrotater-v7.0/validation/v7.1.0-hub-transition-final2
+hub_transition_package=/path/to/reviewed-private-hub-transition
 ```
 
 The destination code directory must not exist. If it exists, inspect its inventory
@@ -210,8 +218,7 @@ protected prefix. The stopped code exchange preserved the entire existing privat
 state byte-for-byte; hub epoch, enrollment, TLS and operator choices were retained.
 HTTPS capabilities and the0640 private snapshot passed live checks. The earlier
 staging package remains an immutable historical receipt; do not replay it. The
-current deployment package is private under
-`/opt/poolrotater-v7-cutover-tools/v71-activation-20261016/hub-transition`.
+current deployment package is stored privately in the cutover tools area.
 
 The existing statistics page/exporter is also activated. Real owner-history volume
 exposed excessive deep copying, fixed with copy-on-write native sets and bounded

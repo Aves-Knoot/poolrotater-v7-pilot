@@ -71,7 +71,7 @@ class Broker:
             from poolrotater_host.layout import atomic_json
             witness(root,self.alias,self.generation,room_id=room_id,public=public)
             if room_id is not None:
-                mode='catch' if int(self.cfg.get('ruleset_id',0))==2 else 'standard' if int(self.cfg.get('ruleset_id',0))==0 else 'mania7' if int(self.cfg.get('mania_keys',4))==7 else 'mania4'
+                mode='taiko' if int(self.cfg.get('ruleset_id',0))==1 else 'catch' if int(self.cfg.get('ruleset_id',0))==2 else 'standard' if int(self.cfg.get('ruleset_id',0))==0 else 'mania7' if int(self.cfg.get('mania_keys',4))==7 else 'mania4'
                 record_visibility(Path(root)/self.cfg['ratings_db'],room_id=room_id,public=public,mode=mode,alias=self.alias)
             (Path(root)/'state'/('reporting-visibility-invalid-'+self.alias+'.json')).unlink(missing_ok=True)
         except Exception:

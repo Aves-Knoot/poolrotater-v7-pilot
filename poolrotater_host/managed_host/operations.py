@@ -179,6 +179,8 @@ def ensure(instance,record):
     from .policy import prepare
     from ..catalog_publication import _write as write_code
     target=paths(instance);uid=record['service_uid'];marker=_control(target['root']/'.poolrotater-host.json',uid,private=True)
+    from ..update_helpers import managed_update_in_progress
+    defer_timer_activation=managed_update_in_progress(instance,target,record,marker)
     prepare(target['root'],marker,uid=uid)
     directory=target['prefix']/'managed';directory.mkdir(mode=0o700,exist_ok=True);protected(directory)
     with file_lease(directory/'installation.lock'):
@@ -244,7 +246,13 @@ WantedBy=timers.target
         network._checked_unit(instance)
         pilot._systemctl('daemon-reload')
         pilot._systemctl('enable',network.name(instance))
-        pilot._systemctl('enable','--now',name+'.timer')
+        if defer_timer_activation:
+            # The admitted native update owns the stopped configuration window.
+            # Enabling is safe; starting the independent helper is deferred to
+            # the update's existing timer-restoration path.
+            pilot._systemctl('enable',name+'.timer')
+        else:
+            pilot._systemctl('enable','--now',name+'.timer')
         _write(target['root']/'state/managed-root-policy.json',{'format':1,'policy_version':1,
             **{k:marker[k] for k in ('installation_id','generation')},'automatic_updates':True,'administration_helper':True},
             owner=uid,private=True)

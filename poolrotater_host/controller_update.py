@@ -463,7 +463,9 @@ def _step_managed_stopped(instance,target,parent,job,save):
     else:_gate(target,parent,job,None)
     if actual!=job['configuration']:
         save(configuration_before_stop=job['configuration'],configuration=actual)
-    save(phase='committing',commit_started_at=time.time(),stage='approval',stage_at=time.time(),
+    admitted_at=time.time()
+    save(phase='committing',commit_started_at=admitted_at,commit_admitted_at=admitted_at,
+        stage='approval',stage_at=admitted_at,
          reason='managed_rooms_confirmed_closed_and_intentionally_stopped',
          admission_kind='managed_intentionally_stopped',
          automatic_recovery=job.get('automatic_recovery',{'format':1,'attempts':0}))
@@ -472,6 +474,635 @@ def _step_managed_stopped(instance,target,parent,job,save):
         from .update_lifecycle import failed
         failed(save,job,error)
         if job['phase']=='held':disarm(instance)
+    return True
+
+
+def _precommit_controller_failure_candidate(job):
+    """Recognize only the held, never-admitted controller-identity failure."""
+    authority=job.get('automatic_recovery')
+    return (job.get('phase')=='held' and job.get('reason')=='controller_identity_changed'
+        and type(authority)is dict and authority.get('format')==1
+        and authority.get('attempts')==0
+        and all(job.get(key)is None for key in ('commit_started_at','commit_admitted_at',
+            'services_stopped_at','upgrade_transition','startup_attempted_at',
+            'admission_kind','failure_stage','failure_code')))
+
+
+def _failed_controller_lifetime(target,process,queued,*,now):
+    """Pin the failed systemd invocation to the queued /proc process identity."""
+    import re
+    from .pilot_operations import _systemctl
+    from .config import ConfigError
+    try:
+        raw=_systemctl('show',target['unit'],'--property=LoadState,ActiveState,SubState,MainPID,'
+            'ExecMainPID,Result,ExecMainStatus,ExecMainStartTimestampMonotonic,'
+            'ExecMainExitTimestampMonotonic,ControlGroup,InvocationID')
+        values=dict(line.split('=',1) for line in raw.decode('ascii').splitlines() if '=' in line)
+        required={'LoadState','ActiveState','SubState','MainPID','ExecMainPID','Result',
+            'ExecMainStatus','ExecMainStartTimestampMonotonic','ExecMainExitTimestampMonotonic',
+            'ControlGroup','InvocationID'}
+        if set(values)!=required:return None
+        main=int(values['MainPID']);pid=int(values['ExecMainPID']);status=int(values['ExecMainStatus'])
+        started=int(values['ExecMainStartTimestampMonotonic']);exited=int(values['ExecMainExitTimestampMonotonic'])
+        invocation=values['InvocationID'];group=values['ControlGroup']
+        if (values['LoadState']!='loaded' or values['ActiveState']!='failed'
+                or values['SubState']!='failed' or main!=0 or pid!=process['pid']
+                or values['Result']!='exit-code' or status<=0 or started<=0 or exited<=started
+                or group not in ('','/system.slice/'+target['unit'])
+                or re.fullmatch(r'[a-f0-9]{32}',invocation)is None):return None
+        # /proc stat and systemd both use a boot-relative monotonic clock. The
+        # process identity saved at queue must be the main process in this exact
+        # failed unit invocation, not a same-PID stale receipt.
+        ticks=os.sysconf('SC_CLK_TCK')
+        if type(ticks)is not int or ticks<=0:return None
+        if abs(started/1_000_000-int(process['start'])/ticks)>1.5:return None
+        btime=next((int(line.split()[1]) for line in Path('/proc/stat').read_text().splitlines()
+                    if line.startswith('btime ')),None)
+        exit_wall=(btime+exited/1_000_000) if type(btime)is int else None
+        if (type(exit_wall)not in (int,float) or exit_wall<queued-1.5
+                or exit_wall>now+1.5):return None
+        if group:
+            cgroup=Path('/sys/fs/cgroup')/group.lstrip('/')
+            if cgroup.is_symlink():return None
+            if cgroup.exists():
+                if not cgroup.is_dir():return None
+                for directory,dirs,files in os.walk(cgroup,followlinks=False):
+                    root=Path(directory)
+                    if any((root/name).is_symlink() for name in dirs):return None
+                    if 'cgroup.procs' in files:
+                        entries=(root/'cgroup.procs').read_text().split()
+                        if entries:return None
+        return {'unit':target['unit'],'invocation_id':invocation,'exec_main_pid':pid,
+            'exec_main_started_monotonic':started,'exec_main_exited_monotonic':exited,
+            'cgroup_empty':True}
+    except (ConfigError,OSError,UnicodeError,ValueError,IndexError,KeyError,OverflowError):
+        return None
+
+
+def _closed_failed_controller_proof(instance,target,parent,job,*,now=None,committing=False,
+        after_native_stop=False):
+    """Prove a crashed predecessor and a fully settled native host, read-only.
+
+    This is narrower than stopped-host admission: running desired intent stays
+    intact, and only the exact previously queued controller can use the proof.
+    Worker closure comes from the exact failed systemd invocation (with an
+    empty service cgroup), the provider-service reap receipt, and the
+    generation-bound managed ownership journal. The network agent may remain
+    active until normal commit quiescence stops it.
+    """
+    import re
+    from .network.contracts import fingerprint,NetworkError,require
+    from .pilot_installation import _quiescent
+    from .ratings.operations import _identity
+    from .layout import load
+    from .managed_host.policy import state as managed_state
+    from .managed_host.projection import read as read_projection
+    from .diagnostic_logs.common import transaction
+    from .reconciliation import _journal
+    from .operator_maintenance import NAME as MAINTENANCE_NAME,RECEIPT as MAINTENANCE_RECEIPT
+    from .operator_maintenance import validate as validate_maintenance
+    from .managed_host.policy import NAME as MANAGED_NAME
+    from .updates.native import require_idle_worker_deployment
+    from .bookings.policy import holds_updates
+    from .pilot_identity import provider_execution
+    from .pilot_operations import _service_state
+
+    at=time.time() if now is None else now
+    try:
+        if job.get('before')!=parent:return None
+        if committing:
+            if (job.get('admission_kind')!='confirmed_closed_controller_failure'
+                    or job.get('phase') not in ('committing','recovering','retrying')
+                    or job.get('commit_started_at') is None):return None
+        elif not _precommit_controller_failure_candidate(job):return None
+        require(type(at) in (int,float) and math.isfinite(at) and at>=0,
+                'update_failed_controller_clock_refused')
+        process=job.get('process')
+        require(type(process)is dict and set(process)=={'pid','start','boot'}
+                and type(process['pid'])is int and process['pid']>0
+                and type(process['start'])is str and process['start'].isdigit()
+                and type(process['boot'])is str
+                and process['boot']==Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+                'update_failed_controller_process_binding_refused')
+        try:current_process=_process(process['pid'])
+        except (FileNotFoundError,ProcessLookupError):current_process=None
+        except (ConfigError,OSError,ValueError,IndexError):return None
+        if current_process==process:return None
+        service=_service_state(instance)
+        if service['MainPID']!=0 or service['ActiveState'] not in ('inactive','failed'):
+            return None
+        queued=job.get('queued_at')
+        if (type(queued)not in (int,float) or not math.isfinite(queued)
+                or queued<=0 or queued>at):return None
+        saved_proof=job.get('precommit_controller_failure_proof') if after_native_stop else None
+        saved_lifetime=None
+        saved_provider=None
+        if after_native_stop:
+            # Recovery runs after native stop has replaced systemd's failed
+            # invocation and the provider lifecycle receipt. Reuse only the
+            # exact root-owned proof persisted before stop, then recheck every
+            # live managed/configuration/closure condition below.
+            if (not committing or type(saved_proof)is not dict
+                    or set(saved_proof)!={'process','drain_request_id','closed_aliases',
+                        'configuration_sha256','projection_sha256','provider_service_failure'}
+                    or saved_proof.get('process')!=process
+                    or type(saved_proof.get('drain_request_id'))is not str
+                    or type(saved_proof.get('closed_aliases'))is not list
+                    or saved_proof.get('closed_aliases')!=sorted(job.get('rooms',[]))
+                    or any(type(saved_proof.get(key))is not str or
+                        re.fullmatch(r'[a-f0-9]{64}',saved_proof[key]) is None
+                        for key in ('configuration_sha256','projection_sha256'))):return None
+            if job.get('precommit_controller_failure_proof_sha256')!=fingerprint(saved_proof):
+                return None
+            saved_provider=saved_proof.get('provider_service_failure')
+            if (type(saved_provider)is not dict
+                    or set(saved_provider)!={'pid','workers_reaped','referee_child_reaped',
+                        'systemd_invocation'}
+                    or saved_provider.get('pid')!=process['pid']
+                    or saved_provider.get('workers_reaped') is not True
+                    or saved_provider.get('referee_child_reaped') is not True):return None
+            saved_lifetime=saved_provider.get('systemd_invocation')
+            if (type(saved_lifetime)is not dict
+                    or set(saved_lifetime)!={'unit','invocation_id','exec_main_pid',
+                        'exec_main_started_monotonic','exec_main_exited_monotonic','cgroup_empty'}
+                    or saved_lifetime.get('unit')!=target['unit']
+                    or type(saved_lifetime.get('invocation_id'))is not str
+                    or re.fullmatch(r'[a-f0-9]{32}',saved_lifetime['invocation_id']) is None
+                    or saved_lifetime.get('exec_main_pid')!=process['pid']
+                    or type(saved_lifetime.get('exec_main_started_monotonic'))is not int
+                    or saved_lifetime['exec_main_started_monotonic']<=0
+                    or type(saved_lifetime.get('exec_main_exited_monotonic'))is not int
+                    or saved_lifetime['exec_main_exited_monotonic']<=saved_lifetime['exec_main_started_monotonic']
+                    or saved_lifetime.get('cgroup_empty') is not True):return None
+            ticks=os.sysconf('SC_CLK_TCK')
+            btime=next((int(line.split()[1]) for line in Path('/proc/stat').read_text().splitlines()
+                        if line.startswith('btime ')),None)
+            if type(ticks)is not int or ticks<=0 or type(btime)is not int:return None
+            process_started=saved_lifetime['exec_main_started_monotonic']/1_000_000
+            process_start_tick=int(process['start'])/ticks
+            exited_wall=btime+saved_lifetime['exec_main_exited_monotonic']/1_000_000
+            if (abs(process_started-process_start_tick)>1.5 or exited_wall<queued-1.5
+                    or exited_wall>at+1.5):return None
+            lifetime=saved_lifetime
+        else:
+            lifetime=_failed_controller_lifetime(target,process,queued,now=at)
+            if lifetime is None:return None
+
+        root=Path(target['root']);uid=parent['service_uid']
+        require_idle_worker_deployment(target,parent)
+        provider_mode=provider_execution({'registration':parent})
+        # The failed-service receipt is emitted only after the normal provider
+        # context has reaped every worker/referee child. Bind it and the
+        # separate failure receipt to the exact queued controller process.
+        with _quiescent(root,uid):
+            with _identity(uid):
+                marker,host=load(root)
+                if any(marker.get(k)!=parent.get(k) for k in ('installation_id','generation')):
+                    return None
+                aliases={room['alias'] for room in host['rooms']}
+                if aliases!=set(job.get('rooms',[])) or not aliases:return None
+                provider=None if after_native_stop else _control(
+                    root/'state/provider-service.json',uid,private=True)
+                if not after_native_stop and (type(provider)is not dict or provider.get('format')!=1
+                        or provider.get('phase')!='failed' or provider.get('pid')!=process['pid']
+                        or provider.get('uid')!=uid
+                        or provider.get('execution')!=provider_mode
+                        or provider.get('installation_id')!=parent.get('installation_id')
+                        or provider.get('generation')!=parent.get('generation')
+                        or provider.get('live_ready') is not False
+                        or provider.get('workers_reaped') is not True
+                        or provider.get('referee_child_reaped') is not True):return None
+                if after_native_stop:
+                    provider={'pid':saved_provider['pid'],'workers_reaped':True,
+                        'referee_child_reaped':True}
+                # Newer diagnostic receipts are optional corroboration; older
+                # installed controllers only provide the lifecycle receipt.
+                failure=None if after_native_stop else _control(
+                    root/'state/controller-failure.json',uid,private=True,optional=True)
+                if failure is not None and (type(failure)is not dict
+                        or failure.get('format')!=1 or failure.get('pid')!=process['pid']
+                        or type(failure.get('at'))not in (int,float)
+                        or not math.isfinite(failure['at'])
+                        or not queued<=failure['at']<=at):return None
+
+                require(os.path.lexists(root/MANAGED_NAME),
+                        'update_failed_controller_managed_host_missing')
+                store=managed_state(root)
+                managed_snapshot=store.snapshot()
+                limits=store.limits()
+                managed_pending=store.pending()
+                projection=read_projection(root,marker)
+                if (projection is None or type(job.get('managed_before'))is not dict
+                        or projection!=job['managed_before']
+                        or type(managed_pending)is not list or managed_pending
+                        or managed_snapshot.get('policy_version')!=1
+                        or limits.get('capacity_used')!=0):return None
+                rooms={row['alias']:row for row in managed_snapshot.get('rooms',[])
+                       if type(row)is dict}
+                if set(rooms)!=aliases:return None
+                with transaction(store.path) as db:
+                    reservations=[dict(row) for row in db.execute('SELECT * FROM reservations')]
+                    live_operations=db.execute("SELECT id FROM operations WHERE phase IN "
+                        "('received','validated','waiting_boundary','applying')").fetchall()
+                if reservations or live_operations:return None
+
+                journal=_journal(_control(root/'state/rolling/ownership.json',uid,private=True),aliases)
+                owners=journal.get('rooms')
+                if type(owners)is not dict or set(owners)!=aliases:return None
+                drain=job.get('controller_update_drain')
+                from .update_drain import RECORD,_validate_drain,_validate_maintenance_receipt,_configuration_sha
+                if type(drain)is not dict:return None
+                drain=_validate_drain(drain,parent,job)
+                if (drain['configuration_sha256']!=fingerprint(job.get('configuration'))
+                        or _configuration_sha(root)!=drain['configuration_sha256']):return None
+
+                request=_control(Path(target['prefix'])/MAINTENANCE_NAME)
+                validate_maintenance(request,parent)
+                progress=_control(root/MAINTENANCE_RECEIPT,uid,private=True)
+                _validate_maintenance_receipt(progress,parent,request)
+                gate=_control(root/GATE,uid,private=True,optional=True)
+                if gate is not None and (type(gate)is not dict or gate.get('format')!=1
+                        or gate.get('nonce')!=job.get('nonce')
+                        or gate.get('bridge_release')!=parent.get('release')
+                        or gate.get('phase') not in ('locking','committing')
+                        or type(gate.get('expires_at'))not in (int,float)
+                        or not math.isfinite(gate['expires_at'])):return None
+                if (request.get('id')!=drain['request_id'] or request.get('phase')!='requested'
+                        or request.get('mode')!='empty' or request.get('rooms')!=drain['rooms']
+                        or progress.get('id')!=drain['request_id']
+                        or progress.get('controller_pid')!=process['pid']
+                        or progress.get('phase') not in ('complete','draining') or progress.get('failures')
+                        or set(progress.get('rooms',{}))!=set(drain['rooms'])
+                        or not drain['created_at']<=progress['updated_at']<=drain['expires_at']):return None
+                closures=progress.get('closure_evidence')
+                if type(closures)is not dict:return None
+                recorded_closed={alias for alias,phase in progress['rooms'].items() if phase=='closed'}
+                safe_partial={'waiting_empty','waiting_for_fresh_empty_roster','waiting_for_fresh_roster',
+                    'waiting_map','waiting_for_notice_and_match_evidence','waiting_for_fresh_worker',
+                    'waiting_for_worker_acknowledgement','request_delivered','requested','ready'}
+                if (set(closures)!=recorded_closed
+                        or progress['phase']=='complete' and recorded_closed!=set(drain['rooms'])
+                        or progress['phase']=='draining' and any(
+                            phase!='closed' and phase not in safe_partial
+                            for phase in progress['rooms'].values())):return None
+                for alias in drain['rooms']:
+                    prior=drain['initial'][alias]
+                    identity=prior['identity'];closure=closures.get(alias)
+                    started=closure.get('closure_started_at') if type(closure)is dict else None
+                    if alias in recorded_closed and (type(closure)is not dict
+                            or closure.get('room_id')!=identity['room_id']
+                            or closure.get('mode')!='empty' or closure.get('require_empty') is not True
+                            or type(closure.get('notice_confirmed'))is not bool
+                            or type(closure.get('active_map_observed'))is not bool
+                            or type(started)not in (int,float) or not math.isfinite(started)
+                            or not drain['created_at']<=started<=progress['updated_at']):return None
+
+                for alias,row in rooms.items():
+                    baseline=projection['rooms'].get(alias)
+                    owner=owners[alias]
+                    if (type(baseline)is not dict or row.get('desired')!=baseline.get('desired')
+                            or row.get('revision')!=baseline.get('revision')
+                            or row.get('preset')!=baseline.get('settings',{}).get('preset')
+                            or row.get('visibility')!=baseline.get('settings',{}).get('visibility','public')
+                            or row.get('pending_operation') is not None
+                            or row.get('room_id') is not None or row.get('room_generation') is not None
+                            or row.get('phase') not in ('stopped','unobserved')
+                            or row.get('failure_code') is not None):return None
+                    if (owner.get('phase') not in ('parked','stopped')
+                            or owner.get('operation')!='closed' or owner.get('room_id') is not None
+                            or owner.get('pid') is not None or owner.get('creation_candidate') is not None
+                            or owner.get('creation_verification_failure') is not None
+                            or owner.get('target') is not None or owner.get('error') is not None
+                            or owner.get('ownership_unknown') is not False
+                            or owner.get('admission_locked')):return None
+                    if alias in drain['rooms']:
+                        identity=drain['initial'][alias]['identity']
+                        if (owner.get('generation')!=identity['generation']
+                                or owner.get('release')!=identity['release']
+                                or type(owner.get('updated_at'))not in (int,float)
+                                or not math.isfinite(owner['updated_at'])
+                                or not drain['created_at']<=owner['updated_at']<=at):return None
+
+            # These readers open the local booking ledger read-only. Keep them
+            # at the registered UID and outside the earlier identity scope.
+            with _identity(uid):
+                if holds_updates(root):return None
+            from .update_drain import _eligibility_sha
+            if _eligibility_sha(root,host,uid,projection)!=drain['eligibility_sha256']:
+                return None
+
+        if not _configuration_unprepared(target,job):return None
+        snapshot=_configuration_snapshot(target,parent)
+        if (snapshot is None or snapshot.get('configuration')!=job.get('configuration')
+                or snapshot.get('rooms')!=sorted(aliases)
+                or snapshot.get('managed_before')!=projection):return None
+        if (job.get('phase')=='held' and not committing
+                and not _precommit_controller_failure_candidate(job)):return None
+        if committing and (job.get('admission_kind')!='confirmed_closed_controller_failure'
+                or job.get('commit_started_at') is None):return None
+        proof={'process':process,'drain_request_id':drain['request_id'],
+            'closed_aliases':sorted(aliases),
+            'configuration_sha256':fingerprint(snapshot['configuration']),
+            'projection_sha256':fingerprint(projection),'provider_service_failure':{
+                'pid':provider['pid'],'workers_reaped':True,'referee_child_reaped':True,
+                'systemd_invocation':lifetime}}
+        if after_native_stop and proof!=saved_proof:return None
+        return proof
+    except (ConfigError,NetworkError,OSError,ValueError,TypeError,KeyError,
+            AttributeError,IndexError):
+        return None
+
+
+def _step_precommit_controller_failure(instance,target,parent,job,save):
+    """Commit a never-admitted exact job after terminal, proven room closure."""
+    import re
+    from .network.contracts import NetworkError,fingerprint
+    proof=_closed_failed_controller_proof(instance,target,parent,job)
+    if proof is None:return False
+    try:
+        after=job.get('after');sha=after.get('bundle_sha256') if type(after)is dict else None
+        if type(sha)is not str or re.fullmatch(r'[a-f0-9]{64}',sha)is None:return True
+        archive=Path(job.get('archive',''))
+        expected=Path(target['prefix'])/('controller-'+sha+'.zip')
+        if archive!=expected:return True
+        protected(archive)
+        if hashlib.sha256(archive.read_bytes()).hexdigest()!=sha:return True
+        from .updates.recovery import _approval
+        _approval(target,job)
+        from .bookings.policy import holds_updates
+        from .ratings.operations import _identity
+        with _identity(parent['service_uid']):
+            if holds_updates(target['root']):return True
+        if not _gate(target,parent,job,'committing'):return True
+        # Gate publication is the admission barrier. Repeat the entire closure
+        # and configuration proof after it so late local work cannot slip in.
+        proof=_closed_failed_controller_proof(instance,target,parent,job)
+        if proof is None:return True
+        _approval(target,job)
+    except (ConfigError,NetworkError,OSError,ValueError,TypeError,KeyError,
+            AttributeError,IndexError):
+        return True
+    admitted_at=time.time()
+    save(phase='committing',commit_started_at=admitted_at,commit_admitted_at=admitted_at,
+        stage='approval',stage_at=admitted_at,
+        reason='original_controller_failed_after_all_rooms_were_confirmed_closed',
+        admission_kind='confirmed_closed_controller_failure',
+        precommit_controller_failure_proof=proof,
+        precommit_controller_failure_proof_sha256=fingerprint(proof),
+        automatic_recovery=job.get('automatic_recovery',{'format':1,'attempts':0}))
+    try:_commit(instance,target,parent,job,save)
+    except Exception as error:
+        from .update_lifecycle import failed
+        failed(save,job,error)
+        if job['phase']=='held':disarm(instance)
+    return True
+
+
+def _drained_rows(target, parent, job, *, now, after=None):
+    """Combine exact maintenance closures with independently clean off slots.
+
+    A maintenance receipt alone grants no authority. The helper binds its room
+    IDs/generations to the original request and live controller; every remaining
+    alias must satisfy the existing managed-off ownership proof.
+    """
+    from .update_drain import proof
+    drained = proof(target, parent, job, now=now)
+    if not drained:
+        return None
+    value = _control(target['root'] / 'state/rolling/status.json', parent['service_uid'])
+    generated = value.get('generated_at')
+    rows = value.get('rooms')
+    if (type(generated) not in (int, float) or not math.isfinite(generated)
+            or not 0 <= now-generated <= 8 or after is not None and generated <= after
+            or value.get('configuration_error') or type(rows) is not dict
+            or set(rows) != set(job['rooms'])):
+        return None
+    from .managed_host.admission import closed_aliases
+    closed = closed_aliases(target, parent, rows)
+    if set(drained) | set(closed) != set(rows):
+        return None
+    from .reconciliation import _journal
+    journal = _journal(_control(target['root'] / 'state/rolling/ownership.json',
+                               parent['service_uid'], private=True), set(rows))['rooms']
+    if identity(rows) != identity(journal):
+        return None
+    for row in journal.values():
+        if (row.get('phase') not in ('parked', 'stopped') or row.get('operation') != 'closed'
+                or row.get('room_id') is not None or row.get('pid') is not None
+                or row.get('ownership_unknown') is not False or row.get('creation_candidate')
+                or row.get('error') or row.get('target')):
+            return None
+    return rows
+
+
+def _step_independent_drain(instance, target, parent, job, save, *, now):
+    """Reuse native per-room empty maintenance for signed controller releases."""
+    from .update_drain import (RECORD, PAUSE, advance_configuration_pause,
+                               _pending_configuration_work,managed_operations_pending,
+                               release_unpublished_gate,request)
+    from .network.contracts import NetworkError
+    if (not job.get('release_approval_required') or job['phase'] != 'waiting_empty'
+            or job.get('independent_drain_disabled')):
+        return False
+    from .managed_host.policy import NAME as MANAGED
+    if not os.path.lexists(target['root'] / MANAGED):
+        return False
+    if job.get(RECORD)is None:
+        try:
+            released_orphan=release_unpublished_gate(target,parent,job)
+        except (ConfigError,NetworkError,OSError,ValueError,TypeError,KeyError,
+                AttributeError,IndexError):
+            save(reason='waiting_for_exact_unpublished_drain_gate_cleanup')
+            return True
+        if released_orphan is False:
+            save(reason='waiting_for_exact_unpublished_drain_gate_cleanup')
+            return True
+        try:
+            pending=managed_operations_pending(target['root'],parent['service_uid'])
+        except (ConfigError,NetworkError,OSError,ValueError,TypeError,KeyError,
+                AttributeError,IndexError):
+            # Do not let the legacy all-room-empty path publish another gate
+            # when the managed ledger cannot prove it has no accepted work.
+            save(reason='waiting_for_managed_admission_snapshot')
+            return True
+        if pending:
+            save(reason='waiting_for_pending_managed_operation')
+            return True
+        if released_orphan:
+            save(reason='rechecking_admission_after_unpublished_gate_cleanup')
+    if job.get(PAUSE) is not None:
+        try:
+            result=advance_configuration_pause(target,parent,job,save,now=time.time)
+        except NetworkError as error:
+            if error.code in ('update_drain_pause_status_stale','update_drain_status_stale_or_incomplete',
+                              'update_drain_receipt_stale'):
+                save(reason='waiting_for_fresh_configuration_pause_evidence')
+                return True
+            save(phase='held',reason='managed_configuration_pause_requires_review',
+                 failure_stage='admission',failure_code='update_maintenance_outcome_requires_review',
+                 next_action='review_controller_update_with_operation_id')
+            disarm(instance)
+            return True
+        except (ConfigError,NetworkError,OSError,ValueError,TypeError,KeyError,AttributeError,IndexError):
+            save(phase='held',reason='managed_configuration_pause_requires_review',
+                 failure_stage='admission',failure_code='update_maintenance_outcome_requires_review',
+                 next_action='review_controller_update_with_operation_id')
+            disarm(instance)
+            return True
+        if result['phase']=='requires_review':
+            save(phase='held',reason='managed_configuration_pause_requires_review',
+                 failure_stage='admission',failure_code='update_maintenance_outcome_requires_review',
+                 next_action='review_controller_update_with_operation_id')
+            disarm(instance)
+        return True
+    if job.get(RECORD) is not None:
+        try:
+            pending=_pending_configuration_work(target['root'],parent['service_uid'],job[RECORD])
+        except NetworkError as error:
+            if error.code=='update_drain_pause_status_stale':
+                save(reason='waiting_for_fresh_managed_configuration_evidence')
+                return True
+            save(phase='held',reason='pending_managed_operation_requires_review',
+                 failure_stage='admission',failure_code='update_managed_operation_requires_review',
+                 next_action='review_controller_update_with_operation_id')
+            disarm(instance)
+            return True
+        except (ConfigError,NetworkError,OSError,ValueError,TypeError,KeyError,AttributeError,IndexError):
+            save(phase='held',reason='pending_managed_operation_requires_review',
+                 failure_stage='admission',failure_code='update_managed_operation_requires_review',
+                 next_action='review_controller_update_with_operation_id')
+            disarm(instance)
+            return True
+        if pending:
+            pause={'format':1,'request_id':job[RECORD]['request_id'],
+                   'phase':'cancelling','operations':pending}
+            save(**{PAUSE:pause},reason='canceling_drain_to_settle_managed_configuration')
+            job[PAUSE]=pause
+            try:
+                result=advance_configuration_pause(target,parent,job,save,now=time.time)
+            except NetworkError as error:
+                if error.code in ('update_drain_pause_status_stale','update_drain_status_stale_or_incomplete',
+                                  'update_drain_receipt_stale'):
+                    save(reason='waiting_for_fresh_configuration_pause_evidence')
+                    return True
+                save(phase='held',reason='managed_configuration_pause_requires_review',
+                     failure_stage='admission',failure_code='update_maintenance_outcome_requires_review',
+                     next_action='review_controller_update_with_operation_id')
+                disarm(instance)
+                return True
+            except (ConfigError,NetworkError,OSError,ValueError,TypeError,KeyError,AttributeError,IndexError):
+                save(phase='held',reason='managed_configuration_pause_requires_review',
+                     failure_stage='admission',failure_code='update_maintenance_outcome_requires_review',
+                     next_action='review_controller_update_with_operation_id')
+                disarm(instance)
+                return True
+            if result['phase']=='requires_review':
+                save(phase='held',reason='managed_configuration_pause_requires_review',
+                     failure_stage='admission',failure_code='update_maintenance_outcome_requires_review',
+                     next_action='review_controller_update_with_operation_id')
+                disarm(instance)
+            return True
+    try:
+        result = request(target, parent, job, save, now=lambda: now)
+    except (ConfigError, NetworkError, OSError, ValueError):
+        # A fresh request has not authorized any closure if admission failed.
+        # Once a request exists, retain its operation and keep retrying fresh
+        # evidence; never create another request or reset ownership to proceed.
+        if job.get(RECORD) is None:
+            return False
+        save(reason='waiting_for_valid_independent_drain_evidence')
+        return True
+    if result['phase'] == 'no_eligible_rooms':
+        return False
+    if result['phase'] in ('requires_review', 'cancelled', 'expired'):
+        save(phase='held', reason='independent_drain_requires_review',
+             failure_stage='admission', failure_code='update_maintenance_outcome_requires_review')
+        disarm(instance)
+        return True
+    rows = _drained_rows(target, parent, job, now=time.time())
+    if rows is None:
+        save(reason='draining_each_room_when_empty')
+        return True
+    validate_runtime(parent, target['prefix'])
+    validate_runtime(job['after'], target['prefix'])
+    barrier = time.time()
+    deadline = time.monotonic()+12
+    latest = None
+    while time.monotonic() < deadline:
+        latest = _drained_rows(target, parent, job, now=time.time(), after=barrier)
+        if latest is not None:
+            break
+        time.sleep(.25)
+    if latest is None or not _gate(target, parent, job, 'committing'):
+        save(reason='waiting_for_fresh_independent_drain_evidence')
+        return True
+    # Recheck after the gate, so a booking/managed admission cannot race the
+    # final proof. The old controller still owns every closure and journal.
+    latest = _drained_rows(target, parent, job, now=time.time(), after=barrier)
+    if latest is None:
+        save(reason='waiting_for_fresh_independent_drain_evidence')
+        return True
+    save(phase='committing', commit_started_at=time.time(), stage='approval', stage_at=time.time(),
+         reason='all_requested_rooms_independently_closed',
+         admission_kind='confirmed_maintenance_drained_rooms', worker_identity=identity(latest),
+         automatic_recovery=job.get('automatic_recovery', {'format': 1, 'attempts': 0}))
+    try:
+        _commit(instance, target, parent, job, save)
+    except Exception as error:
+        from .update_lifecycle import failed
+        failed(save, job, error)
+        if job['phase'] == 'held':
+            disarm(instance)
+    return True
+
+
+def _drain_restoration_needed(job):
+    """Only a never-admitted canceled/held drain may restore old room intent."""
+    return (not _precommit_controller_failure_candidate(job)
+            and job.get('controller_update_drain') is not None
+            and job.get('phase') in ('cancelled', 'held')
+            and job.get('drain_restoration_phase') not in ('complete', 'requires_review')
+            and all(job.get(k) is None for k in ('commit_started_at', 'commit_admitted_at',
+                                                'services_stopped_at', 'upgrade_transition')))
+
+
+def _restore_canceled_drain(instance, target, current, job, save):
+    """Keep the owned candidate timer alive until native restoration settles."""
+    from .update_drain import cancel as cancel_drain, restore
+    from .network.contracts import NetworkError
+    if not _drain_restoration_needed(job):
+        return False
+    if current != job['before']:
+        save(drain_restoration_phase='requires_review')
+        return True
+    try:
+        canceled = cancel_drain(target, current, job)
+        if canceled['phase'] in ('waiting', 'requires_review'):
+            save(drain_restoration_phase=canceled['phase'],
+                 drain_restoration_updated_at=time.time())
+            return True
+        if canceled.get('rooms') == []:
+            # Admission failed before the mailbox was written; there are no
+            # native closures to restore and the exact gate was released.
+            save(drain_restoration_phase='complete',
+                 drain_restoration_updated_at=time.time())
+            return True
+        # Valid settings saved by still-playing siblings must remain current.
+        # A cancellation grants no exception for an already prepared migration.
+        if not _configuration_unprepared(target, job):
+            raise ConfigError('update_recovery_configuration_changed')
+        if _config_hashes(target['root']) != job['configuration']:
+            snapshot = _configuration_snapshot(target, current)
+            if snapshot is None:
+                save(drain_restoration_phase='restoring')
+                return True
+            _adopt_configuration(job, snapshot, save)
+        result = restore(target, current, job)
+        save(drain_restoration_phase=result['phase'],
+             drain_restoration_updated_at=time.time())
+    except (ConfigError, NetworkError, OSError, ValueError):
+        save(drain_restoration_phase='requires_review',
+             drain_restoration_updated_at=time.time())
     return True
 
 
@@ -490,12 +1121,33 @@ def step(instance):
             return result
     with file_lease(target['prefix'] / 'deployment-admission.lock'),file_lease(target['prefix'] / 'controller-update-admin.lock'):
         path = target['prefix'] / NAME; job = _control(path)
+        if _drain_restoration_needed(job):
+            def restore_save(**values):
+                job.update(values); _write(path, job)
+            _restore_canceled_drain(instance, target, current, job, restore_save)
+            if not _drain_restoration_needed(job):
+                disarm(instance)
+            return {'ok':job.get('drain_restoration_phase')!='requires_review',
+                    'phase':job['phase'], 'reason':job.get('reason'),
+                    'drain_restoration_phase':job.get('drain_restoration_phase')}
         retry_configuration = configuration_retryable(job)
-        if job.get('phase') in ('complete','cancelled','held') and not retry_configuration:
-            disarm(instance)
-            return {'ok':True, 'phase':job['phase'], 'reason':job.get('reason')}
+        retry_failed_controller=_precommit_controller_failure_candidate(job)
         def save(**values):
             job.update(values); _write(path, job)
+        if job.get('phase') in ('complete','cancelled','held') and not retry_configuration:
+            if retry_failed_controller:
+                # The only held identity-change case that remains retryable is
+                # the exact queued predecessor, still registered, now terminal.
+                # A live/reused/replaced controller follows the ordinary held
+                # path and never reaches the closed-owner exception.
+                if current==job.get('before'):
+                    service=_service_state(instance)
+                    if (service['MainPID']==0 and service['ActiveState'] in ('inactive','failed')):
+                        _step_precommit_controller_failure(instance,target,job['before'],job,save)
+                        return {'ok':job.get('phase')!='held','phase':job['phase'],
+                                'reason':job.get('reason')}
+            disarm(instance)
+            return {'ok':True, 'phase':job['phase'], 'reason':job.get('reason')}
         if job.get('phase') not in ('waiting_empty','locking') and not retry_configuration:
             save(phase='held', reason='interrupted_commit_requires_review',
                  failure_stage=job.get('stage','recovery_validation'),
@@ -538,7 +1190,10 @@ def step(instance):
             check(validate_runtime(parent,target['prefix'])['manifest'],
                   validate_runtime(job['after'],target['prefix'])['manifest'],parent,job['after'])
         except ConfigError:
-            if job['phase']=='locking': _gate(target,parent,job,None)
+            if job.get('controller_update_drain') is not None:
+                from .update_drain import cancel as cancel_drain
+                cancel_drain(target, parent, job)
+            elif job['phase']=='locking': _gate(target,parent,job,None)
             save(phase='held',reason='controller_approval_expired_or_incompatible')
             return {'ok':False,'phase':'held','reason':job['reason']}
         now=time.time()
@@ -550,6 +1205,8 @@ def step(instance):
             return {'ok':False,'phase':'held','reason':job['reason'],
                 'failure_stage':job['failure_stage'],'failure_code':job['failure_code']}
         if job['phase'] == 'waiting_empty' and _step_closed_failed(instance, target, parent, job, save, now=now):
+            return {'ok': job['phase'] != 'held', 'phase': job['phase'], 'reason': job.get('reason')}
+        if _step_independent_drain(instance, target, parent, job, save, now=now):
             return {'ok': job['phase'] != 'held', 'phase': job['phase'], 'reason': job.get('reason')}
         rows=_rows(target,parent,now=now)
         if rows is not None and set(rows) != set(job['rooms']): rows=None
@@ -629,6 +1286,9 @@ def _commit(instance,target,parent,job,save):
     # Pausing helpers is a lifecycle mutation too. Validate approval before it,
     # then repeat at the actual service switch after bounded quiescence.
     _commit_approval(target,parent,job)
+    if job.get('admission_kind')=='confirmed_closed_controller_failure':
+        if _closed_failed_controller_proof(instance,target,parent,job,committing=True) is None:
+            raise ConfigError('update_failed_controller_closure_changed')
     from .update_helpers import quiesce
     with quiesce(instance,target,job,save):
         return _commit_quiescent(instance,target,parent,job,save)
@@ -647,12 +1307,22 @@ def _commit_quiescent(instance,target,parent,job,save):
     _commit_approval(target,parent,job)
     from .update_lifecycle import checkpoint,wait_stopped
     checkpoint(save,'approval')
+    if job.get('admission_kind')=='confirmed_closed_controller_failure':
+        if _closed_failed_controller_proof(instance,target,parent,job,committing=True) is None:
+            raise ConfigError('update_failed_controller_closure_changed')
     network._checked_unit(instance,optional=not job['network_active'])
-    save(commit_admitted_at=time.time())
+    # A proof-backed admission records its first durable timestamp only after
+    # gate, approval, and closure checks passed. Preserve it across the normal
+    # quiescent handoff so helper loss in that window remains recoverable.
+    if job.get('commit_admitted_at') is None:
+        save(commit_admitted_at=time.time())
     checkpoint(save,'network_stop')
     if job['network_enabled']: _systemctl('disable',network.name(instance))
     if job['network_active']: network.unit(instance,'stop')
     checkpoint(save,'controller_stop')
+    if job.get('admission_kind')=='confirmed_closed_controller_failure':
+        if _closed_failed_controller_proof(instance,target,parent,job,committing=True) is None:
+            raise ConfigError('update_failed_controller_closure_changed')
     _systemctl('stop',target['unit'],timeout=100); _systemctl('disable',target['unit'])
     checkpoint(save,'cleanup')
     wait_stopped(target['root'],parent['service_uid'],save=save)
@@ -700,6 +1370,8 @@ def disarm(instance):
         protected(path)
         from .pilot_installation import paths
         job=_control(paths(instance)['prefix']/NAME)
+        if _drain_restoration_needed(job):
+            return  # Native canceled-drain restoration still owns this timer.
         if job.get('timer_sha256') != hashlib.sha256(path.read_bytes()).hexdigest():
             return  # Never disable a same-named but unrecognized root timer.
         # A failed timer cleanup must not relabel a successfully upgraded bot.
@@ -712,11 +1384,14 @@ def disarm(instance):
 def cancel(instance):
     """Cancel waiting admission only. Never undo an interrupted registration."""
     target,_,_,_= _binding(instance)
-    with file_lease(target['prefix']/'controller-update-admin.lock'):
+    with file_lease(target['prefix']/'deployment-admission.lock'), file_lease(target['prefix']/'controller-update-admin.lock'):
         path=target['prefix']/NAME;job=_control(path)
         if job['phase']=='committing' or job.get('commit_started_at') or job.get('upgrade_transition'):
             raise ConfigError('controller commit requires review; cancellation cannot undo it')
-        if job.get('nonce'):_gate(target,job['before'],job,None)
+        if job.get('controller_update_drain') is not None:
+            from .update_drain import cancel as cancel_drain
+            cancel_drain(target, job['before'], job)
+        elif job.get('nonce'):_gate(target,job['before'],job,None)
         _write(path,{**job,'phase':'cancelled','reason':'operator_cancelled_before_commit'})
         disarm(instance)
         return {'ok':True,'phase':'cancelled','services_restarted':False}

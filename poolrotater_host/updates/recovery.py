@@ -14,6 +14,7 @@ import uuid
 
 from ..config import ConfigError
 from ..layout import file_lease
+from ..network.contracts import NetworkError
 from ..provisioning import _control, _write, protected
 from ..runtime_lifecycle import validate_runtime
 from .contracts import identifier, require
@@ -142,6 +143,74 @@ def _approval(target,job,*,recovering=False):
     check(before,after,job['before'],job['after'],recovering=recovering)
 
 
+def _precommit_controller_failure_proof(target,job):
+    """Validate the root-owned admission receipt before continuing a commit."""
+    import re
+    from ..network.contracts import fingerprint
+    proof=job.get('precommit_controller_failure_proof')
+    process=job.get('process');drain=job.get('controller_update_drain')
+    require(type(proof)is dict and set(proof)=={'process','drain_request_id','closed_aliases',
+        'configuration_sha256','projection_sha256','provider_service_failure'},
+        'update_failed_controller_closure_changed')
+    require(job.get('precommit_controller_failure_proof_sha256')==fingerprint(proof),
+        'update_failed_controller_closure_changed')
+    require(type(process)is dict and proof.get('process')==process
+        and type(drain)is dict and proof.get('drain_request_id')==drain.get('request_id')
+        and proof.get('closed_aliases')==sorted(job.get('rooms',[]))
+        and type(proof.get('configuration_sha256'))is str
+        and re.fullmatch(r'[a-f0-9]{64}',proof['configuration_sha256'])is not None
+        and type(proof.get('projection_sha256'))is str
+        and re.fullmatch(r'[a-f0-9]{64}',proof['projection_sha256'])is not None,
+        'update_failed_controller_closure_changed')
+    failure=proof.get('provider_service_failure')
+    require(type(failure)is dict and set(failure)=={'pid','workers_reaped',
+        'referee_child_reaped','systemd_invocation'}
+        and failure.get('pid')==process.get('pid')
+        and failure.get('workers_reaped')is True
+        and failure.get('referee_child_reaped')is True,
+        'update_failed_controller_closure_changed')
+    invocation=failure.get('systemd_invocation')
+    require(type(invocation)is dict and set(invocation)=={'unit','invocation_id',
+        'exec_main_pid','exec_main_started_monotonic','exec_main_exited_monotonic','cgroup_empty'}
+        and invocation.get('unit')==target['unit']
+        and type(invocation.get('invocation_id'))is str
+        and re.fullmatch(r'[a-f0-9]{32}',invocation['invocation_id'])is not None
+        and invocation.get('exec_main_pid')==process.get('pid')
+        and type(invocation.get('exec_main_started_monotonic'))is int
+        and invocation['exec_main_started_monotonic']>0
+        and type(invocation.get('exec_main_exited_monotonic'))is int
+        and invocation['exec_main_exited_monotonic']>invocation['exec_main_started_monotonic']
+        and invocation.get('cgroup_empty')is True,
+        'update_failed_controller_closure_changed')
+    return proof
+
+
+def _revalidate_precommit_controller_failure(instance,target,parent,job,current,service):
+    """Keep the failed-controller exception tied to its persisted proof.
+
+    Before registration changes, re-read the closed-room proof against current
+    ownership/configuration state. Native stop can clear systemd's failed state,
+    so the proof helper uses the persisted invocation receipt in this mode.
+    Once registration is the successor, the saved admission remains required
+    while the normal archive/approval/upgrade/configuration checks take over.
+    """
+    from .contracts import require
+    proof=_precommit_controller_failure_proof(target,job)
+    require(job.get('admission_kind')=='confirmed_closed_controller_failure'
+        and job.get('commit_started_at') is not None,
+        'update_failed_controller_closure_changed')
+    if current==job['before']:
+        require(not service['MainPID'] and service['ActiveState']in('inactive','failed'),
+                'update_failed_controller_closure_changed')
+        from .. import controller_update as native
+        current_proof=native._closed_failed_controller_proof(instance,target,parent,job,
+            committing=True,after_native_stop=True)
+        require(current_proof==proof,'update_failed_controller_closure_changed')
+    else:
+        require(current==job['after'],'update_recovery_registration_changed')
+    return proof
+
+
 def _restore_services(instance,target,current,job,*,save=None,automatic=False):
     from .. import pilot_operations as pilot
     from ..network import operations as network
@@ -247,6 +316,8 @@ def _controller(instance,operation_id,decision='review',*,automatic=False):
         require(archive==target['prefix']/('controller-'+job['after']['bundle_sha256']+'.zip')
             and hashlib.sha256(archive.read_bytes()).hexdigest()==job['after']['bundle_sha256'],
             'update_recovery_archive_changed')
+        if job.get('admission_kind')=='confirmed_closed_controller_failure':
+            _revalidate_precommit_controller_failure(instance,target,job['before'],job,current,service)
         if decision=='rollback':
             # Only abort an unfinished, stopped native registration transition.
             # Never reverse a committed controller/data contract automatically.
@@ -265,7 +336,11 @@ def _controller(instance,operation_id,decision='review',*,automatic=False):
             require(current==job['before'] and phase not in('prepared','committed'),
                     'update_controller_commit_requires_completion_or_prepared_abort')
             _archive(target,job)
-            native._gate(target,job['before'],job,None)
+            if job.get('controller_update_drain') is not None:
+                from ..update_drain import cancel as cancel_drain
+                cancel_drain(target, job['before'], job)
+            else:
+                native._gate(target,job['before'],job,None)
             _write(target['prefix']/native.NAME,{**job,'phase':'cancelled','reason':'operator_cancelled_before_registration_change'})
             native.disarm(instance)
             return {'ok':True,'phase':'cancelled','services_restarted':False,'service_start_is_explicit':not bool(service['MainPID'])}
@@ -291,12 +366,73 @@ def _controller(instance,operation_id,decision='review',*,automatic=False):
             # observations or a boot's process identity, and never stop players.
             require(phase!='prepared','update_upgrade_pending_while_service_running')
             require(service['ActiveState']=='active','update_existing_controller_requires_review')
+            if job.get('admission_kind') == 'confirmed_maintenance_drained_rooms':
+                # An updater can die after admission while the original
+                # controller remains alive with every requested room closed.
+                # Repeat the exact request/closure/journal proof; an old receipt
+                # or a changed controller process cannot authorize a stop.
+                from ..update_drain import RECORD
+                if job.get(RECORD) is not None:
+                    from ..update_drain import rearm
+                    _approval(target, job)
+                    rearmed = False
+                    try:
+                        rearm(target, current, job, save)
+                        rearmed = True
+                    except (ConfigError, NetworkError, OSError, ValueError):
+                        # A restarted controller must use fresh running-room
+                        # admission below; its predecessor's drain is not proof.
+                        pass
+                    fresh = native._drained_rows(target, current, job, now=time.time())
+                    if fresh is not None:
+                        _approval(target, job)
+                        barrier = time.time()
+                        deadline = time.monotonic()+12
+                        fresh = None
+                        while time.monotonic() < deadline:
+                            fresh = native._drained_rows(target, current, job,
+                                                        now=time.time(), after=barrier)
+                            if fresh is not None:
+                                break
+                            time.sleep(.25)
+                        require(fresh is not None and native._gate(target, current, job, 'committing'),
+                                'update_recovery_fresh_workers_required')
+                        require(native._drained_rows(target, current, job,
+                                                     now=time.time(), after=barrier) is not None,
+                                'update_recovery_fresh_workers_required')
+                        save(phase='committing', stage='approval', stage_at=time.time())
+                        native._commit(instance, target, current, job, save)
+                        return {'ok': True, 'phase': 'complete', 'services_restarted': True,
+                                'independent_drain_revalidated': True}
+                    if rearmed:
+                        # A same-process helper interruption may leave only
+                        # some rooms drained. The helper revalidated every old
+                        # open/closed identity, so keep this exact request and
+                        # let occupied siblings finish without new admission
+                        # based on imaginary healthy workers for closed slots.
+                        _restore_integrations(instance, target, job)
+                        reset = {k:v for k,v in job.items() if k not in (
+                            'commit_started_at','commit_admitted_at','services_stopped_at',
+                            'upgrade_transition','lock_started','locked_since','room_ids','worker_identity')}
+                        reset.update(phase='waiting_empty', empty_since=None,
+                                     reason='recovered_partial_independent_drain')
+                        _write(target['prefix']/native.NAME, reset)
+                        if job.get('timer_sha256'):
+                            native._arm(instance)
+                        return {'ok':True,'phase':'waiting_empty','services_restarted':False,
+                                'independent_drain_revalidated':True}
             _fresh_running(target,current);_approval(target,job)
             checkpoint(save,'network_restore')
             _restore_integrations(instance,target,job)
             native._gate(target,current,job,None)
             reset={k:v for k,v in job.items()if k not in('commit_started_at','commit_admitted_at','services_stopped_at',
-                'upgrade_transition','nonce','lock_started','locked_since','room_ids','worker_identity')}
+                'upgrade_transition','nonce','lock_started','locked_since','room_ids','worker_identity',
+                'controller_update_drain')}
+            if job.get('controller_update_drain') is not None:
+                # The archived request belongs to the previous observation.
+                # Never reuse its closures against newly running rooms. The
+                # retained simultaneous-empty path obtains fresh admission.
+                reset['independent_drain_disabled'] = True
             reset.update(phase='waiting_empty',process=native._process(service['MainPID']),empty_since=None,
                          reason='operator_recovery_requires_new_empty_room_admission')
             _write(target['prefix']/native.NAME,reset)
@@ -304,53 +440,60 @@ def _controller(instance,operation_id,decision='review',*,automatic=False):
             # receipt-bound launcher; independent updater jobs have no timer.
             if job.get('timer_sha256'):native._arm(instance)
             return {'ok':True,'phase':'waiting_empty','services_restarted':False,'fresh_empty_window_required':True}
-        if current==job['before'] or phase=='prepared':
-            require(not service['MainPID'] and service['ActiveState']in('inactive','failed'),
-                    'update_existing_controller_requires_review')
-            from ..network import operations as network
-            if network._state(instance)['MainPID']:network.unit(instance,'stop')
-            from ..update_lifecycle import wait_stopped
-            checkpoint(save,'cleanup')
-            wait_stopped(target['root'],current['service_uid'],save=save)
-            native._gate(target,job['before'],job,None)
-            from ..pilot_upgrade import upgrade as finish
-            checkpoint(save,'upgrade')
-            if phase=='prepared':
-                result=finish(instance,archive,job['after']['bundle_sha256'],from_sha256=job['before']['bundle_sha256'],
-                              recover='complete',transaction_id=upgrade['transition_id'])
-            else:
-                # No partially prepared upgrade exists. Starting a new stopped
-                # switch still requires current unexpired approval.
-                _approval(target,job)
-                result=finish(instance,archive,job['after']['bundle_sha256'],from_sha256=job['before']['bundle_sha256'])
-            job={**job,'upgrade_transition':result['transition_id']}
-            _write(target['prefix']/native.NAME,job)
-            target,_,_,current=_binding(instance)
-        require(current==job['after'],'update_recovery_registration_changed')
-        upgrade=_upgrade(target,job,current)
-        require(upgrade is not None and upgrade['phase']=='committed','update_recovery_committed_upgrade_required')
-        _approval(target,job,recovering=True)
-        # The staged successor owns this root path even when the predecessor's
-        # polling agent armed it. Complete fixed managed preparation before any
-        # start; an already-running successor must have its complete witness.
-        from ..managed_host.upgrade import prepare as prepare_managed_configuration,matches as managed_matches
+        from contextlib import nullcontext
+        quiescence=nullcontext()
         if not service['MainPID']:
-            checkpoint(save,'configuration')
-            prepare_managed_configuration(target,current,job)
-        else:
-            from ..managed_host.policy import administrative_enabled as managed_enabled
-            if managed_enabled(target['root'],current['service_uid']):
-                require(managed_matches(target,job,require_complete=True) is True,'update_recovery_configuration_changed')
-        checkpoint(save,'readiness')
-        _restore_services(instance,target,current,job,save=save,automatic=automatic)
-        # The successor may have materialized its own version after a previous
-        # interrupted start or the start just observed above. Prove every old
-        # queued byte again, rather than treating that expected stamp as a user
-        # edit or accepting unrelated configuration changes.
-        require(_configuration_matches(target,job,before_version=configuration_before_version,
-            after_version=after_manifest.get('version')),'update_recovery_configuration_changed')
-        _write(target['prefix']/native.NAME,{**job,'phase':'complete','completed_at':time.time(),
-                                           'stage':'completion','reason':'automatic_recovered_controller_commit' if automatic else 'operator_recovered_controller_commit'})
-        native.disarm(instance)
-        return {'ok':True,'phase':'complete','existing_service_not_restarted':bool(service['MainPID']),
-                'configuration_preserved':True}
+            _approval(target,job,recovering=current==job['after'] and phase=='committed')
+            from ..update_helpers import quiesce
+            quiescence=quiesce(instance,target,job,save)
+        with quiescence:
+            if current==job['before'] or phase=='prepared':
+                require(not service['MainPID'] and service['ActiveState']in('inactive','failed'),
+                        'update_existing_controller_requires_review')
+                from ..network import operations as network
+                if network._state(instance)['MainPID']:network.unit(instance,'stop')
+                from ..update_lifecycle import wait_stopped
+                checkpoint(save,'cleanup')
+                wait_stopped(target['root'],current['service_uid'],save=save)
+                native._gate(target,job['before'],job,None)
+                from ..pilot_upgrade import upgrade as finish
+                checkpoint(save,'upgrade')
+                if phase=='prepared':
+                    result=finish(instance,archive,job['after']['bundle_sha256'],from_sha256=job['before']['bundle_sha256'],
+                                  recover='complete',transaction_id=upgrade['transition_id'])
+                else:
+                    # No partially prepared upgrade exists. Starting a new stopped
+                    # switch still requires current unexpired approval.
+                    _approval(target,job)
+                    result=finish(instance,archive,job['after']['bundle_sha256'],from_sha256=job['before']['bundle_sha256'])
+                job={**job,'upgrade_transition':result['transition_id']}
+                _write(target['prefix']/native.NAME,job)
+                target,_,_,current=_binding(instance)
+            require(current==job['after'],'update_recovery_registration_changed')
+            upgrade=_upgrade(target,job,current)
+            require(upgrade is not None and upgrade['phase']=='committed','update_recovery_committed_upgrade_required')
+            _approval(target,job,recovering=True)
+            # The staged successor owns this root path even when the predecessor's
+            # polling agent armed it. Complete fixed managed preparation before any
+            # start; an already-running successor must have its complete witness.
+            from ..managed_host.upgrade import prepare as prepare_managed_configuration,matches as managed_matches
+            if not service['MainPID']:
+                checkpoint(save,'configuration')
+                prepare_managed_configuration(target,current,job)
+            else:
+                from ..managed_host.policy import administrative_enabled as managed_enabled
+                if managed_enabled(target['root'],current['service_uid']):
+                    require(managed_matches(target,job,require_complete=True) is True,'update_recovery_configuration_changed')
+            checkpoint(save,'readiness')
+            _restore_services(instance,target,current,job,save=save,automatic=automatic)
+            # The successor may have materialized its own version after a previous
+            # interrupted start or the start just observed above. Prove every old
+            # queued byte again, rather than treating that expected stamp as a user
+            # edit or accepting unrelated configuration changes.
+            require(_configuration_matches(target,job,before_version=configuration_before_version,
+                after_version=after_manifest.get('version')),'update_recovery_configuration_changed')
+            save(phase='complete',completed_at=time.time(),stage='completion',
+                 reason='automatic_recovered_controller_commit' if automatic else 'operator_recovered_controller_commit')
+            native.disarm(instance)
+            return {'ok':True,'phase':'complete','existing_service_not_restarted':bool(service['MainPID']),
+                    'configuration_preserved':True}

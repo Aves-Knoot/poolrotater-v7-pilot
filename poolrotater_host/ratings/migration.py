@@ -141,6 +141,11 @@ def _configured_scopes(path, host):
     # Explicit stopped preparation also runs before the first shared Catch
     # worker. Capture readiness is not proof that optional Catch tables exist.
     # Existing modes gain no schema/topology change from a runtime upgrade.
+    if any(room['preset'].startswith('taiko-') for room in host['rooms']):
+        from bot.scoped_ratings import ScopedRatingStore
+        from bot.taiko_ppstats import TaikoPPStatsStore
+        ScopedRatingStore(str(path),ruleset_id=1)
+        TaikoPPStatsStore(str(path),ruleset_id=1)
     if not any(room['preset']=='catch-fixed' for room in host['rooms']):return
     from bot.scoped_ratings import ScopedRatingStore
     from bot.catch_ppstats import CatchPPStatsStore

@@ -1,11 +1,59 @@
 """Adapters to retained native deployments. No provider or token operations."""
 import time
 import os
+import math
+import re
+import shutil
 from pathlib import Path
 
 from ..config import ConfigError
 from ..provisioning import _control, _write, protected
-from .contracts import canonical, fingerprint, require
+from .contracts import canonical, fingerprint, require, digest, identifier
+
+
+def _terminal_unrelated_controller_job(job, operation_id, target, marker, parent):
+    """Accept only a positively cancelled predecessor with no open native work."""
+    try:
+        if (type(job)is not dict or job.get('format')!=1 or job.get('phase')!='cancelled'
+                or job.get('id')==operation_id
+                or job.get('reason') not in ('operator_cancelled_before_registration_change',
+                                             'operator_cancelled_before_commit')
+                or job.get('before')!=parent):return False
+        identifier(job.get('id'))
+        after=job.get('after')
+        if type(after)is not dict:return False
+        identity=('installation_id','generation','prefix','host_root','service_uid','execution')
+        if any(after.get(key)!=parent.get(key) for key in identity):return False
+        digest(after.get('bundle_sha256'))
+        if (after['bundle_sha256']==parent['bundle_sha256']
+                or Path(after.get('release','')).parent!=Path(target['prefix'])/'releases'):
+            return False
+        from ..runtime_lifecycle import validate_runtime
+        validate_runtime(parent,target['prefix']);validate_runtime(after,target['prefix'])
+        aliases={r['alias'] for r in _host_configuration(target,parent)['rooms']}
+        rooms=job.get('rooms')
+        if type(rooms)is not list or rooms!=sorted(aliases):return False
+        for key in ('commit_started_at','commit_admitted_at','services_stopped_at',
+                    'startup_attempted_at','upgrade_transition','completed_at'):
+            if job.get(key)is not None:return False
+        if job.get('drain_restoration_phase') not in (None,'complete'):return False
+        if job.get('controller_update_drain') is not None and job.get('drain_restoration_phase')!='complete':
+            return False
+        from ..controller_update import GATE
+        if os.path.lexists(Path(target['root'])/GATE):return False
+        from ..runtime_lifecycle import require_no_pending
+        require_no_pending(target['prefix'],marker['installation_id'])
+        return True
+    except Exception:
+        return False
+
+
+def _host_configuration(target,parent):
+    from ..ratings.operations import _identity
+    from ..layout import load
+    with _identity(parent['service_uid']):
+        _,host=load(target['root'])
+    return host
 
 
 def require_idle_worker_deployment(target, parent):
@@ -141,6 +189,103 @@ class Backend:
             'accepted_at':time.time(),'envelope':envelope})
         return staged
 
+    def staging_ready(self,path,item):
+        """Read-only reserve check; provisioning repeats the authoritative guard."""
+        if item.get('kind')!='controller':return True
+        target,marker,parent=self.binding()
+        current=self.current()
+        require(not current['deployment_busy'],'update_native_deployment_busy')
+        baseline=(parent['bundle_sha256']if parent['bundle_sha256']in item.get('from_sha256',())
+                  else current['effective_sha256'])
+        require(baseline in item.get('from_sha256',()),'update_native_baseline_changed')
+        verified,selected=self.client.artifact(item)
+        require(Path(verified)==Path(path) and selected==item,'update_native_artifact_changed')
+        from ..runtime_lifecycle import require_no_pending
+        require_no_pending(target['prefix'],marker['installation_id'])
+        from ..controller_update import GATE
+        require(not os.path.lexists(Path(target['root'])/GATE),'update_native_maintenance_pending')
+        from ..runtime_package import inspect as inspect_runtime
+        spec=inspect_runtime(path,item['artifact']['sha256'],execution=item['execution'])
+        require(fingerprint(spec)==item['manifest_sha256'],'update_native_artifact_changed')
+        try:input_bytes=Path(path).stat().st_size
+        except OSError:raise ConfigError('update_native_artifact_changed')from None
+        required=(sum(file['bytes']for file in spec['files'].values())
+            +sum(wheel['expanded_bytes']for wheel in spec['wheels'])+32*1024**2+input_bytes)
+        from ..pilot_installation import RESERVE
+        return shutil.disk_usage(target['prefix']).free>=RESERVE+required
+
+    def _unsubmitted_controller(self,operation):
+        """Return exact current context only when no matching native dispatch exists."""
+        try:
+            require(operation['release']['kind']=='controller','update_native_recovery_required')
+            identifier(operation['id']);digest(operation['before_sha256'])
+            digest(operation['release']['artifact']['sha256'])
+            target,marker,parent=self.binding()
+            if parent['bundle_sha256']!=operation['before_sha256']:return None
+            job=_control(target['prefix']/'controller-update.json',optional=True)
+            if job is not None:
+                if job.get('id')==operation['id'] or not _terminal_unrelated_controller_job(
+                        job,operation['id'],target,marker,parent):return None
+            from ..worker_deployment import result_path
+            if _control(result_path(target['root'],operation['id']),parent['service_uid'],
+                        private=True,optional=True)is not None:return None
+            from ..controller_update import GATE
+            if os.path.lexists(Path(target['root'])/GATE):return None
+            from ..runtime_lifecycle import require_no_pending
+            require_no_pending(target['prefix'],marker['installation_id'])
+            current=self.current()
+            if (current['deployment_busy']
+                    or current['effective_sha256']!=operation.get(
+                        'effective_before_sha256',operation['before_sha256'])):return None
+            if not (current['service_active'] or current['managed_stopped']):return None
+            return target,marker,parent,current
+        except Exception:
+            return None
+
+    def _retryable_room_set(self,target,parent,snapshot):
+        """Qualify healthy running rows or positively closed managed slots."""
+        try:
+            generated=snapshot.get('generated_at');now=time.time();rows=snapshot.get('rooms')
+            if (type(generated)not in(int,float)or not math.isfinite(generated)
+                    or not 0<=now-generated<=8 or snapshot.get('configuration_error')
+                    or type(rows)is not dict):return False
+            aliases={r['alias']for r in _host_configuration(target,parent)['rooms']}
+            if set(rows)!=aliases:return False
+            from ..reconciliation import _journal
+            journal=_journal(_control(target['root']/'state/rolling/ownership.json',
+                parent['service_uid'],private=True),aliases)['rooms']
+            if set(journal)!=aliases:return False
+            from ..managed_host.admission import closed_aliases
+            closed=closed_aliases(target,parent,rows)
+            if not closed<=aliases:return False
+            require_registered_workers(parent,rows)
+            identity_fields=('pid','generation','room_id','release')
+            for alias,row in rows.items():
+                if alias in closed:continue
+                stored=journal[alias];status=row.get('status');age=row.get('heartbeat_age')
+                if (type(status)is not dict or row.get('phase')!='running'
+                        or row.get('healthy')is not True or row.get('operation')!='owned'
+                        or row.get('ownership_unknown')is not False or row.get('error')
+                        or row.get('admission_locked') or row.get('roster_known')is not True
+                        or type(row.get('observed_players'))is not int or row['observed_players']<0
+                        or type(age)not in(int,float)or not math.isfinite(age)or age<0
+                        or age+now-generated>8 or status.get('ready')is not True
+                        or status.get('running')is not True
+                        or status.get('room_id')!=row.get('room_id')
+                        or type(status.get('players'))is not int or status['players']<0
+                        or status['players']!=row['observed_players']):return False
+                if (stored.get('phase')!='running' or stored.get('operation')!='owned'
+                        or stored.get('ownership_unknown')is not False or stored.get('error')
+                        or any(row.get(k)!=stored.get(k)for k in identity_fields)
+                        or type(row.get('pid'))is not int or row['pid']<=0
+                        or type(row.get('room_id'))is not int or row['room_id']<=0
+                        or type(row.get('generation'))is not str
+                        or re.fullmatch('[a-f0-9]{32}',row['generation'])is None
+                        or type(row.get('release'))is not str):return False
+            return True
+        except Exception:
+            return False
+
     def queue(self,path,item,operation_id):
         _,_,parent=self.binding()
         if item['kind']=='worker':
@@ -159,8 +304,8 @@ class Backend:
         target,marker,parent=self.binding()
         if operation['release']['kind']=='controller':
             job=_control(target['prefix']/'controller-update.json',optional=True)
-            if job is None:return {'phase':'absent'}
-            if job.get('id')!=operation['id']:return {'phase':'conflict'}
+            if job is None or job.get('id')!=operation['id']:
+                return {'phase':'absent'} if self._unsubmitted_controller(operation) else {'phase':'conflict'}
             if job.get('after',{}).get('bundle_sha256')!=operation['release']['artifact']['sha256']:
                 return {'phase':'conflict'}
             if job['phase']=='complete':
@@ -225,23 +370,29 @@ class Backend:
         Any native intent/result or changed controller/worker baseline is held for
         native recovery. This check grants no room/credential operation itself.
         """
-        target,marker,parent=self.binding()
-        if parent['bundle_sha256']!=operation['before_sha256']:return False
-        if self.observe(operation)['phase']!='absent':return False
-        from ..worker_deployment import result_path
-        if _control(result_path(target['root'],operation['id']),parent['service_uid'],private=True,optional=True)is not None:
-            return False
-        current=self.current()
-        if current['deployment_busy']:return False
-        if current['effective_sha256']!=operation.get('effective_before_sha256',operation['before_sha256']):return False
-        snapshot=_control(target['root']/'state/rolling/status.json',parent['service_uid'])
-        from ..ratings.operations import _identity
-        from ..layout import load
-        with _identity(parent['service_uid']):_,config=load(target['root'])
-        rows=snapshot.get('rooms',{})
-        return (set(rows)=={r['alias']for r in config['rooms']}and all(
-            r.get('phase')=='running'and r.get('healthy')is True and r.get('operation')=='owned'
-            and r.get('ownership_unknown')is False and not r.get('error')for r in rows.values()))
+        if operation['release']['kind']!='controller':
+            target,marker,parent=self.binding()
+            if parent['bundle_sha256']!=operation['before_sha256']:return False
+            if self.observe(operation)['phase']!='absent':return False
+            from ..worker_deployment import result_path
+            if _control(result_path(target['root'],operation['id']),parent['service_uid'],
+                        private=True,optional=True)is not None:return False
+            current=self.current()
+            if (current['deployment_busy'] or current['effective_sha256']!=operation.get(
+                    'effective_before_sha256',operation['before_sha256'])):return False
+            snapshot=_control(target['root']/'state/rolling/status.json',parent['service_uid'])
+            from ..ratings.operations import _identity
+            from ..layout import load
+            with _identity(parent['service_uid']):_,config=load(target['root'])
+            rows=snapshot.get('rooms',{})
+            return (set(rows)=={r['alias']for r in config['rooms']}and all(
+                r.get('phase')=='running'and r.get('healthy')is True and r.get('operation')=='owned'
+                and r.get('ownership_unknown')is False and not r.get('error')for r in rows.values()))
+        context=self._unsubmitted_controller(operation)
+        if context is None:return False
+        target,marker,parent,current=context
+        snapshot=_control(target['root']/'state/rolling/status.json',parent['service_uid'],optional=True)
+        return type(snapshot)is dict and self._retryable_room_set(target,parent,snapshot)
 
     def recover(self,operation,decision):
         from .contracts import identifier
@@ -250,6 +401,16 @@ class Backend:
             from .superseded import review
             return review(self.instance, operation)
         if operation['release']['kind']=='controller':
+            if decision in ('review','cancel'):
+                context=self._unsubmitted_controller(operation)
+                if context is not None:
+                    if decision=='review':
+                        return {'ok':True,'phase':'absent','unsubmitted':True,
+                                'upgrade_phase':'absent','registered_successor':False,
+                                'services_restarted':False}
+                    return {'ok':True,'phase':'cancelled','unsubmitted':True,
+                            'upgrade_phase':'absent','registered_successor':False,
+                            'services_restarted':False}
             from .recovery import controller
             return controller(self.instance,operation['id'],decision)
         observed=self.observe(operation)

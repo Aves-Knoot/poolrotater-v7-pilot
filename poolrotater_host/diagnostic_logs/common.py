@@ -53,8 +53,18 @@ def check_database(path):
     for suffix in ('', '-wal', '-shm', '-journal'):
         file = Path(str(path) + suffix)
         if not os.path.lexists(file):
+            if not suffix:
+                raise FileNotFoundError(file)
             continue
-        st = file.lstat()
+        try:
+            st = file.lstat()
+        except FileNotFoundError:
+            # SQLite may remove an optional sidecar after lexists and before
+            # lstat while committing a transaction. A vanished main database
+            # remains an error because it is the authority being checked.
+            if suffix:
+                continue
+            raise
         require(stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and st.st_nlink == 1 and not st.st_mode & 0o077, 'unsafe_log_database')
 
 

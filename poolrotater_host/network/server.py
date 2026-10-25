@@ -88,7 +88,7 @@ class Handler(BaseHTTPRequestHandler):
             # Enrolled data transfers have no requests/minute or bandwidth cap.
             # Public/control routes retain admission protection and all requests
             # retain bounded size, concurrency, deadlines and authentication.
-            bulk=path.startswith(('/v1/activity/','/v1/logs/','/v1/ratings/','/v2/ratings/','/v2/activity/')) or path in ('/v1/events/batches','/v1/transfers/capabilities','/v1/hosts/self/managed-settings')
+            bulk=path.startswith(('/v1/activity/','/v1/logs/','/v1/ratings/','/v2/ratings/','/v2/activity/','/v3/ratings/','/v3/activity/')) or path in ('/v1/events/batches','/v1/transfers/capabilities','/v1/hosts/self/managed-settings')
             if bulk:
                 with store.transaction() as db:store._authenticate(db,verifier(self.token()),'heartbeat')
             else:self.server.admission()
@@ -107,37 +107,37 @@ class Handler(BaseHTTPRequestHandler):
                     from ..bookings.hub import Repository as BookingRepository
                     from ..bookings.presentation import public_booking_status
                     result['slots']=[public_booking_status(slot)for slot in BookingRepository(store).ledger.public_slots()]
-            elif method=='GET' and path in ('/v1/rooms','/v2/rooms','/directory'):
+            elif method=='GET' and path in ('/v1/rooms','/v2/rooms','/v3/rooms','/directory'):
                 params=parse_qs(target.query,keep_blank_values=True,strict_parsing=True)
                 require(set(params)<={'offset','limit'} and all(len(v)==1 and v[0].isdigit() and len(v[0])<=7 for v in params.values()),'invalid_pagination')
-                result=store.directory(offset=int(params.get('offset',['0'])[0]),limit=int(params.get('limit',['50'])[0]),protocol_version=2 if path=='/v2/rooms' else 1)
+                result=store.directory(offset=int(params.get('offset',['0'])[0]),limit=int(params.get('limit',['50'])[0]),protocol_version=3 if path=='/v3/rooms' else 2 if path=='/v2/rooms' else 1)
                 if path=='/directory':
                     from .directory import render
                     html=render(result)
-            elif method=='GET' and path in ('/v1/activity/replica/current','/v2/activity/replica/current'):
-                require(not target.query,'unexpected_query');result=self.server.statistics.current(self.token(),include_catch=path.startswith('/v2/'))
-            elif method=='GET' and path in ('/v1/activity/replica/page','/v2/activity/replica/page'):
+            elif method=='GET' and path in ('/v1/activity/replica/current','/v2/activity/replica/current','/v3/activity/replica/current'):
+                require(not target.query,'unexpected_query');result=self.server.statistics.current(self.token(),include_catch=path.startswith('/v2/'),include_taiko=path.startswith('/v3/'))
+            elif method=='GET' and path in ('/v1/activity/replica/page','/v2/activity/replica/page','/v3/activity/replica/page'):
                 params=parse_qs(target.query,keep_blank_values=True,strict_parsing=True)
                 require(set(params)=={'content_id','index'} and all(len(v)==1 for v in params.values())
                         and params['index'][0].isdigit() and len(params['index'][0])<=4,'invalid_snapshot_query')
-                result=self.server.statistics.read_page(self.token(),params['content_id'][0],int(params['index'][0]),include_catch=path.startswith('/v2/'))
+                result=self.server.statistics.read_page(self.token(),params['content_id'][0],int(params['index'][0]),include_catch=path.startswith('/v2/'),include_taiko=path.startswith('/v3/'))
             elif method=='GET' and path=='/v1/hosts/self':
                 require(not target.query,'unexpected_query');result=store.status(self.token())
             elif method=='GET' and path in ('/v1/ratings/snapshots/current','/v1/ratings/snapshot-page',
-                                              '/v2/ratings/snapshots/current','/v2/ratings/snapshot-page'):
+                                              '/v2/ratings/snapshots/current','/v2/ratings/snapshot-page','/v3/ratings/snapshots/current','/v3/ratings/snapshot-page'):
                 from ..ratings.repository import Repository
                 from ..ratings.snapshots import Publisher,digest
                 repository=Repository(store)
                 with store.transaction() as db:repository._authorized(db,self.token(),'ratings-read')
                 publisher=Publisher(repository)
-                context=path.startswith('/v2/')
+                context=path.startswith(('/v2/','/v3/'));taiko=path.startswith('/v3/')
                 if path.endswith('/snapshots/current'):
-                    require(not target.query,'unexpected_query');result=publisher.current(context=context)
+                    require(not target.query,'unexpected_query');result=publisher.current(context=context,taiko=taiko)
                 else:
                     params=parse_qs(target.query,keep_blank_values=True,strict_parsing=True)
                     require(set(params)=={'content_id','index'} and all(len(v)==1 for v in params.values())
                             and params['index'][0].isdigit() and len(params['index'][0])<=3,'invalid_snapshot_query')
-                    result=publisher.read_page(digest(params['content_id'][0]),int(params['index'][0]),context=context)
+                    result=publisher.read_page(digest(params['content_id'][0]),int(params['index'][0]),context=context,taiko=taiko)
             elif method=='POST':
                 require(not target.query,'unexpected_query')
                 if path=='/v1/enrollments':
@@ -164,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=='/v1/hosts/self/recovery':
                     from ..rescue.repository import Repository
                     result=Repository(store).accept(self.token(),self.body())
-                elif path in ('/v1/activity/consent','/v1/activity/events','/v1/activity/query'):
+                elif path in ('/v1/activity/consent','/v1/activity/events','/v1/activity/query','/v3/activity/query'):
                     from ..activity.repository import Repository as Activity
                     repository=Activity(store);token=self.token();body=self.body()
                     result=(repository.consent(token,body) if path.endswith('/consent') else

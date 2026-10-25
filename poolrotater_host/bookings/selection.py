@@ -13,7 +13,8 @@ import copy
 STANDARD_PRESETS = frozenset(('standard-auto', 'standard-fixed', 'standard-loved'))
 MANIA_PRESETS = frozenset(('mania-4k', 'mania-7k'))
 CATCH_PRESETS = frozenset(('catch-fixed',))
-PRESETS = STANDARD_PRESETS | MANIA_PRESETS | CATCH_PRESETS
+TAIKO_PRESETS = frozenset(('taiko-fixed','taiko-auto'))
+PRESETS = STANDARD_PRESETS | MANIA_PRESETS | CATCH_PRESETS | TAIKO_PRESETS
 FILTER_LIMITS = {'ar': (0.0, 12.0), 'length': (0.0, 3600.0)}
 UNSUPPORTED_FILTERS = {
     'od': 'OD filtering is unavailable because the full catalog does not qualify OD metadata.',
@@ -80,7 +81,7 @@ def validate_filters(filters, preset):
             raise UnsupportedFilterError('This filter is unavailable for the current catalog.')
         if key == 'ar' and preset in MANIA_PRESETS:
             raise UnsupportedFilterError('AR filtering is unavailable for Mania presets.')
-        if preset in CATCH_PRESETS and key == 'ar':
+        if preset in (CATCH_PRESETS|TAIKO_PRESETS) and key == 'ar':
             raise UnsupportedFilterError('AR filtering is unavailable for Catch in current qualified catalogs.')
         if not isinstance(value, Mapping) or set(value) != {'min', 'max', 'mode'}:
             raise SelectionError('filter requires min, max, and mode')

@@ -120,6 +120,10 @@ def validate_settings(value, *, preset):
                      ('jump_preferred_ar_min','jump_preferred_ar_max')]:
         if low in value and high in value and value[low]>value[high]:
             raise ConfigError('owner gameplay preference range invalid')
+    if preset in ('taiko-fixed','taiko-auto'):
+        from bot.mode import validate_taiko_config
+        try: validate_taiko_config(value)
+        except ValueError as exc:raise ConfigError(str(exc)) from None
     if preset == 'catch-fixed':
         from bot.mode import validate_catch_config
         try: validate_catch_config(value)

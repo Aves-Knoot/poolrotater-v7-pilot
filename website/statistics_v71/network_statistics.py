@@ -17,8 +17,8 @@ import re
 import stat
 
 PERIODS = {"all": 0, "7d": 7 * 86400, "14d": 14 * 86400, "30d": 30 * 86400}
-SCOPES = ("all", "standard", "mania_7k", "mania_4k", "catch")
-MODES = {"catch": "catch", "standard": "standard", "mania4": "mania_4k", "mania7": "mania_7k",
+SCOPES = ("all", "standard", "mania_7k", "mania_4k", "catch", "taiko")
+MODES = {"catch": "catch", "taiko": "taiko", "standard": "standard", "mania4": "mania_4k", "mania7": "mania_7k",
          "mania_4k": "mania_4k", "mania_7k": "mania_7k", "mania": "mania_other"}
 HOST = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}\Z")
 

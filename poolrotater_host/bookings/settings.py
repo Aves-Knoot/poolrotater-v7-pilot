@@ -34,6 +34,8 @@ def _mod_list(value,allowed):
 
 
 def _fixed_fields(preset):
+    if preset in ('taiko-fixed','taiko-auto'):
+        return {'allowed_mods':[],'required_mods':[],'freestyle':False}
     if preset=='catch-fixed':
         return {'auto_difficulty':False,'allowed_mods':[],'required_mods':[],
                 'freestyle':False}
@@ -50,8 +52,9 @@ def _available_fields(preset):
         result.discard('dt_mode')
     if preset in ('mania-4k','mania-7k','catch-fixed','standard-loved'):
         result.discard('stream_share')
-    if preset=='catch-fixed':
+    if preset in ('catch-fixed','taiko-fixed','taiko-auto'):
         result.difference_update(('allowed_mods','required_mods','freestyle'))
+    if preset.startswith('taiko-'):result.difference_update(('dt_mode','stream_share'))
     return result
 
 
@@ -59,7 +62,7 @@ def validate_filters(value,preset):
     require(type(value)is dict and not set(value)-set(FILTERS),'booking_invalid_filters')
     result={}
     for key,item in value.items():
-        require(not(key=='ar'and (preset.startswith('mania-')or preset=='catch-fixed')),
+        require(not(key=='ar'and (preset.startswith(('mania-','taiko-'))or preset=='catch-fixed')),
                 'booking_filter_unsupported')
         require(type(item)is dict and set(item)=={'min','max','mode'},'booking_invalid_filters')
         require(item['mode']in('hard','prefer'),'booking_invalid_filters')
@@ -161,7 +164,7 @@ def inventory(preset):
             if preset.startswith('mania-')else ['variety'])
     from .selection import UNSUPPORTED_FILTERS
     unsupported=dict(UNSUPPORTED_FILTERS)
-    if preset.startswith('mania-')or preset=='catch-fixed':
+    if preset.startswith(('mania-','taiko-'))or preset=='catch-fixed':
         unsupported['ar']='This catalog does not qualify AR filtering for this ruleset.'
     max_sr=100 if preset=='catch-fixed' else 20
     limits={key:list(bounds) for key,bounds in LIMITS.items()}

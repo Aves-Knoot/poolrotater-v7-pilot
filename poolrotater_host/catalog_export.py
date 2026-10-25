@@ -26,7 +26,7 @@ READER = 'poolrotater-selection-v1'
 MAX_FILE = 512 * 1024**2
 MAX_ROWS = 500_000
 MAX_TEXT = 4096
-MODES = {'standard': (0, None), 'mania4': (3, 4), 'mania7': (3, 7), 'catch': (2, None), 'loved': (0, None)}
+MODES = {'standard': (0, None), 'mania4': (3, 4), 'mania7': (3, 7), 'catch': (2, None), 'loved': (0, None), 'taiko': (1, None)}
 CORE_MODES = ('standard', 'mania4', 'mania7')
 
 def complete_modes(value):
@@ -68,6 +68,9 @@ def canonical(value):
 
 
 def schemas(mode, role):
+    if mode=='taiko' and role=='catalog':
+        from .catalog_taiko import MAP_COLUMNS,CALIBRATION_COLUMNS
+        return {'taiko_maps':MAP_COLUMNS,'taiko_auto_calibration':CALIBRATION_COLUMNS}
     if mode == 'loved' and role == 'catalog':
         from .catalog_loved import COLUMNS
         return {'beatmaps': COLUMNS}
@@ -316,7 +319,7 @@ def _pack(folder, files):
 
 def export_bundle(catalog, destination, mode, *, dt=None, farm=None, converts=None, convert_validation=None):
     """Build a new local export directory; never overwrite an installed package."""
-    if (mode in ('catch','loved') or mode not in MODES or (dt is not None and mode != 'standard')
+    if (mode in ('catch','loved','taiko') or mode not in MODES or (dt is not None and mode != 'standard')
             or (farm is not None and mode == 'standard')
             or ((converts is None)!=(convert_validation is None))
             or (converts is not None and mode=='standard')):
@@ -436,6 +439,9 @@ def validate_manifest(manifest):
     if mode == 'loved':
         from .catalog_loved import validate_manifest as validate_loved
         return validate_loved(manifest)
+    if mode == 'taiko':
+        from .catalog_taiko import validate_manifest as validate_taiko
+        return validate_taiko(manifest)
     if mode == 'catch':
         from .catalog_catch import validate_manifest as validate_catch
         return validate_catch(manifest)
@@ -557,6 +563,9 @@ def inspect_bundle(folder):
     if manifest['mode'] == 'loved':
         from .catalog_loved import inspect as inspect_loved
         return inspect_loved(folder, manifest)
+    if manifest['mode'] == 'taiko':
+        from .catalog_taiko import inspect as inspect_taiko
+        return inspect_taiko(folder, manifest)
     if manifest['mode'] == 'catch':
         from .catalog_catch import inspect as inspect_catch
         return inspect_catch(folder, manifest)
@@ -626,6 +635,9 @@ def pool_from_bundle(folder, *, sr_min=0, sr_max=20, source_mode='variety', limi
     if manifest['mode'] == 'loved':
         from bot.pool import MapPool
         return MapPool(str(folder/'catalog.db'), loved_mode=True, **options)
+    if manifest['mode'] == 'taiko':
+        from bot.taiko_pool import TaikoPool
+        return TaikoPool(folder/'catalog.db',purpose='production',**options)
     if manifest['mode'] == 'catch':
         from bot.catch_pool import ProductionCatchPool
         return ProductionCatchPool(folder/'catalog.db', purpose='production', **options)

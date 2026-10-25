@@ -64,10 +64,35 @@ class NetworkReader:
     source='network'
     def __init__(self,root,*,server_epoch,ruleset_id=None):
         self.ruleset_id=ruleset_id
-        identifier(server_epoch);self.cache=Cache(root);self.epoch=server_epoch;self.status={'phase':'cold','watermark':0}
+        identifier(server_epoch);self.cache=Cache(root,taiko=ruleset_id==1);self.epoch=server_epoch;self.status={'phase':'cold','watermark':0}
+
+    def _snapshot(self):
+        """Read the newest applicable verified cache for this ruleset.
+
+        Taiko has no legacy representation and reads v3 only. Standard/Catch
+        retain their old v1/v2 cache as fallback, while a mixed host can use
+        its all-scope v3 cache for fresh Standard and Catch tallies too.
+        """
+        counts,status=self.cache.read()
+        if self.ruleset_id==1:
+            return counts,status
+        taiko_counts,taiko_status=Cache(self.cache.root,taiko=True).read()
+        if (taiko_status.get('server_epoch')!=self.epoch
+                or taiko_status.get('phase') in ('cold','unavailable')):
+            return counts,status
+        if status.get('server_epoch')!=self.epoch or status.get('phase') in ('cold','unavailable'):
+            return taiko_counts,taiko_status
+        primary_version=(status.get('watermark',0),status.get('policy_watermark',0))
+        taiko_version=(taiko_status.get('watermark',0),taiko_status.get('policy_watermark',0))
+        # When both versions cover the same canonical point, v3 is preferred
+        # because it carries every ruleset. Never replace a newer v1/v2 cache
+        # with a partially downloaded/stale v3 generation.
+        if taiko_version>=primary_version:
+            return taiko_counts,taiko_status
+        return counts,status
 
     def tallies(self,beatmap_ids):
-        counts,status=self.cache.read();self.status=status
+        counts,status=self._snapshot();self.status=status
         if status.get('server_epoch') not in (None,self.epoch):
             self.status={'phase':'epoch-review-required','watermark':status['watermark']};return {}
         return {int(bid):counts[map_key(int(bid), self.ruleset_id)] for bid in set(beatmap_ids) if map_key(int(bid), self.ruleset_id) in counts}

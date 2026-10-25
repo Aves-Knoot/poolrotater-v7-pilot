@@ -4,7 +4,7 @@ from ..network.contracts import require, fields, integer, text, base, verifier
 
 def contract(value):
     fields(value,('protocol_version','user_ids','usernames','ruleset_id'));base(value)
-    require(value['ruleset_id'] in (0,2,3) and type(value['ruleset_id']) is int,'invalid_activity_ruleset')
+    require(value['ruleset_id'] in (0,1,2,3) and type(value['ruleset_id']) is int,'invalid_activity_ruleset')
     require(type(value['user_ids']) is list and len(value['user_ids'])<=20,'activity_query_too_large')
     require(type(value['usernames']) is list and len(value['usernames'])<=10,'activity_query_too_large')
     for uid in value['user_ids']:integer(uid)
@@ -23,8 +23,8 @@ def union_seconds(intervals):
 def player(snapshot, uid, *, ruleset_id=0):
     """Full identity and public totals. A hidden marker contains no leaked totals/name."""
     if uid in set(snapshot['hidden_user_ids']):return {'user_id':uid,'hidden':True}
-    require(type(ruleset_id) is int and ruleset_id in (0,2,3),'invalid_activity_ruleset')
-    allowed={0:('standard',),2:('catch',),3:('mania','mania4','mania7')}[ruleset_id]
+    require(type(ruleset_id) is int and ruleset_id in (0,1,2,3),'invalid_activity_ruleset')
+    allowed={0:('standard',),1:('taiko',),2:('catch',),3:('mania','mania4','mania7')}[ruleset_id]
     result={'user_id':uid,'username':str(uid),'hidden':False,'total_gain':0.0,'achievement_count':0,
             'best_gain':0.0,'total_lobby_seconds':0.0,'visit_count':0,'map_plays':0,
             'first_gain_at':None,'last_gain_at':None,'first_join_at':None,'last_join_at':None,'last_leave_at':None,

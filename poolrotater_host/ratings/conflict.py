@@ -30,10 +30,15 @@ def decide(current, event, predecessor=None):
             and predecessor['installation_id'] == event['installation_id']
             and predecessor['generation'] == event['generation']
             and predecessor['beatmap_id'] == event['beatmap_id']
-            and (predecessor.get('context', {}).get('ruleset_id') == 2) == (event.get('context', {}).get('ruleset_id') == 2)
+            and _scope(predecessor) == _scope(event)
             and predecessor['user_id'] == event['user_id']
             and predecessor['sequence'] < event['sequence']):
         return 'accepted', 'current_predecessor'
     if current is not None and current['rating'] == event['rating']:
         return 'superseded', 'same_current_value'
     return 'conflict', 'canonical_revision_changed'
+
+
+def _scope(event):
+    mode=event.get('context',{}).get('ruleset_id')
+    return mode if mode in (1,2) else None

@@ -1,6 +1,9 @@
 # PoolRotater distributed host
 
-Operator build: **v7.3.2**, controller failure diagnostics over the v7.3.1 foundation.
+R25 v7.3.3 has passed the two normal installed automatic-upgrade paths from
+v7.3.0 and v7.3.2. One additional pre-admission controller-interruption case
+failed before the candidate could be installed; it remains an explicit legacy
+limitation and is not claimed as recovered. Install only matching GitHub release assets or the signed automatic update. See [release details and qualification](docs/V7_3_3_TAIKO_RATINGS.md).
 Use the installer ZIP asset of an accepted GitHub release; source archives do
 not install a protected runtime.
 

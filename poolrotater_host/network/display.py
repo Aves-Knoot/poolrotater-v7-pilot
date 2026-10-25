@@ -38,7 +38,7 @@ def room_v2(value):
     fields(value,V1_ROOM_FIELDS+('display',));room({k:value[k] for k in V1_ROOM_FIELDS});display(value['display'])
     if value['display'] is not None:
         shown=value['display']['settings'];preset=value['preset']
-        require(shown['ruleset_id']==(3 if preset.startswith('mania-') else 2 if preset=='catch-fixed' else 0),'display_preset_mismatch')
+        require(shown['ruleset_id']==(3 if preset.startswith('mania-') else 2 if preset=='catch-fixed' else 1 if preset.startswith('taiko-') else 0),'display_preset_mismatch')
         require(shown['keys'] in (None, 4 if preset=='mania-4k' else 7) if preset.startswith('mania-') else shown['keys'] is None,'display_preset_mismatch')
         if preset=='catch-fixed':
             require(shown['auto_difficulty'] is False and shown['freestyle'] is False

@@ -4,7 +4,8 @@ import time
 import uuid
 from ..network.contracts import fields, identifier, integer, number, require, verifier, canonical
 from ..diagnostic_logs.common import private_database, transaction
-from .contracts import request, capabilities, digest, PHASES, TERMINAL, ERRORS
+from .contracts import (request, capabilities, digest, PHASES, TERMINAL, ERRORS,
+                        require_catalog_client_version)
 
 PATH='/v1/hosts/self/managed-rooms'
 INFER=object()
@@ -119,6 +120,16 @@ class Repository:
                     require(previous['host']==host_id and previous['submission']==submission,'managed_operation_conflict',409)
                     return {'ok':True,'request':json.loads(previous['payload']),'replayed':True,
                             'receipt':json.loads(previous['receipt']) if previous['receipt'] else None}
+                # Enforce Taiko's minimum only when creating a new operation.
+                # An exact retry is idempotent even if the host heartbeat has
+                # since gone stale; the stored submission binding still applies.
+                if action=='catalog' and type(patch) is dict:
+                    mode=patch.get('mode')
+                    version=None
+                    if (host['heartbeat'] is not None and host['received'] is not None
+                            and 0<=now-host['received']<=180):
+                        version=json.loads(host['heartbeat']).get('code_version')
+                    require_catalog_client_version(mode,version)
                 report=db.execute('SELECT * FROM reports WHERE host=?',(host_id,)).fetchone()
                 require(report is not None and 0<=now-report['received']<=120,'managed_fresh_capabilities_required',409)
                 caps=json.loads(report['capabilities']);capabilities(caps)

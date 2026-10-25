@@ -180,6 +180,37 @@ class RelayTests(unittest.TestCase):
             cfg={'_host_root':'/var/lib/poolrotater-v7-pilot/owner','_instance_name':f'room{slot}','ruleset_id':ruleset,'mania_keys':keys,'auto_difficulty':False}
             self.assertEqual(SharedDiscord([cfg]).view_for(f'room{slot}')._public_status_channel_name(),f'l{slot}-{label}-setdiff')
 
+    def test_taiko_channel_labels_and_public_card_preserve_mode_map_and_settings(self):
+        self.assertEqual(channel_name(1,'taiko-fixed'),'l1-taiko-setdiff')
+        self.assertEqual(channel_name(5,'taiko-auto',operator='Taiko'),
+                         'l5-taiko-taiko-autodiff')
+        room={
+            'preset':'taiko-auto','operator':'Taiko','state':'playing',
+            'freshness':'fresh','osu_room_id':12345,'title':'Taiko Lobby',
+            'occupants':4,'min_stars':3.0,'max_stars':5.0,
+            'current_map':{'beatmap_id':410733,'title':'Qualified Taiko NM'},
+            'display':{'settings':{
+                'ruleset_id':1,'auto_difficulty':True,'freestyle':False,
+                'selection_style':'variety','countdown_seconds':15}},
+        }
+        feed={'room_id':12345,'fresh_until':1100,
+              'current_map':{'cover_url':'https://assets.ppy.sh/beatmaps/9001/covers/cover.jpg'}}
+
+        result=card(room,5,feed,now=1000)
+
+        self.assertTrue(result['is_open'])
+        self.assertEqual(result['room_name'],'Taiko Lobby')
+        self.assertEqual(result['player_count'],4)
+        self.assertEqual(result['map_label'],'Qualified Taiko NM')
+        self.assertEqual(result['map_url'],'https://osu.ppy.sh/b/410733')
+        self.assertEqual(result['channel_base_name'],'l5-taiko-taiko-autodiff')
+        self.assertEqual(result['display_name'],'Taiko · taiko-autodiff')
+        self.assertEqual(result['image_url'],'https://assets.ppy.sh/beatmaps/9001/covers/cover.jpg')
+        self.assertEqual(result['extra_fields'],[
+            ('Room settings','Freemod: off · Style: variety · Countdown: 15s')])
+        self.assertNotIn('playback',result)
+        self.assertNotIn('progress',result)
+
     def test_card_matches_map_art_and_omits_playback_progress(self):
         r=self.store.directory(protocol_version=2)['rooms'][0]
         r['state']='playing';r['display']={'settings':{'freestyle':True,'countdown_seconds':15,'selection_style':'variety'}}

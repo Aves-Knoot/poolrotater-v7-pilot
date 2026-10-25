@@ -2,10 +2,12 @@
 import hashlib
 import re
 from ..network.contracts import canonical, fields, identifier, integer, number, require, text
+from ..catalog_export import MODES as CATALOG_MODES
 from .settings import validate
 
 ACTIONS = frozenset(('open','close','restart','configure','inspect','cancel','catalog'))
 TIMINGS = frozenset(('live','next_map','when_empty','immediate'))
+CATALOG_MINIMUM_VERSIONS={'taiko':(7,3,3)}
 PHASES = frozenset(('received','validated','waiting_boundary','applying','applied','refused','uncertain','cancelled','expired'))
 TERMINAL = frozenset(('applied','refused','uncertain','cancelled','expired'))
 ERRORS = frozenset((None,'unsupported_capability','host_identity_mismatch','configuration_revision_changed',
@@ -15,6 +17,14 @@ ERRORS = frozenset((None,'unsupported_capability','host_identity_mismatch','conf
     'managed_application_requires_review'))
 
 def digest(value):return hashlib.sha256(canonical(value)).hexdigest()
+
+def require_catalog_client_version(mode,version):
+    minimum=CATALOG_MINIMUM_VERSIONS.get(mode)
+    if minimum is None:return
+    require(type(version) is str and re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',version) is not None,
+            'catalog_client_version_unsupported',409)
+    require(tuple(map(int,version[1:].split('.')))>=minimum,
+            'catalog_client_version_unsupported',409)
 
 def alias(value):
     require(type(value) is str and re.fullmatch(r'room[1-4]',value) is not None,'invalid_managed_alias')
@@ -36,7 +46,7 @@ def request(value):
     require(type(value['patch']) is dict and len(value['patch'])<=256,'invalid_managed_patch')
     if value['action']=='catalog':
         require(value['timing']=='when_empty' and set(value['patch'])=={'mode','content_id'}
-                and value['patch']['mode'] in ('standard','mania4','mania7','catch','loved')
+                and value['patch']['mode'] in CATALOG_MODES
                 and type(value['patch']['content_id']) is str
                 and re.fullmatch('[a-f0-9]{64}',value['patch']['content_id']) is not None,'invalid_managed_patch')
     elif value['action']=='configure':require(bool(value['patch']),'invalid_managed_patch')

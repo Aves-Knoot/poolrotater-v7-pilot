@@ -164,6 +164,19 @@ Configuration migration likewise pins exact planned bytes before replacement.
 These paths passed installed qualification with the attribution recorded in
 VALIDATION.json; synthetic provider tests are not actual osu! gameplay acceptance.
 
+The v7.3.3 candidate adds `taiko-fixed` and `taiko-auto`. Both select qualified
+Taiko NoMod charts at normal rate using official Taiko difficulty, and
+qualified conversions retain their verified source provenance. Managed startup
+and catalog refresh download the full qualified Taiko catalog automatically.
+An upgrade or catalog download does not change an existing room's preset or
+open a room. A Taiko preset change is an explicit, target-only `.fleet configure`
+operation and uses the normal safe room boundary. Preserve active bookings and
+use only free, unreserved capacity for a pilot.
+
+New Taiko catalog fleet operations require a v7.3.3-or-newer host. The hub
+refuses those operations for older clients; the five existing catalog modes
+and exact operation retries continue to work.
+
 ## Managed participation and rollout
 
 Managed membership requires administration, shared ratings/statistics, staff-only

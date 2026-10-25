@@ -35,7 +35,7 @@ from .pool import (AUTO_SR_AUTO_MIN_CAP, AUTO_SR_FLOOR, AUTO_SR_HALF_WIDTH,
 from .ppmath import gain_from
 from .ppstats import PPStatsStore
 from .ratings import RatingStore
-from .player_preferences import DifficultyRecall, map_type_label
+from .taiko_preferences import ModeDifficultyRecall as DifficultyRecall, map_type_label
 from .languages import PlayerLanguages, player_language_command
 from .hub import (HubTransportError, HubDisconnected, HubInvocationUncertain,
                   validate_mods)
@@ -244,6 +244,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                  lifecycle=None):
         self.hub, self.api, self.pool, self.cfg = hub, api, pool, cfg
         mode = ruleset_id(cfg)
+        if mode == 1:
+            from .mode import validate_taiko_config
+            validate_taiko_config(cfg)
+            if not getattr(pool,'taiko_mode',False):raise ValueError('Taiko room requires TaikoPool')
+            if not (cfg.get('_host_managed_catalogs') is True or cfg.get('_host_offline') is True):
+                raise ValueError('Taiko requires signed managed catalog authority')
         if mode == 2:
             from .mode import validate_catch_mods
             if (not getattr(pool, 'catch_mode', False)
@@ -670,10 +676,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         from poolrotater_host.ratings.reader import for_settings as rating_reader
         self.rating_reader=rating_reader(cfg)
         self.pool.ratings_reader=self.rating_reader
-        if mode == 2:
+        if mode in (1,2):
             from .scoped_ratings import ScopedRatingStore
             self.ratings = ScopedRatingStore(cfg.get('ratings_db','ratings.db'),
-                initialize=not cfg.get('ratings_schema_prepared',False),reader=self.rating_reader,ruleset_id=2)
+                initialize=not cfg.get('ratings_schema_prepared',False),reader=self.rating_reader,ruleset_id=mode)
         else:
             self.ratings = RatingStore(cfg.get('ratings_db','ratings.db'),
                 initialize=not cfg.get('ratings_schema_prepared',False),reader=self.rating_reader)
@@ -685,6 +691,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         from poolrotater_host.activity.reader import for_settings as activity_reader
         self.activity_reader = activity_reader(cfg)
         stats_factory=PPStatsStore
+        if mode == 1:
+            from .taiko_ppstats import TaikoPPStatsStore
+            stats_factory=TaikoPPStatsStore
         if mode == 2:
             from .catch_ppstats import CatchPPStatsStore
             stats_factory=CatchPPStatsStore
@@ -1711,7 +1720,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             f"{difficulty_settings} | "
             f"queue {ahead} future/{ahead + 1} visible | "
             f"{length_text} | poollimit {self.pool.limit} | "
-            f"minpasses {self.pool.min_passcount} | maxage {max_age_text}"
+            + ("" if self.cfg.get("ruleset_id", 0) == 1
+               else f"minpasses {self.pool.min_passcount} | maxage {max_age_text}")
         )
         self.say(
             f"Timing: countdown {int(self.cfg.get('countdown_seconds', 15))}s | "
@@ -1766,9 +1776,13 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         """Handle `.set <name> <value>` and persist successful changes."""
         p = self.prefix
         if len(parts) != 3:
+            filter_tuning_names = (
+                "queue length poollimit countdown" if self.cfg.get("ruleset_id", 0) == 1
+                else "queue length poollimit minpasses countdown"
+            )
             self.say(
-                f"Usage: {p}set <name> <value> | names: bias halfwidth queue "
-                "length poollimit minpasses countdown autostart minplayers "
+                f"Usage: {p}set <name> <value> | names: bias halfwidth "
+                f"{filter_tuning_names} autostart minplayers "
                 "ratingwindow scoredelay infointerval difficultyvote ai aimodel "
                 "difficultyvotecap difficultyvotestep "
                 "apilimit apiburst chatpoll adaptivepoll playingchatpoll "
@@ -1841,6 +1855,14 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             "downloadavailabilitycachedays": "availabilitycache",
         }
         name = aliases.get(name, name)
+        if self.cfg.get("ruleset_id", 0) == 1 and name in (
+            "minpasses", "maxage", "streamshare", "farmshare"
+        ):
+            self.say(
+                "Pass-count, map-age and source-share filters are not "
+                "available in Taiko; no setting was changed."
+            )
+            return
         if self.cfg.get('ruleset_id', 0) == 2 and name in ('bias','halfwidth','minpasses','maxage','streamshare','farmshare'):
             from .catch_runtime import catch_message
             self.say(catch_message(self, 'catch_fixed_difficulty'))
@@ -2610,7 +2632,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         "mania_ln_pick_multiplier",
         "standard_dt_db", "dt_auto_threshold", "dt_pick_share",
         "sparse_passcount_enabled", "sparse_passcount_min_maps", "sparse_passcount_floor",
-        "catch_catalog", "catch_include_loved", "catch_min_length",
+        "catch_catalog", "catch_include_loved", "catch_min_length", "taiko_catalog",
         "ruleset_id", "mania_db", "mania_keys", "mania_source_mode",
         "mania_min_length", "mania_style_min_score", "mania_farm_enabled",
         "mania_min_rank_score", "mania_min_confidence", "mania_min_appearances", "mania_min_bands",
@@ -2711,7 +2733,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         ``self.pool`` is swapped. The visible osu! playlist is then rebuilt at
         the next safe between-map boundary.
         """
-        if self.cfg.get("ruleset_id", 0) in (2, 3):
+        if self.cfg.get("ruleset_id", 0) in (1, 2, 3):
             return []  # Native Catch/Mania source/schema settings require restart.
         keys = ("farm_db", "loved_db", "loved_mode")
         if not any(key in data and self.cfg.get(key) != data[key] for key in keys):
@@ -2808,6 +2830,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             log.warning("ignored invalid hot-reloaded freestyle=%r: must be true/false", freestyle)
             return []
         try:
+            if self.cfg.get('ruleset_id',0)==1:
+                from .mode import validate_taiko_mods
+                validate_taiko_mods(allowed,required,freestyle)
             if self.cfg.get('ruleset_id', 0) == 2:
                 from .mode import validate_catch_mods
                 validate_catch_mods(allowed, required, freestyle)
@@ -3368,7 +3393,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
     def _build_ai_live_context(self, user_id: int) -> str:
         lines = [
-            f"Ruleset: {'native ' + self._mania_key_label() + ' mania (fixed difficulty; no standard calibration)' if self.cfg.get('ruleset_id', 0) == 3 else 'native Catch NM (fixed difficulty)' if self.cfg.get('ruleset_id', 0) == 2 else 'osu!standard'}",
+            f"Ruleset: {'native ' + self._mania_key_label() + ' mania (fixed difficulty; no standard calibration)' if self.cfg.get('ruleset_id', 0) == 3 else 'native Catch NM (fixed difficulty)' if self.cfg.get('ruleset_id', 0) == 2 else 'Taiko NM' if self.cfg.get('ruleset_id',0)==1 else 'osu!standard'}",
             f"Room id: {self.room_id or 'unknown'}",
             f"State: {self.state}",
         ]
@@ -3418,7 +3443,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 med = float(median(pps))
                 half = float(self.cfg.get("auto_sr_half_width", AUTO_SR_HALF_WIDTH))
                 bias = self._effective_auto_bias()
-                target = target_sr_for_pp(med, half_width=half, bias=bias)
+                target = self._target_sr_for_pp(med, half_width=half, bias=bias)
                 line = (
                     f"Difficulty: AutoDiff active {self.pool.sr_min:.2f}-"
                     f"{self.pool.sr_max:.2f}*, target {target:.2f}*, "
@@ -4565,6 +4590,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             self._handle_language_command(user_id, parts)
             return
 
+        if self.cfg.get('ruleset_id', 0) == 1:
+            from .taiko_runtime import handle_command
+            # The historical ``.commands`` spelling is also a help topic
+            # lookup in Taiko, just as it is in the shared help handler below.
+            taiko_cmd = "help" if cmd == "commands" else cmd
+            if handle_command(self,taiko_cmd,parts):return
         if self.cfg.get('ruleset_id', 0) == 2:
             from .catch_runtime import handle_command
             if handle_command(self, cmd, parts):
@@ -4576,12 +4607,13 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return
 
         if cmd in ("help", "commands"):
+            taiko = self.cfg.get("ruleset_id", 0) == 1
             if len(parts) > 1:
                 requested = parts[1].lower().removeprefix(p)
                 canonical = _COMMAND_HELP_ALIASES.get(requested, requested)
                 if mania:
                     canonical = _MANIA_STYLE_ALIASES.get(canonical, canonical)
-                if canonical in {"style", "map", "jack", "chordjack", "ln", "technical", "rice", "noodle"} and not mania:
+                if canonical in {"style", "map", "jack", "chordjack", "ln", "technical", "rice", "noodle"} and not mania and not (taiko and canonical == "map"):
                     self.say(f"{p}{canonical} is available in Mania lobbies. Type {p}help for commands here.")
                 elif canonical in {'jump', 'dt', 'nm'} and (mania or getattr(self.pool, 'loved_mode', False)):
                     self.say(f"{p}{canonical} is available in Standard Ranked lobbies.")
@@ -4589,6 +4621,12 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     usage, description = _COMMAND_HELP[canonical]
                     if mania and canonical == "variety":
                         usage, description = "variety", "Return to a mix of Mania styles for future picks."
+                    elif taiko and canonical == "map":
+                        usage, description = "map", "Show the current map and its link."
+                    elif taiko and canonical == "pp":
+                        usage, description = "pp", "Show the current chart's qualified Taiko NM reference PP."
+                    elif taiko and canonical == "variety":
+                        usage, description = "variety", "Show the Taiko NM variety source; additional style filters are unavailable."
                     elif canonical == "time":
                         description += f" Alias: {p}t."
                     elif not mania and canonical in {"farm", "stream", "jump"} and callable(getattr(type(self.pool), 'set_style_toggle', None)):
@@ -4602,6 +4640,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     self.say(f"{p}{usage} — {description}")
                 elif is_moderator and _MOD_COMMAND_HELP_ALIASES.get(canonical, canonical) in _MOD_COMMAND_HELP:
                     usage, description = _MOD_COMMAND_HELP[_MOD_COMMAND_HELP_ALIASES.get(canonical, canonical)]
+                    if taiko and _MOD_COMMAND_HELP_ALIASES.get(canonical, canonical) == "maxage":
+                        usage, description = "maxage", "Map-age filtering is not available in Taiko."
                     self.say(f"Mod: {p}{usage} — {description}")
                 elif is_admin and canonical in _ADMIN_COMMAND_HELP:
                     usage, description = _ADMIN_COMMAND_HELP[canonical]
@@ -4617,17 +4657,20 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         elif cmd == "help2":
             # Regular players only see regular-player commands. Admin controls
             # are both hidden from and inaccessible to non-admin users.
+            taiko = self.cfg.get("ruleset_id", 0) == 1
             source_commands = (
                 f"{p}map {p}style {p}jack {p}chordjack {p}stream {p}ln {p}technical {p}rice {p}noodle {p}variety {p}farm " if mania else
+                f"{p}map {p}variety " if taiko else
                 "" if getattr(self.pool, "loved_mode", False) else
                 f"{p}farm {p}stream {p}jump/{p}aim {p}variety [farm% stream%] {p}dt [on|off|100] {p}nm "
             )
             if mania:
                 self.say(f"{self._mania_key_label()} Ranked/Approved; variety may include vetted converts. Fixed difficulty; {p}harder/{p}easier vote in {self._difficulty_vote_step():.2f}* steps. Styles are heuristic, not guaranteed PP efficiency.")
             auto_help = "" if mania else f"{p}auto "
+            pp_help = f"{p}pp " if taiko else f"{p}pp [mods] [acc%...] "
             public_commands = (
                 f"Commands: {p}queue {p}pool {source_commands}{p}stats [username] {p}lobby "
-                f"{p}start {p}pp [mods] [acc%...] "
+                f"{p}start {pp_help}"
                 f"{p}wait {p}time/{p}t "
                 f"{p}redo/{p}replay/{p}repeat "
                 f"{p}good/{p}g {p}bad/{p}b {p}ok {p}skip/{p}s "
@@ -4646,7 +4689,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 self.say(f"Moderation: {p}kick <user> | {p}ban <user> [30m|24h|7d] [| reason] | {p}unban <user> | {p}bans [page]")
                 self.say(
                     f"Mod tune: {p}range <min> <max> {auto_help}{p}length/<maxlength> <s> "
-                    f"{p}maxage <years|off> {p}countdown <s> "
+                    f"{'' if taiko else p + 'maxage <years|off> '}{p}countdown <s> "
                     f"{p}autostart <s> {p}minplayers <n> {p}queueahead <n> "
                     f"{p}difficultyvote <25-100%>"
                 )
@@ -4673,13 +4716,15 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                         f"{p}shutdown <room> | {p}<room> shutdown | "
                         f"{p}say <message>"
                     )
-                self.say(
-                    "Tune names: bias halfwidth queue length poollimit minpasses "
-                    "countdown autostart minplayers ratingwindow scoredelay "
+                tune_names = (
+                    "Tune names: bias halfwidth queue length poollimit "
+                    + ("" if taiko else "minpasses ")
+                    + "countdown autostart minplayers ratingwindow scoredelay "
                     "infointerval difficultyvote ai aimodel aiusercooldown "
                     "aiglobalcooldown aimaxpending aimaxchars aimaxtokens "
                     "aimaxprompt aichatcontext aitimeout aitemperature"
                 )
+                self.say(tune_names)
 
         elif cmd == "discord":
             self.say(self._discord_invite_text(fallback=True))
@@ -4873,7 +4918,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 if bool(getattr(m, "is_farm", False))
                 and bool(getattr(m, "is_stream", False))
             )
-            if getattr(self.pool, "loved_mode", False):
+            if self.cfg.get("ruleset_id", 0) == 1:
+                src = self.pool.source_mode_label()
+            elif getattr(self.pool, "loved_mode", False):
                 src = f"Loved {len(self.pool.maps)}"
             elif self.pool.source_mode == 'jump':
                 src = f"Jump {len(self.pool.maps)} ({sum(m.jump_score > 0 for m in self.pool.maps)} strict)"
@@ -4905,9 +4952,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                     half = float(self.cfg.get(
                         "auto_sr_half_width", AUTO_SR_HALF_WIDTH))
                     bias = self._effective_auto_bias()
-                    target = target_sr_for_pp(
+                    target = self._target_sr_for_pp(
                         med, half_width=half, bias=bias)
-                    next_lo, next_hi = auto_range_for_pp(
+                    next_lo, next_hi = self._auto_range_for_pp(
                         med, half_width=half, bias=bias)
 
                     pending_change = (
@@ -5194,10 +5241,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                         "auto_sr_half_width", AUTO_SR_HALF_WIDTH
                     ))
                     bias = self._effective_auto_bias()
-                    target = target_sr_for_pp(
+                    target = self._target_sr_for_pp(
                         med, half_width=half, bias=bias
                     )
-                    next_lo, next_hi = auto_range_for_pp(
+                    next_lo, next_hi = self._auto_range_for_pp(
                         med, half_width=half, bias=bias
                     )
                     next_differs = (
@@ -5602,6 +5649,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                             )
 
             elif cmd == "maxage":
+                if self.cfg.get("ruleset_id", 0) == 1:
+                    self.say(
+                        "Map-age filtering is not available in Taiko; no setting was changed."
+                    )
+                    return
                 age_kind = (
                     "Loved" if getattr(self.pool, "loved_mode", False)
                     else "Ranked"
@@ -7091,6 +7143,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                  else self.pool.next_map())
             if m is None:
                 return None
+            if self.cfg.get('ruleset_id',0)==1:
+                from .taiko_runtime import revision_valid
+                self.pool.verify_variant(m,in_range=True)
+                if not revision_valid(self,m):return None
             if self.cfg.get('ruleset_id', 0) == 2:
                 self.pool.verify_variant(m, in_range=True)
                 if not self._check_catch_revision(m):
@@ -7249,8 +7305,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         return False
 
     def _prefetch_map_pp(self, m):
-        if self.cfg.get('ruleset_id', 0) == 2:
-            return  # C6 judgement scenarios are not a generic accuracy curve.
+        if self.cfg.get('ruleset_id', 0) in (1,2):
+            return  # Qualified mode-specific scenarios; C6 judgement scenarios are not a generic accuracy curve.
         self.pp_projection.prefetch(m.beatmap_id, **self._dt_pp_kwargs(m))
 
     def _cleanup_disabled_dt(self):
@@ -7349,7 +7405,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         log.info("creating room")
         initial_name = self._room_name_for_range(
             self.pool.sr_min, self.pool.sr_max)
-        resp = self.hub.make_room(initial_name, first.beatmap_id, **({"ruleset_id": self.cfg["ruleset_id"]} if self.cfg.get("ruleset_id", 0) in (2, 3) else {}))
+        resp = self.hub.make_room(initial_name, first.beatmap_id, **({"ruleset_id": self.cfg["ruleset_id"]} if self.cfg.get("ruleset_id", 0) in (1, 2, 3) else {}))
         self._current_room_name = initial_name
         self.room_id = resp["room_id"]
         self.channel_id = resp["chat_channel_id"]
@@ -7410,7 +7466,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             )
 
         self.say(
-            f"{self._current_room_name} — auto-rotating {self._mania_key_label() + ' mania' if self.cfg.get('ruleset_id', 0) == 3 else 'native Catch NM' if self.cfg.get('ruleset_id', 0) == 2 else 'farm'} pool. "
+            f"{self._current_room_name} — auto-rotating {self._mania_key_label() + ' mania' if self.cfg.get('ruleset_id', 0) == 3 else 'native Catch NM' if self.cfg.get('ruleset_id', 0) == 2 else 'Taiko NM' if self.cfg.get('ruleset_id',0)==1 else 'farm'} pool. "
             f"Type {self.prefix}help for commands.",
             automatic=True,
         )
@@ -7669,6 +7725,14 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                         break
             self._playlist_dirty = True
             return normalized
+        if self.cfg.get('ruleset_id',0)==1:
+            from .taiko_runtime import playlist_valid
+            normalized['taiko_invalid']=not playlist_valid(self,item)
+            if normalized['taiko_invalid']:
+                self._playlist_maps.pop(item_id,None)
+                self._server_playlist_items[item_id]=normalized;self._playlist_dirty=True
+                log.error('Taiko playlist has an unqualified variant; holding start')
+                return normalized
         if self.cfg.get('ruleset_id', 0) == 2:
             from .catch_runtime import playlist_valid
             normalized['catch_invalid'] = not playlist_valid(self, item)
@@ -7733,7 +7797,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         item_id = int(item_id)
         if (self._server_playlist_items.get(item_id, {}).get("mania_invalid")
                 or self._server_playlist_items.get(item_id, {}).get('standard_invalid')
-                or self._server_playlist_items.get(item_id, {}).get('catch_invalid')):
+                or self._server_playlist_items.get(item_id, {}).get('catch_invalid')
+                or self._server_playlist_items.get(item_id, {}).get('taiko_invalid')):
             return None
         m = self._playlist_maps.get(item_id)
         if m is not None:
@@ -7967,6 +8032,9 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 return False
             self._last_playlist_audit = time.time()
 
+        if self.cfg.get('ruleset_id',0)==1 and any(i.get('taiko_invalid') and not i.get('played') and not i.get('expired') for i in self._server_playlist_items.values()):
+            log.error('Taiko playlist contains an unverifiable variant; refusing start')
+            return False
         if self.cfg.get('ruleset_id', 0) == 2 and any(
                 i.get('catch_invalid') and not i.get('played') and not i.get('expired')
                 for i in self._server_playlist_items.values()):
@@ -8067,6 +8135,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         return True
 
     def _playlist_rules_for_map(self, m) -> dict:
+        if self.cfg.get('ruleset_id',0)==1:
+            from .mode import validate_taiko_config
+            validate_taiko_config(self.cfg)
+            self.pool.verify_variant(m,in_range=True)
+            return dict(ruleset_id=1,allowed_mods=[],required_mods=[],freestyle=False)
         if self.cfg.get('ruleset_id', 0) == 2:
             from .mode import validate_catch_mods
             validate_catch_mods(self.cfg.get('allowed_mods', []), self.cfg.get('required_mods', []), self.cfg.get('freestyle', False))
@@ -8276,6 +8349,15 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if current_bid <= 0 or current_bid == completed_bid:
             return False
 
+        if self.cfg.get('ruleset_id',0)==1:
+            self._post_match_pp_announce_pending=False
+            self._post_match_pp_completed_beatmap_id=None
+            pp=getattr(m,'max_pp',None)
+            if type(pp) in (int,float) and math.isfinite(pp) and pp>0:
+                self.say(f'(Taiko NM) PP — SS {pp:.1f}pp',automatic=True)
+                return True
+            return False
+
         # A promoted queue entry was prefetched when it was first added, so in
         # normal operation this is an immediate cache hit. Keep the same small
         # bounded wait as ordinary map announcements for cold-start cases.
@@ -8294,7 +8376,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
     def _announce_map(self, m) -> None:
         extra = ""
-        if self.cfg.get("map_pp_auto_announce_enabled", True):
+        if self.cfg.get("map_pp_auto_announce_enabled", True) and self.cfg.get('ruleset_id',0)==1:
+            pp=getattr(m,'max_pp',None)
+            if type(pp) in (int,float) and math.isfinite(pp) and pp>0:
+                extra=f' PP NM SS {pp:.1f}pp'
+        elif self.cfg.get("map_pp_auto_announce_enabled", True):
             projection = self.pp_projection.get(
                 m.beatmap_id, wait_seconds=self._map_pp_wait_seconds(), **self._dt_pp_kwargs(m)
             )
@@ -9666,6 +9752,19 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             return False
         return bool(lobby_members & recent_raters)
 
+    def _target_sr_for_pp(self, pp, *, half_width=AUTO_SR_HALF_WIDTH, bias=0.0):
+        if self.cfg.get('ruleset_id',0)==1:
+            value=self.pool.target_sr_for_pp(pp)
+            return (self.pool.sr_min+self.pool.sr_max)/2 if value is None else min(20.,max(0.,value+bias))
+        return target_sr_for_pp(pp,half_width=half_width,bias=bias)
+
+    def _auto_range_for_pp(self, pp, *, half_width=AUTO_SR_HALF_WIDTH, bias=0.0):
+        if self.cfg.get('ruleset_id',0)==1:
+            if self.pool.target_sr_for_pp(pp) is None:return self.pool.sr_min,self.pool.sr_max
+            target=self._target_sr_for_pp(pp,half_width=half_width,bias=bias)
+            return max(0.,target-half_width),min(20.,target+half_width)
+        return auto_range_for_pp(pp,half_width=half_width,bias=bias)
+
     def auto_difficulty_pp_values(
             self, active: set[int] | None = None
     ) -> tuple[list[float], tuple[int, float] | None, int]:
@@ -10949,7 +11048,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
 
     def _show_player_stats(self, user_id, parts, *, pending=False):
         mania = self.cfg.get('ruleset_id', 0) == 3
-        stats_label='Catch' if self.cfg.get('ruleset_id',0)==2 else 'Mania' if mania else 'AutoHost'
+        stats_label='Taiko' if self.cfg.get('ruleset_id',0)==1 else 'Catch' if self.cfg.get('ruleset_id',0)==2 else 'Mania' if mania else 'AutoHost'
         requester_name = str(
             (self.players.get(user_id) or {}).get("name")
             or self.pp_stats.username_for_user_id(user_id)
@@ -11130,7 +11229,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # network I/O must not hold commands or READY processing behind it.
             self._defer_player_profile(user_id)
             return
-        mode_kwargs = {"mode": {2: "fruits", 3: "mania"}[self.cfg["ruleset_id"]]} if self.cfg.get("ruleset_id", 0) in (2, 3) else {}
+        mode_kwargs = {"mode": {1: "taiko", 2: "fruits", 3: "mania"}[self.cfg["ruleset_id"]]} if self.cfg.get("ruleset_id", 0) in (1, 2, 3) else {}
         try:
             u = self.api.user(user_id, **mode_kwargs)
         except (ApiAdmissionDeferred, ApiProfileReadUnavailable):
@@ -11218,7 +11317,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         for uid, work in list(pending.items()):
             if now < work["retry_at"]:
                 continue
-            mode_kwargs = {"mode": {2: "fruits", 3: "mania"}[self.cfg["ruleset_id"]]} if self.cfg.get("ruleset_id", 0) in (2, 3) else {}
+            mode_kwargs = {"mode": {1: "taiko", 2: "fruits", 3: "mania"}[self.cfg["ruleset_id"]]} if self.cfg.get("ruleset_id", 0) in (1, 2, 3) else {}
             fields = None
             try:
                 profile = work["profile"]
@@ -11332,7 +11431,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 continue
             result = queue.Queue(maxsize=2)
             api, profile = self.api, work['profile']
-            mode = {'mode': {2:'fruits', 3:'mania'}[self.cfg['ruleset_id']]} if self.cfg.get('ruleset_id', 0) in (2,3) else {}
+            mode = {'mode': {1:'taiko', 2:'fruits', 3:'mania'}[self.cfg['ruleset_id']]} if self.cfg.get('ruleset_id', 0) in (1,2,3) else {}
             def fetch(api=api, uid=uid, profile=profile, mode=mode, result=result):
                 raw = None
                 try:
@@ -11665,8 +11764,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         med = float(median(pps))
         half = float(self.cfg.get("auto_sr_half_width", AUTO_SR_HALF_WIDTH))
         bias = self._effective_auto_bias()
-        target = target_sr_for_pp(med, half_width=half, bias=bias)
-        lo, hi = auto_range_for_pp(med, half_width=half, bias=bias)
+        target = self._target_sr_for_pp(med, half_width=half, bias=bias)
+        lo, hi = self._auto_range_for_pp(med, half_width=half, bias=bias)
 
         same_range = (
             abs(lo - self.pool.sr_min) < 0.001

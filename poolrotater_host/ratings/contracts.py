@@ -13,7 +13,7 @@ def event(value):
     fields(value, ('format','event_id','installation_id','generation','sequence','kind',
                    'beatmap_id','user_id','rating','base_revision','predecessor',
                    'observed_at','map_origin','key_count','context'))
-    require(type(value['format']) is int and value['format'] in (1,2), 'unsupported_rating_format')
+    require(type(value['format']) is int and value['format'] in (1,2,3), 'unsupported_rating_format')
     for key in ('event_id','installation_id','generation'): identifier(value[key])
     for key in ('sequence','beatmap_id','user_id'): integer(value[key])
     require(value['kind'] in ('rating_set','historical_seed'), 'unsupported_rating_kind')
@@ -28,7 +28,8 @@ def event(value):
     fields(value['context'], ('ruleset_id','room_id','playlist_item_id','required_mods'))
     try: require(provenance(value['context']) == value['context'], 'invalid_rating_context')
     except ValueError: require(False, 'invalid_rating_context')
-    require(value['format'] == (2 if value['context']['ruleset_id']==2 else 1), 'unsupported_rating_variant_format')
+    expected_format = {1:3, 2:2}.get(value['context']['ruleset_id'], 1)
+    require(value['format'] == expected_format, 'unsupported_rating_variant_format')
     try: storage_key(value['beatmap_id'], value['context'], map_origin=value['map_origin'], key_count=value['key_count'])
     except ValueError: require(False, 'invalid_rating_variant')
     return value

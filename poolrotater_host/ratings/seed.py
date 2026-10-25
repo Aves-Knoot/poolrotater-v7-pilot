@@ -55,7 +55,7 @@ def seed_ledger(root):
             if conn.execute('SELECT 1 FROM rating_outbox WHERE beatmap_id=? AND user_id=? LIMIT 1',(bid,uid)).fetchone():
                 counts['post_boundary']+=1;continue
             sequence=validate(conn)[3]+1
-            item={'format':2 if ruleset_id==2 else 1,'event_id':seed_id,**{k:marker[k] for k in ('installation_id','generation')},
+            item={'format':3 if ruleset_id==1 else 2 if ruleset_id==2 else 1,'event_id':seed_id,**{k:marker[k] for k in ('installation_id','generation')},
                   'sequence':sequence,'kind':'historical_seed','beatmap_id':public_bid,'user_id':uid,'rating':rating,
                   'base_revision':None,'predecessor':None,'observed_at':created,'map_origin':origin,'key_count':keys,
                   'context':{'ruleset_id':ruleset_id,'room_id':None,'playlist_item_id':None,'required_mods':[]}}

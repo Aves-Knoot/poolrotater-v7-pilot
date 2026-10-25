@@ -29,6 +29,29 @@ REASONS={'known_revision','current_predecessor','same_current_value','canonical_
          'historical_seed_obsolete','historical_seed_not_authorized','policy_excluded'}
 
 
+def _configured_taiko(root, marker):
+    """Inspect saved/effective room rulesets; aliases and raw votes are not authority."""
+    from ..config import PRESETS
+    from ..layout import load
+    _,host=load(root)
+    if any(PRESETS[room['preset']]['ruleset']==1 for room in host['rooms']):return True
+    from ..managed_host.projection import read as managed_projection
+    projection=managed_projection(root,marker)
+    if projection is not None:
+        if any(PRESETS[row['settings']['preset']]['ruleset']==1
+               for row in projection['rooms'].values()):return True
+    rooms=contained(root,'config/rooms')
+    if rooms.is_dir():
+        for path in sorted(rooms.glob('*.json')):
+            value=read_json(path)
+            if (type(value) is dict and
+                    (type(value.get('ruleset_id')) is int and value['ruleset_id']==1
+                     or type(value.get('preset')) is str and value['preset'] in PRESETS
+                     and PRESETS[value['preset']]['ruleset']==1)):
+                return True
+    return False
+
+
 class Synchronizer:
     def __init__(self, root, *, network=None):
         self.root=Path(root);root=self.root;self.marker,_=load(root)
@@ -111,14 +134,16 @@ class Synchronizer:
             return conn
         except BaseException:conn.close();raise
 
-    def _body(self):
+    def _body(self, *, fresh_after_sequence=None):
         body={'protocol_version':1,'batch_id':str(uuid.uuid4()),'events':[]}
         encoded_size=len(canonical(body))
         conn=self._conn()
         try:
             conn.execute('BEGIN IMMEDIATE')
-            rows=conn.execute("SELECT event_id,payload FROM rating_outbox WHERE phase IN ('pending','retryable') ORDER BY sequence LIMIT ?",
-                              (UPLOAD_BATCH_EVENTS,)).fetchall()
+            rows=conn.execute("SELECT event_id,payload FROM rating_outbox WHERE phase IN ('pending','retryable') "
+                              "AND (? IS NULL OR (json_extract(payload,'$.kind')='rating_set' AND sequence>?)) "
+                              "ORDER BY sequence LIMIT ?",
+                              (fresh_after_sequence,fresh_after_sequence,UPLOAD_BATCH_EVENTS)).fetchall()
             for event_id,payload in rows:
                 item=json.loads(payload);event(item)
                 require(item['event_id']==event_id and all(item[k]==self.marker[k] for k in ('installation_id','generation')),'foreign_rating_stream')
@@ -240,26 +265,70 @@ class Synchronizer:
         finally:
             conn.close()
 
+    def feedback_highwater(self):
+        """Highest local rating sequence, used to detect new pending votes safely."""
+        conn=self._conn()
+        try:
+            row=conn.execute("SELECT COALESCE(MAX(sequence),0) FROM rating_outbox "
+                             "WHERE json_extract(payload,'$.kind')='rating_set'").fetchone()
+            return integer(row[0],0)
+        finally:conn.close()
+
+    def has_pending_feedback_after(self, sequence):
+        integer(sequence,0)
+        conn=self._conn()
+        try:
+            return conn.execute("SELECT 1 FROM rating_outbox WHERE phase IN ('pending','retryable') "
+                                "AND json_extract(payload,'$.kind')='rating_set' AND sequence>? LIMIT 1",
+                                (sequence,)).fetchone() is not None
+        finally:conn.close()
+
+    def advance_feedback_cursor(self, sequence):
+        """Advance through resolved events while leaving any queued fresh event visible."""
+        integer(sequence,0)
+        conn=self._conn()
+        try:
+            conn.execute('BEGIN')
+            high=conn.execute("SELECT COALESCE(MAX(sequence),0) FROM rating_outbox "
+                              "WHERE json_extract(payload,'$.kind')='rating_set'").fetchone()[0]
+            pending=conn.execute("SELECT MIN(sequence) FROM rating_outbox WHERE phase IN ('pending','retryable') "
+                                 "AND json_extract(payload,'$.kind')='rating_set' AND sequence>?",
+                                 (sequence,)).fetchone()[0]
+            conn.commit()
+            return max(sequence,integer(pending,0)-1) if pending is not None else integer(high,0)
+        except BaseException:conn.rollback();raise
+        finally:conn.close()
+
     def has_pending_feedback(self):
         if not self.uncapped_transfers():return False
         conn=self._conn()
         try:return conn.execute("SELECT 1 FROM rating_outbox WHERE phase IN ('pending','retryable') LIMIT 1").fetchone() is not None
         finally:conn.close()
 
+    def pending_feedback_age(self, now):
+        """Age of the oldest queued event, for bounded local diagnostics only."""
+        conn=self._conn()
+        try:
+            row=conn.execute("SELECT MIN(json_extract(payload,'$.observed_at')) FROM rating_outbox "
+                             "WHERE phase IN ('pending','retryable')").fetchone()
+            oldest=row[0] if row else None
+            return None if oldest is None else max(0,int(now-oldest))
+        finally:conn.close()
+
     def uncapped_transfers(self):
         from ..network.transfer_policy import enabled
         return enabled(self.network)
 
-    def scheduled_step(self, now):
+    def scheduled_step(self, now, *, fresh_after_sequence=None):
         from ..network.transfer_policy import enabled
         if not enabled(self.network,refresh=True):
             from .delivery import DeliveryBudget
-            return self.step(delivery=DeliveryBudget(self.root,self.marker,now))
+            return self.step(delivery=DeliveryBudget(self.root,self.marker,now),fresh_after_sequence=fresh_after_sequence)
         # Preserve the predecessor's budget file for downgrade; no byte or
         # event/time token bucket limits authenticated hub catch-up any more.
-        return self.step()
+        return self.step(fresh_after_sequence=fresh_after_sequence)
 
-    def step(self, *, delivery=None):
+    def step(self, *, delivery=None, fresh_after_sequence=None):
         if not self.ensure_defaults():return {'ok':True,'phase':'not-configured','uploaded':0}
         with file_lease(self.lock_path),file_lease(self.network.lock_path):
             settings=self.profile()
@@ -269,7 +338,7 @@ class Synchronizer:
             self.network.check_account(profile['account_id'])
             require(fingerprint(profile)==settings['network_profile_sha256']
                     and all(credential[k]==settings[k] for k in ('host_id','server_epoch')),'ratings_restored_binding_requires_review')
-            transport=self.network.transport(profile);body=self._body()
+            transport=self.network.transport(profile);body=self._body(fresh_after_sequence=fresh_after_sequence)
             if delivery is not None:
                 # The synchronization lease serializes budget reservations too.
                 # Persist before dispatch; a lost response reuses the same IDs.
@@ -280,15 +349,41 @@ class Synchronizer:
                 self._acknowledge(body,reply);uploaded=len(reply['outcomes'])
             try:queried=self._query(transport,credential['credential'])
             except NetworkError as error:
-                if (uploaded > 0 and error.code in TRANSIENT_QUERY_ERRORS
-                        and (error.status==429 or 500<=error.status<=599)):
-                    # Upload intent is already durably acknowledged. Retrying
-                    # this whole step at transport backoff speed would advance
-                    # new unique backlog chunks, bypassing nominal cadence.
+                if (uploaded > 0 and self._transient_query_error(error)):
+                    # The scheduler records query-deferred and uses
+                    # reconcile_only() at its next deadline. New feedback can
+                    # still enter a separate fresh-only upload path.
                     return {'ok':True,'phase':'query-deferred','uploaded':uploaded,
                         'queried':0,'aggregate_inclusion_confirmed':False}
                 raise
         return {'ok':True,'phase':'synchronized','uploaded':uploaded,'queried':queried,'aggregate_inclusion_confirmed':False}
+
+    @staticmethod
+    def _transient_query_error(error):
+        return (error.code in TRANSIENT_QUERY_ERRORS
+                and (error.status==429 or 500<=error.status<=599))
+
+    def reconcile_only(self):
+        """Retry a deferred state query without advancing the upload backlog."""
+        if not self.ensure_defaults():return {'ok':True,'phase':'not-configured','uploaded':0,'queried':0}
+        with file_lease(self.lock_path),file_lease(self.network.lock_path):
+            settings=self.profile()
+            if not settings['share_ratings']:
+                return {'ok':True,'phase':'sharing-disabled','uploaded':0,'queried':0}
+            profile=self.network.profile();credential=self.network.credential()
+            require(credential is not None and self.network.pending(profile) is None,'network_enrollment_required')
+            self.network.check_account(profile['account_id'])
+            require(fingerprint(profile)==settings['network_profile_sha256']
+                    and all(credential[k]==settings[k] for k in ('host_id','server_epoch')),'ratings_restored_binding_requires_review')
+            try:
+                queried=self._query(self.network.transport(profile),credential['credential'])
+            except NetworkError as error:
+                if self._transient_query_error(error):
+                    return {'ok':True,'phase':'query-deferred','uploaded':0,'queried':0,
+                            'aggregate_inclusion_confirmed':False}
+                raise
+        return {'ok':True,'phase':'synchronized','uploaded':0,'queried':queried,
+                'aggregate_inclusion_confirmed':False}
 
     def fetch_snapshots(self):
         from .snapshots import Cache
@@ -298,8 +393,11 @@ class Synchronizer:
             self.network.check_account(profile['account_id'])
             require(fingerprint(profile)==settings['network_profile_sha256']
                     and all(credential[k]==settings[k] for k in ('host_id','server_epoch')),'ratings_restored_binding_requires_review')
-            return Cache(self.root).download(self.network.transport(profile),credential['credential'],
-                                            server_epoch=settings['server_epoch'])
+            taiko=_configured_taiko(self.root,self.marker)
+            cache=Cache(self.root,taiko=taiko)
+            return cache.download(self.network.transport(profile),credential['credential'],
+                                  server_epoch=settings['server_epoch'],
+                                  ruleset_id=1 if taiko else None)
 
     def review_canonical_restore(self,*,expected_profile_sha256,expected_new_epoch,acknowledge_quarantined_backlog):
         """Internal stopped explicit review; no old intent crosses epochs blindly."""

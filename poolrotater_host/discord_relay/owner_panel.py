@@ -15,7 +15,7 @@ def presentation(cfg,runtime=None):
     """Only active broker-owned room fields can override presentation defaults."""
     result=dict(cfg)
     if (type(runtime) is dict and set(runtime)=={'ruleset_id','mania_keys','auto_difficulty','loved_mode'}
-            and type(runtime['ruleset_id']) is int and runtime['ruleset_id'] in (0,2,3)
+            and type(runtime['ruleset_id']) is int and runtime['ruleset_id'] in (0,1,2,3)
             and type(runtime['mania_keys']) is int and runtime['mania_keys'] in (4,7)
             and type(runtime['auto_difficulty']) is bool and type(runtime['loved_mode']) is bool):
         result.update(runtime)
@@ -24,7 +24,7 @@ def presentation(cfg,runtime=None):
 
 def preset(cfg):
     return ('standard-loved' if cfg.get('ruleset_id',0)==0 and cfg.get('loved_mode') is True else
-            'catch-fixed' if cfg.get('ruleset_id')==2 else
+            ('taiko-auto' if cfg.get('auto_difficulty') else 'taiko-fixed') if cfg.get('ruleset_id')==1 else 'catch-fixed' if cfg.get('ruleset_id')==2 else
             'mania-4k' if cfg.get('ruleset_id')==3 and cfg.get('mania_keys')==4 else
             'mania-7k' if cfg.get('ruleset_id')==3 and cfg.get('mania_keys')==7 else 'standard-fixed')
 

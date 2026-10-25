@@ -223,8 +223,7 @@ slots across owner, Xikeon and Strohm reported applied**, including dormant
 slots. No manual room/service restart or code deployment. Owner room4's first
 request was refused during a routine empty-room refresh; confirmed its new
 owned room then applied a new revision/generation-bound config request. Evidence
-is protected outside development at
-/root/.codex-v7-operator-enrollment/recreation-2h-20261022/{queue.jsonl,retry-room4.jsonl,verification.json}.
+is held in the protected operator enrollment archive outside this source tree.
 The active development checkout's new-install gameplay defaults and native
 fallback now use7200s too; they remain unpublished. This exception does not
 relax the private-booking goal's production exclusions. Booked sessions retain
@@ -296,8 +295,8 @@ fixture, not implementation; corrected genuine TLS end and reuse13checks pass.
 
 Final candidate native stopped donor upgrade passed; all63checked config,
 credential-state, ownership and full catalog files unchanged. Evidence
-reports/donor-installed.json and donor-upgrade-final.log, donor stage
-/opt/poolrotater-v7-test/runs/booking-6e8f2cf69d. Dedicated synthetic helper
+reports/donor-installed.json and donor-upgrade-final.log, donor stage in the
+isolated donor test-run directory. Dedicated synthetic helper
 network service has a Requires dependency on its external fixture, explaining
 reactivation between separate admissions; quiescence now occurs inside the
 same QA admission with its timers disabled. No production resource touched.

@@ -23,6 +23,11 @@ CODES = frozenset(('update_owner_lock_busy','update_children_still_running',
     'update_recovery_room_topology_changed','update_existing_controller_requires_review',
     'update_upgrade_pending_while_service_running','update_existing_network_agent_requires_review',
     'update_recovery_start_requires_review','update_recovery_committed_upgrade_required'))
+# These safe, closed configuration codes are useful diagnostics for the
+# stopped-upgrade preparation path. They are deliberately not recovery-eligible.
+PREPARATION_REVIEW_CODES = frozenset((
+    'managed_catalog_preparation_requires_review',
+    'managed_catalog_prewarm_requires_review'))
 
 
 def diagnostic(error):
@@ -36,6 +41,8 @@ def diagnostic(error):
     if isinstance(error,OSError):return 'update_local_io_failed'
     if isinstance(error,ConfigError):
         if len(error.args)==1 and type(error.args[0])is str and error.args[0] in CODES:return error.args[0]
+        if len(error.args)==1 and type(error.args[0])is str and error.args[0] in PREPARATION_REVIEW_CODES:
+            return error.args[0]
         return 'update_guard_requires_review'
     return 'update_service_operation_failed'
 

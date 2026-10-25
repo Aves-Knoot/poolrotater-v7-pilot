@@ -50,7 +50,7 @@ function prAnalyticsPlayer($p) {
     if (!empty($p['legacy_community_seconds'])) $out .= '<p>Reviewed historical community connected time: ' . prAnalyticsHours($p['legacy_community_seconds']) . ' (included in connected time).</p>';
     if (!empty($p['time_by_type'])) {
         $out .= '<dl class="pr-time-types">';
-        foreach (['standard'=>'Standard','catch'=>'Catch','mania'=>'Mania total','mania_7k'=>'7K tracked rooms','mania_4k'=>'4K tracked rooms'] as $key=>$label) {
+        foreach (['standard'=>'Standard','taiko'=>'Taiko','catch'=>'Catch','mania'=>'Mania total','mania_7k'=>'7K tracked rooms','mania_4k'=>'4K tracked rooms'] as $key=>$label) {
             if (isset($p['time_by_type'][$key])) $out .= '<dt data-setting="' . hsc($key) . '">' . hsc($label) . '</dt><dd>' . prAnalyticsHours($p['time_by_type'][$key]) . '</dd>';
         }
         $out .= '</dl>';
@@ -123,7 +123,7 @@ function prAnalyticsStatsBody($data, $mode, $period, $sort, $host = 'combined') 
     return $out . '</tbody></table></div>' . (!$players?'<p>No qualifying public players in this view yet.</p>':'');
 }
 function prAnalyticsStatistics() {
-    $modes = ['all'=>'All lobby types','standard'=>'Standard','catch'=>'Catch','mania_7k'=>'Mania 7K','mania_4k'=>'Mania 4K'];
+    $modes = ['all'=>'All lobby types','standard'=>'Standard','taiko'=>'Taiko','catch'=>'Catch','mania_7k'=>'Mania 7K','mania_4k'=>'Mania 4K'];
     $periods = ['all'=>'All recorded history','7d'=>'Past 7 days','14d'=>'Past 14 days','30d'=>'Past 30 days'];
     $sorts = ['pp'=>'PP gained','maps'=>'Maps','unique_maps'=>'Different maps','seconds'=>'Connected time','gain'=>'Biggest PP gain','score'=>'Highest top-play PP','active_days'=>'Active days','accuracy'=>'Accuracy (20+ scores)'];
     $data = prAnalyticsData('statistics');

@@ -8,6 +8,7 @@
   function timing(room,fresh,now){
     const p=room.playback;if(!fresh||!['PLAYING','playing'].includes(room.state)||!p||!Number.isFinite(p.started_at)||!Number.isFinite(p.duration_seconds)||p.started_at<=0||p.started_at>now+5||p.duration_seconds<=0||p.duration_seconds>86400)return null;
     if(room.ownership==='community'&&(!validId(p.match_id)||!validId(p.beatmap_id)||p.beatmap_id!==(room.current_map||{}).beatmap_id))return null;
+    if((room.settings||{}).ruleset_id===1&&p.clock_rate!=null&&p.clock_rate!==1)return null;
     return p;
   }
   function put(card,selector,text){const n=card.querySelector(selector);if(n)n.textContent=String(text);}
@@ -16,7 +17,7 @@
     const elapsed=running?Math.max(0,Math.min(duration,now-start)):0,ratio=running?elapsed/duration:0;
     const bar=card.querySelector('.pr-np-progress');if(!bar)return;
     bar.hidden=!running;bar.firstElementChild.style.transform='scaleX('+ratio+')';bar.setAttribute('aria-valuenow',String(Math.round(ratio*100)));bar.setAttribute('aria-valuetext',running?'Estimated '+clock(elapsed)+' of '+clock(duration):'Timing unavailable');
-    card.dataset.timed=String(running);card.dataset.finished=String(ratio>=1);put(card,'.pr-np-clock',running?(card.dataset.nominalSpeed==='true'?'Estimated at 1× ':'Estimated ')+clock(elapsed)+' / '+clock(duration):'');
+    card.dataset.timed=String(running);card.dataset.finished=String(ratio>=1);put(card,'.pr-np-clock',running?'Estimated '+clock(elapsed)+' / '+clock(duration):'');
   }
   function update(card,room,fresh,now){
     room=room||{};const state=fresh&&states[room.state]?room.state:'STALE',map=fresh?(room.current_map||{}):{},p=timing(room,fresh,now),community=room.ownership==='community';

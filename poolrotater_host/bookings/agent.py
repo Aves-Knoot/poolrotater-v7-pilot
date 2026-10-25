@@ -105,6 +105,7 @@ class Agent:
         mode_for = {
             'standard-auto': 'standard', 'standard-fixed': 'standard',
             'standard-loved': 'loved', 'catch-fixed': 'catch',
+            'taiko-fixed':'taiko','taiko-auto':'taiko',
             'mania-4k': 'mania4', 'mania-7k': 'mania7',
         }
         return sorted(preset for preset in PRESETS if mode_for.get(preset) in modes)

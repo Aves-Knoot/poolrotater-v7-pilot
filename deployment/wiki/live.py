@@ -10,7 +10,7 @@ CACHE=Path('/var/lib/poolrotator-wiki-live/maps.json');PEAK=Path('/var/lib/poolr
 DISPLAY=Path('/var/lib/poolrotator-wiki-live/display.db')
 
 def display_row(mode,bid,*,owner_uid=0):
- if mode not in ('standard','mania_4k','mania_7k','catch') or type(bid)is not int or bid<=0:return None
+ if mode not in ('standard','mania_4k','mania_7k','catch','taiko') or type(bid)is not int or bid<=0:return None
  for path in (DISPLAY,*DISPLAY.parents):
   if path.is_symlink():raise ValueError('display index symlink refused')
  info=DISPLAY.lstat()
@@ -95,7 +95,7 @@ def map_metadata(info,mode,cache,now):
  bid=info['beatmap_id'];key=mode+':'+str(bid);saved=cache.get(key)
  if not isinstance(saved,dict) or now-saved.get('cached_at',0)>(86400 if saved.get('beatmapset_id') else 20):
   saved={'cached_at':now}
-  catalogs=[('catch.db','catch_maps')] if mode=='catch' else [('farm.db','beatmaps'),('loved.db','beatmaps')] if mode=='standard' else ([('mania_7k.db','maps'),('mania.db','maps'),('farm.db','beatmaps')] if mode=='mania_7k' else [('mania.db','maps'),('mania_7k.db','maps'),('farm.db','beatmaps')])
+  catalogs=[('catch.db','catch_maps')] if mode=='catch' else [('farm.db','beatmaps'),('loved.db','beatmaps')] if mode=='standard' else ([('mania_7k.db','maps'),('mania.db','maps'),('farm.db','beatmaps')] if mode=='mania_7k' else [('mania.db','maps'),('mania_7k.db','maps'),('farm.db','beatmaps')] if mode=='mania_4k' else [('taiko.db','taiko_maps')] if mode=='taiko' else [])
   for filename,table in catalogs:
    try:
     row=(display_row(mode,bid) if a.SOURCE.owner else None if mode=='catch' else catalog_row(a.SOURCE.catalog(filename),'SELECT beatmapset_id,title,artist,version,total_length,hit_length,sr FROM '+table+' WHERE beatmap_id=? LIMIT 1',bid))
@@ -174,8 +174,9 @@ def run(public=a.PUBLIC,cache_path=CACHE,now=None,peak_path=PEAK):
     phase='PLAYING';current=dict(beatmap_id=match['beatmap_id'],label=a.clean(match['map_label']),stars=a.number(match['star_rating'],None))
    elif runtime is None and phase=='PLAYING' and match and match['ended_at'] is not None:phase='SCORING'
    cfg=a.read_json(a.SOURCE.config(alias),{});cfg=cfg if isinstance(cfg,dict) else {}
-   mode='catch' if cfg.get('ruleset_id')==2 or (row and row.get('ruleset_id')==2) else a.TYPES[i]
-   room=dict(alias=alias,label='Catch fixed' if mode=='catch' else a.LABELS[i],type=mode,room_id=candidate if valid else None,state=phase,players=counts.get(alias) if valid else 0 if row and row['closed_at'] else None,observed_at=parsed['observed_at'] or None,current_map=map_metadata(current,mode,cached,now),queue=[map_metadata(m,mode,cached,now) for m in parsed['queue']] if valid else [],queue_known=bool(valid and parsed['queue_known']),settings=a.public_settings(cfg,universal,row),guide='lobbies:'+('catch' if mode=='catch' else a.GUIDES[i]))
+   mode=a.room_mode(row.get('ruleset_id') if row else None,cfg,i)
+   label,guide=a.room_presentation(mode,i,cfg)
+   room=dict(alias=alias,label=label,type=mode,room_id=candidate if valid else None,state=phase,players=counts.get(alias) if valid else 0 if row and row['closed_at'] else None,observed_at=parsed['observed_at'] or None,current_map=map_metadata(current,mode,cached,now),queue=[map_metadata(m,mode,cached,now) for m in parsed['queue']] if valid else [],queue_known=bool(valid and parsed['queue_known']),settings=a.public_settings(cfg,universal,row),guide='lobbies:'+guide)
    if runtime is not None:
     room['players']=parsed['players'] if valid else None
     if valid and current and parsed.get('match_started_at'):
@@ -191,8 +192,9 @@ def run(public=a.PUBLIC,cache_path=CACHE,now=None,peak_path=PEAK):
  if not data['rooms']:
   for i in range(4):
    alias='room'+str(i+1);cfg=a.read_json(a.SOURCE.config(alias),{})
-   catch=isinstance(cfg,dict) and cfg.get('ruleset_id')==2
-   data['rooms'].append(dict(alias=alias,label='Catch fixed' if catch else a.LABELS[i],type='catch' if catch else a.TYPES[i],room_id=None,state='STALE',players=None,observed_at=None,current_map=None,queue=[],queue_known=False,settings={},guide='lobbies:'+('catch' if catch else a.GUIDES[i]),playback=None))
+   cfg=cfg if isinstance(cfg,dict) else {}
+   mode=a.room_mode(None,cfg,i);label,guide=a.room_presentation(mode,i,cfg)
+   data['rooms'].append(dict(alias=alias,label=label,type=mode,room_id=None,state='STALE',players=None,observed_at=None,current_map=None,queue=[],queue_known=False,settings={},guide='lobbies:'+guide,playback=None))
  # Repeat the saved-intent privacy boundary after every fallback path. Even a
  # failed ledger read must not decorate a private slot from native settings.
  mask=a.managed_public_mask()

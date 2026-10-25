@@ -19,6 +19,7 @@ _EXPORT_MODES = {
     'standard-auto': 'standard', 'standard-fixed': 'standard',
     'standard-loved': 'loved', 'mania-4k': 'mania4',
     'mania-7k': 'mania7', 'catch-fixed': 'catch',
+    'taiko-fixed': 'taiko', 'taiko-auto': 'taiko',
 }
 _MAX_POOL_LIMIT = 500_000
 
@@ -325,6 +326,9 @@ class ExportPreviewProvider(PreviewProvider):
             cfg.update(catch_catalog=str(folder / 'catalog.db'),
                        catch_include_loved=False, catch_min_length=0,
                        stream_enabled=False, stream_share=0)
+        elif mode == 'taiko':
+            cfg.update(taiko_catalog=str(folder / 'catalog.db'),
+                       stream_enabled=False, stream_share=0)
         else:
             companions = set(manifest['capabilities']['companions'])
             cfg.update(mania_db=str(folder / 'catalog.db'),
@@ -431,6 +435,9 @@ def _native_pool_factory(cfg):
         'stream_share': cfg.get('stream_share', 0.5),
         'max_map_age_years': 0,
     }
+    if cfg['ruleset_id'] == 1:
+        from bot.taiko_pool import TaikoPool
+        return TaikoPool(cfg['taiko_catalog'], purpose='production', **shared)
     if cfg['ruleset_id'] == 2:
         from bot.catch_pool import ProductionCatchPool
         return ProductionCatchPool(cfg['catch_catalog'], purpose='production',

@@ -23,12 +23,22 @@ DB = SOURCE.ledger
 PUBLIC = Path('/srv/poolrotator-wiki/public')
 STATE = Path('/var/lib/poolrotator-wiki-analytics')
 TTL = 600
-LABELS = ['Standard automatic', 'Standard fixed', 'Mania 7K', 'Mania 4K']
-TYPES = ['standard', 'standard', 'mania_7k', 'mania_4k']
-GUIDES = ['standard_auto','standard_fixed','mania_7k','mania_4k']
+LABELS = ['Standard automatic', 'Standard fixed', 'Mania 7K', 'Mania 4K', 'Taiko']
+TYPES = ['standard', 'standard', 'mania_7k', 'mania_4k', 'taiko']
+GUIDES = ['standard_auto','standard_fixed','mania_7k','mania_4k','taiko']
+PRESET_MODES = {
+    'standard-auto': ('standard', 0, None, True, False),
+    'standard-fixed': ('standard', 0, None, False, False),
+    'standard-loved': ('standard', 0, None, False, True),
+    'mania-4k': ('mania_4k', 3, 4, False, False),
+    'mania-7k': ('mania_7k', 3, 7, False, False),
+    'catch-fixed': ('catch', 2, None, False, False),
+    'taiko-fixed': ('taiko', 1, None, False, False),
+    'taiko-auto': ('taiko', 1, None, True, False),
+}
 LOG_PREFIX = r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[room[1-4]\] '
 PERIODS = {'all': 0, '7d': 7*86400, '14d': 14*86400, '30d': 30*86400}
-SCOPES = ['all', 'standard', 'mania_7k', 'mania_4k', 'catch']
+SCOPES = ['all', 'standard', 'mania_7k', 'mania_4k', 'catch', 'taiko']
 
 def number(value, default=0):
     try:
@@ -211,6 +221,7 @@ def service_status(now):
 
 def room_type(row):
     title=(str(row['initial_name'] or '')+' '+str(row['last_name'] or '')).upper()
+    if row['ruleset_id']==1:return 'taiko'
     if row['ruleset_id']==2:return 'catch'
     if row['ruleset_id']==3 or re.search(r'\b[47]K\b',title):
         if re.search(r'\b7K\b',title):return 'mania_7k'
@@ -218,6 +229,40 @@ def room_type(row):
         return 'mania_other'
     # This is the same legacy default used by the bot's PP statistics.
     return 'standard'
+
+def room_mode(ruleset_id, config, slot):
+    """Resolve a configured room mode from explicit ruleset or known preset."""
+    config=config if isinstance(config,dict) else {}
+    preset=PRESET_MODES.get(config.get('preset'))
+    value=config.get('ruleset_id') if type(config.get('ruleset_id')) is int and 0 <= config['ruleset_id'] <= 3 else None
+    if value is None and preset:return preset[0]
+    if value is None and type(ruleset_id) is int and 0 <= ruleset_id <= 3:value=ruleset_id
+    if value == 1:return 'taiko'
+    if value == 2:return 'catch'
+    if value == 3:
+        keys=config.get('keys') if config.get('keys') in (4,7) else preset[2] if preset and preset[1] == 3 else None
+        if keys == 7:return 'mania_7k'
+        if keys == 4:return 'mania_4k'
+        return TYPES[slot] if TYPES[slot] in ('mania_7k','mania_4k') else 'mania_4k'
+    if value == 0:return 'standard'
+    return TYPES[slot]
+
+def room_presentation(mode, slot, config=None):
+    config=config if isinstance(config,dict) else {}
+    preset=PRESET_MODES.get(config.get('preset'))
+    if mode == 'standard':
+        loved=config.get('loved_mode') if isinstance(config.get('loved_mode'),bool) else bool(preset and preset[4])
+        automatic=config.get('auto_difficulty') if isinstance(config.get('auto_difficulty'),bool) else preset[3] if preset else None
+        if loved:return 'Standard Loved', 'standard_fixed'
+        if automatic is True:return 'Standard automatic', 'standard_auto'
+        if automatic is False:return 'Standard fixed', 'standard_fixed'
+        if slot in (0,1):return LABELS[slot], GUIDES[slot]
+        return 'Standard', 'start'
+    if mode == 'mania_7k':return 'Mania 7K', 'mania_7k'
+    if mode == 'mania_4k':return 'Mania 4K', 'mania_4k'
+    if mode == 'catch':return 'Catch fixed', 'catch'
+    if mode == 'taiko':return 'Taiko', 'taiko'
+    return LABELS[slot], GUIDES[slot]
 
 def log_timestamp(line):
     try:return time.mktime(time.strptime(line[:19],'%Y-%m-%d %H:%M:%S'))
@@ -304,13 +349,21 @@ def public_settings(config, universal, room):
     lo=number(mania.get('sr_min',cfg.get('sr_min')),None); hi=number(mania.get('sr_max',cfg.get('sr_max')),None)
     title=room['last_name'] if room else ''
     match=re.search(r'\((\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)\*\)',str(title or ''))
-    result={'difficulty':'Automatic' if cfg.get('auto_difficulty',False) else 'Fixed with player votes',
+    preset=PRESET_MODES.get(config.get('preset'))
+    auto=cfg.get('auto_difficulty') if isinstance(cfg.get('auto_difficulty'),bool) else preset[3] if preset else False
+    loved=cfg.get('loved_mode') if isinstance(cfg.get('loved_mode'),bool) else bool(preset and preset[4])
+    result={'difficulty':'Automatic' if auto else 'Fixed with player votes',
             'configured_range':[lo,hi], 'active_range':[float(match[1]),float(match[2])] if match else None}
+    ruleset_id=cfg.get('ruleset_id') if type(cfg.get('ruleset_id')) is int and cfg['ruleset_id'] in (0,1,2,3) else preset[1] if preset else room.get('ruleset_id') if isinstance(room,dict) else None
+    if type(ruleset_id) is int and 0 <= ruleset_id <= 3:result['ruleset_id']=ruleset_id
+    keys=cfg.get('keys') if cfg.get('keys') in (4,7) else preset[2] if preset else None
+    if type(keys) is int and keys in (4,7):result['keys']=keys
     for key in ['queue_ahead','countdown_seconds','auto_start_seconds','min_players','max_length']:
         value=mania.get(key,cfg.get(key))
         if type(value) in (int,float) and math.isfinite(value) and 0<=value<100000:result[key]=value
     for key in ['freestyle','voteskip_enabled','user_commands_enabled','mania_farm_enabled','mania_style_fallback_enabled']:
         if isinstance(cfg.get(key),bool):result[key]=cfg[key]
+    if isinstance(cfg.get('loved_mode'),bool) or preset:result['loved_mode']=loved
     for key in ['required_mods','allowed_mods']:
         if isinstance(cfg.get(key),list):result[key]=[m for m in cfg[key] if isinstance(m,str) and re.fullmatch(r'[A-Z0-9]{1,6}',m)][:16]
     return result
@@ -321,7 +374,7 @@ def enrich_map(info, mode, cache):
     if type(bid) is not int or bid<=0:return info
     key=(bid,mode)
     if key not in cache:
-        catalogs=[] if mode=='catch' else ([('farm.db','beatmaps'),('loved.db','beatmaps')] if mode=='standard' else [('mania_7k.db','maps'),('mania.db','maps')])
+        catalogs=[] if mode in ('catch','taiko') else ([('farm.db','beatmaps'),('loved.db','beatmaps')] if mode=='standard' else [('mania_7k.db','maps'),('mania.db','maps')])
         if mode=='all':catalogs=[('farm.db','beatmaps'),('loved.db','beatmaps'),('mania_7k.db','maps'),('mania.db','maps')]
         cache[key]=None
         for filename,table in catalogs:
@@ -347,13 +400,13 @@ def metrics(conn, rooms, now, active_ids, network_snapshot=None, views_out=None)
     names={};name_dates={};first=now
     def name(uid,value,at):
         if value and at>=name_dates.get(uid,0):names[uid]=clean(value,64);name_dates[uid]=at
-    for table in ('autohost_lobby_time','autohost_lobby_time_mania','autohost_lobby_time_catch'):
-        if table.endswith('_catch') and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
+    for table in ('autohost_lobby_time','autohost_lobby_time_mania','autohost_lobby_time_catch','autohost_lobby_time_taiko'):
+        if table.endswith(('_catch','_taiko')) and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
         for row in conn.execute('SELECT user_id,username,updated_at,first_join_at FROM '+table):
             name(row['user_id'],row['username'],number(row['updated_at']))
             first=min(first,number(row['first_join_at'],now))
-    for table in ('autohost_match_players','autohost_pp_achievements','autohost_pp_achievements_mania','autohost_pp_achievements_catch'):
-        if table.endswith('_catch') and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
+    for table in ('autohost_match_players','autohost_pp_achievements','autohost_pp_achievements_mania','autohost_pp_achievements_catch','autohost_pp_achievements_taiko'):
+        if table.endswith(('_catch','_taiko')) and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
         for row in conn.execute('SELECT user_id,username,created_at FROM '+table):
             at=number(row['created_at']);name(row['user_id'],row['username'],at);first=min(first,at)
     maps={};labels={}
@@ -399,14 +452,16 @@ def _metric_group(conn, rooms, now, active_ids, names, maps, hidden, scope, peri
                 live=max(0,now-number(row['last_join_at']));seconds+=live;current_live[uid][mode]+=live
             room_time[uid][mode]+=seconds
         mania_totals={}
-        for table,mode in [('autohost_lobby_time','standard'),('autohost_lobby_time_mania','mania'),('autohost_lobby_time_catch','catch')]:
-            if table.endswith('_catch') and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
+        for table,mode in [('autohost_lobby_time','standard'),('autohost_lobby_time_mania','mania'),('autohost_lobby_time_catch','catch'),('autohost_lobby_time_taiko','taiko')]:
+            if table.endswith(('_catch','_taiko')) and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
             for row in conn.execute('SELECT * FROM '+table):
                 uid=row['user_id']
-                live=sum(v for m,v in current_live[uid].items() if (m==mode if mode in ('standard','catch') else m in ('mania_7k','mania_4k','mania_other')))
+                live=sum(v for m,v in current_live[uid].items() if (m==mode if mode in ('standard','catch','taiko') else m in ('mania_7k','mania_4k','mania_other')))
                 seconds=max(0,number(row['total_seconds']))+live
                 p=player('all','all',uid);p['seconds']+=seconds;p['visits']+=int(number(row['visit_count']));p['time_by_type'][mode]=round(seconds,1)
-                if mode in ('standard','catch'):q=player(mode,'all',uid);q['seconds']=seconds;q['visits']=int(number(row['visit_count']))
+                if mode in ('standard','catch','taiko'):
+                    q=player(mode,'all',uid);q['seconds']=seconds;q['visits']=int(number(row['visit_count']))
+                    if mode=='taiko':q['time_by_type']['taiko']=round(seconds,1)
                 else:mania_totals[uid]=seconds
         for uid,types in room_time.items():
             for mode in ['mania_7k','mania_4k']:
@@ -421,8 +476,8 @@ def _metric_group(conn, rooms, now, active_ids, names, maps, hidden, scope, peri
             if row['score_submitted'] and row['accuracy'] is not None:
                 acc=number(row['accuracy'],-1)
                 if 0<=acc<=100:p['accuracy_sum']+=acc;p['accuracy_n']+=1
-    for table,fallback_mode in [('autohost_pp_achievements','standard'),('autohost_pp_achievements_mania','mania_other'),('autohost_pp_achievements_catch','catch')]:
-        if table.endswith('_catch') and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
+    for table,fallback_mode in [('autohost_pp_achievements','standard'),('autohost_pp_achievements_mania','mania_other'),('autohost_pp_achievements_catch','catch'),('autohost_pp_achievements_taiko','taiko')]:
+        if table.endswith(('_catch','_taiko')) and not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
         for row in conn.execute('SELECT * FROM '+table):
             uid=row['user_id'];at=number(row['created_at'])
             mode=rooms.get(row['room_id'],{}).get('type',fallback_mode)

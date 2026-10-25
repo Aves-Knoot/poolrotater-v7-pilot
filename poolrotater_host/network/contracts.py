@@ -8,7 +8,7 @@ import uuid
 
 MAX_BODY = 65536
 MAX_SEQUENCE = 2**53 - 1
-PRESETS = ('standard-auto', 'standard-fixed', 'mania-4k', 'mania-7k', 'catch-fixed')
+PRESETS = ('standard-auto', 'standard-fixed', 'mania-4k', 'mania-7k', 'catch-fixed', 'taiko-fixed', 'taiko-auto')
 SCOPES = ('heartbeat', 'rotate', 'leave')
 
 

@@ -13,10 +13,13 @@ from unittest.mock import Mock,patch
 from poolrotater_host.config import ConfigError
 from poolrotater_host.layout import atomic_json,read_json
 from poolrotater_host.updates import recovery
+from poolrotater_host import update_helpers
 
 class ControllerRecoveryTests(unittest.TestCase):
  def setUp(self):
   tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup);self.folder=Path(tmp.name)
+  self.helper_units=self.folder/'helper-unit-files';self.helper_units.mkdir()
+  self.enterContext(patch('poolrotater_host.pilot_operations.UNIT_BASE',self.helper_units))
   prefix=self.folder/'code';prefix.mkdir();root=self.folder/'host';root.mkdir();(root/'config').mkdir()
   (root/'config/retained.json').write_text('{"title":"operator chosen","offset":0.7}\n')
   self.target={'prefix':prefix,'root':root,'unit':'invented.service'}
@@ -77,7 +80,9 @@ class ControllerRecoveryTests(unittest.TestCase):
   self.lifecycle.assert_not_called();self.network_action.assert_not_called();self.systemctl.assert_not_called()
  def test_readonly_review_has_no_file_or_service_mutation(self):
   before=(self.target['prefix']/self.native.NAME).read_bytes()
-  result=self.run_recovery('review');self.assertEqual(result['upgrade_phase'],'absent')
+  with patch.object(update_helpers,'quiesce') as quiesce:
+   result=self.run_recovery('review');quiesce.assert_not_called()
+  self.assertEqual(result['upgrade_phase'],'absent')
   self.assertEqual((self.target['prefix']/self.native.NAME).read_bytes(),before)
   self.assertFalse((self.target['prefix']/'controller-recovery-history').exists());self.assert_no_lifecycle()
  def test_wrong_operation_refused_before_action(self):
@@ -85,7 +90,9 @@ class ControllerRecoveryTests(unittest.TestCase):
   self.assert_no_lifecycle()
  def test_old_occupied_controller_is_not_stopped_and_requires_new_admission(self):
   self.service.update(MainPID=12,ActiveState='active')
-  result=self.run_recovery('complete');self.assertTrue(result['fresh_empty_window_required'])
+  with patch.object(update_helpers,'quiesce') as quiesce:
+   result=self.run_recovery('complete');quiesce.assert_not_called()
+  self.assertTrue(result['fresh_empty_window_required'])
   job=read_json(self.target['prefix']/self.native.NAME)
   self.assertEqual(job['phase'],'waiting_empty');self.assertIsNone(job['empty_since'])
   self.assertNotIn('worker_identity',job);self.assertNotIn('commit_started_at',job)
@@ -95,14 +102,16 @@ class ControllerRecoveryTests(unittest.TestCase):
   self.job.update(network_active=True,network_enabled=True,timer_sha256='b'*64)
   atomic_json(self.target['prefix']/self.native.NAME,self.job)
   self.enterContext(patch('poolrotater_host.network.operations._checked_unit',return_value=Path('invented.service')))
-  result=self.run_recovery('complete')
+  with patch.object(update_helpers,'quiesce') as quiesce:
+   result=self.run_recovery('complete');quiesce.assert_not_called()
   self.assertTrue(result['fresh_empty_window_required'])
   self.network_action.assert_called_once_with('fixture','start');self.arm.assert_called_once_with('fixture')
   self.lifecycle.assert_not_called();self.finish.assert_not_called()
   self.assertIn(('enable',self.target['unit']),[call.args for call in self.systemctl.call_args_list])
  def test_running_predecessor_keeps_opted_out_network_stopped_and_no_unowned_timer(self):
   self.service.update(MainPID=12,ActiveState='active')
-  self.assertEqual(self.run_recovery('complete')['phase'],'waiting_empty')
+  with patch.object(update_helpers,'quiesce') as quiesce:
+   self.assertEqual(self.run_recovery('complete')['phase'],'waiting_empty');quiesce.assert_not_called()
   self.network_action.assert_not_called();self.arm.assert_not_called();self.lifecycle.assert_not_called()
  def test_prepared_stopped_upgrade_finishes_once_and_repeated_completion_does_not_start_again(self):
   self.upgrade={'phase':'prepared','transition_id':'retained'}
@@ -112,10 +121,94 @@ class ControllerRecoveryTests(unittest.TestCase):
   self.assertEqual(self.lifecycle.call_count,1)
   self.assertTrue(self.run_recovery('complete')['replayed']);self.assertEqual(self.lifecycle.call_count,1)
   self.assertEqual((self.target['root']/'config/retained.json').read_bytes(),self.settings)
+ def install_timer_fixture(self):
+  from poolrotater_host.pilot_operations import UNIT_BASE
+  names={f'poolrotater-v7-{kind}-fixture.timer' for kind in ('managed','updates','recovery')}
+  ordered=sorted(names);initial={ordered[0]:'active',ordered[1]:'inactive',ordered[2]:'active'}
+  timer_states=dict(initial)
+  for name in names:
+   service=name.removesuffix('.timer')+'.service'
+   path=UNIT_BASE/name
+   path.write_text('[Unit]\nDescription=Fixture scoped helper timer\n\n[Timer]\nUnit='+service+'\n')
+   path.chmod(0o644)
+  def systemctl(action,*args,**_kwargs):
+   name=args[0] if args else None
+   if name in timer_states:
+    if action=='show':return (timer_states[name]+'\n').encode()
+    if action=='stop':timer_states[name]='inactive';return b''
+    if action=='start':timer_states[name]='active';return b''
+   return b''
+  self.systemctl.side_effect=systemctl
+  def fixture_protected(path):
+   path=Path(path)
+   self.assertEqual(path.parent,UNIT_BASE)
+   self.assertIn(path.name,names)
+   self.assertFalse(path.is_symlink())
+   self.assertTrue(path.is_file())
+   self.assertFalse(path.stat().st_mode&0o022)
+   return path
+  return names,initial,timer_states,UNIT_BASE,fixture_protected
+ def test_stopped_recovery_quiesces_only_its_timers_through_upgrade_prepare_and_start(self):
+  names,initial,timer_states,UNIT_BASE,fixture_protected=self.install_timer_fixture()
+  self.upgrade={'phase':'prepared','transition_id':'retained'}
+  def assert_quiet():self.assertEqual(set(timer_states.values()),{'inactive'})
+  original_finish=self.finish.side_effect
+  def finish(*args,**kwargs):
+   assert_quiet();return original_finish(*args,**kwargs)
+  self.finish.side_effect=finish
+  def prepare(*args,**kwargs):
+   assert_quiet();return None
+  self.managed_prepare.side_effect=prepare
+  original_start=self.lifecycle.side_effect
+  def start(*args,**kwargs):
+   assert_quiet();return original_start(*args,**kwargs)
+  self.lifecycle.side_effect=start
+  # The offline UID cannot create root-owned systemd assets. Confine this one
+  # seam to these exact safe fixture unit files; quiesce and systemctl logic
+  # remain the real implementations.
+  with patch('poolrotater_host.provisioning.protected',side_effect=fixture_protected):
+   self.assertEqual(self.run_recovery('complete')['phase'],'complete')
+  receipt=read_json(self.target['prefix']/self.native.NAME)
+  self.assertEqual(receipt['phase'],'complete')
+  self.assertFalse(receipt['helper_pause_active'])
+  self.assertFalse(receipt['helper_restore_required'])
+  self.assertEqual({row['name']:row['was_active'] for row in receipt['paused_helper_timers']},
+                   {name:(state=='active') for name,state in initial.items()})
+  self.assertEqual(sum(call.args[0]=='stop' and call.args[1] in names
+                       for call in self.systemctl.call_args_list),3)
+  self.assertEqual(sum(call.args[0]=='start' and call.args[1] in names
+                       for call in self.systemctl.call_args_list),2)
+  self.assertEqual(timer_states,initial)
+ def test_failed_stopped_configuration_prepare_restores_timers_and_keeps_held_phase(self):
+  names,initial,timer_states,UNIT_BASE,fixture_protected=self.install_timer_fixture()
+  self.upgrade={'phase':'prepared','transition_id':'retained'}
+  self.managed_prepare.side_effect=ConfigError('fixture configuration preparation failure')
+  with patch('poolrotater_host.provisioning.protected',side_effect=fixture_protected):
+   with self.assertRaisesRegex(ConfigError,'fixture configuration preparation failure'):
+    self.run_recovery('complete')
+  receipt=read_json(self.target['prefix']/self.native.NAME)
+  self.assertEqual(receipt['phase'],'held')
+  self.assertFalse(receipt['helper_pause_active'])
+  self.assertFalse(receipt['helper_restore_required'])
+  self.assertEqual(timer_states,initial)
+  self.lifecycle.assert_not_called()
+  self.assertEqual(sum(call.args[0]=='stop' and call.args[1] in names
+                       for call in self.systemctl.call_args_list),3)
+  self.assertEqual(sum(call.args[0]=='start' and call.args[1] in names
+                       for call in self.systemctl.call_args_list),2)
+ def test_stopped_recovery_refuses_approval_before_quiescing_or_lifecycle(self):
+  self.approval.side_effect=ConfigError('recovery approval expired')
+  with patch.object(update_helpers,'quiesce') as quiesce:
+   with self.assertRaisesRegex(ConfigError,'recovery approval expired'):
+    self.run_recovery('complete')
+   quiesce.assert_not_called()
+  self.assert_no_lifecycle()
+  self.assertEqual(read_json(self.target['prefix']/self.native.NAME)['phase'],'held')
  def test_already_started_successor_is_observed_without_duplicate_room_start(self):
   self.current=self.after;self.upgrade={'phase':'committed','transition_id':'retained'}
   self.service.update(MainPID=222,ActiveState='active')
-  self.assertEqual(self.run_recovery('complete')['phase'],'complete')
+  with patch.object(update_helpers,'quiesce') as quiesce:
+   self.assertEqual(self.run_recovery('complete')['phase'],'complete');quiesce.assert_not_called()
   self.lifecycle.assert_not_called();self.ready.assert_called_once();self.finish.assert_not_called()
  def test_unknown_stopped_ownership_refuses_start_and_keeps_recovery(self):
   self.current=self.after;self.upgrade={'phase':'committed','transition_id':'retained'}
@@ -141,7 +234,9 @@ class ControllerRecoveryTests(unittest.TestCase):
   self.assert_no_lifecycle()
  def test_cancel_before_registration_change_never_starts_or_stops_services(self):
   self.service.update(MainPID=12,ActiveState='active')
-  self.assertEqual(self.run_recovery('cancel')['phase'],'cancelled');self.assert_no_lifecycle()
+  with patch.object(update_helpers,'quiesce') as quiesce:
+   self.assertEqual(self.run_recovery('cancel')['phase'],'cancelled');quiesce.assert_not_called()
+  self.assert_no_lifecycle()
  def test_failed_fresh_successor_observation_does_not_label_update_complete(self):
   self.current=self.after;self.upgrade={'phase':'committed','transition_id':'retained'}
   self.service.update(MainPID=222,ActiveState='active');self.fresh.side_effect=ConfigError('unhealthy sibling')

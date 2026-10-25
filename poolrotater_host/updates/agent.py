@@ -214,6 +214,26 @@ class Agent:
                 return self.summary(state,consent)
             if item['kind']=='controller' and not consent['controller_updates']:
                 self._save(state,phase='controller_consent_required');return self.summary(state,consent)
+            # Native backends may provide a read-only capacity preflight. Run
+            # it after the signed artifact and baseline checks, but before
+            # creating durable operation intent. A predictable shortage is a
+            # short retry, not an uncertain lifecycle operation.
+            staging_ready=getattr(type(self.backend),'staging_ready',None)
+            if staging_ready is not None:
+                staging_ready=lambda path,item: getattr(type(self.backend),'staging_ready')(self.backend,path,item)
+            else:
+                staging_ready=getattr(self.backend,'__dict__',{}).get('staging_ready')
+            if callable(staging_ready):
+                try:
+                    ready=staging_ready(path,item)
+                    require(type(ready)is bool,'update_staging_capacity_refused')
+                except Exception:
+                    self._save(state,phase='held',error='update_installation_requires_review')
+                    return self.summary(state,consent)
+                if not ready:
+                    self._save(state,phase='downloaded',operation=None,
+                        error='update_staging_capacity_wait',next_check_at=now+60)
+                    return self.summary(state,consent)
             operation={'id':str(uuid.uuid4()),'release':item,'queued_at':now,
                        'before_sha256':current['controller_sha256'],
                        'effective_before_sha256':current['effective_sha256']}

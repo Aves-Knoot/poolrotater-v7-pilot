@@ -12,15 +12,37 @@ try:
 except ModuleNotFoundError:
     from deployment.sqlite_readonly import readonly_database
 
-APP = Path('/opt/poolrotator')
+try:
+    from owner_source import selected as select_owner_source
+    SOURCE = select_owner_source()
+except ModuleNotFoundError:
+    class _LegacySource:
+        owner = False
+        root = Path('/opt/poolrotator')
+        ledger = Path('/opt/poolrotator-runtime/state/ratings.db')
+        def config(self, alias):return self.root/'instances'/(alias+'.json')
+        def room_log(self, alias):return self.root/'logs'/(alias+'.log')
+        def catalog(self, filename):return self.root/'data'/filename
+    SOURCE = _LegacySource()
+APP = SOURCE.root
 OPS = Path('/var/lib/poolrotator-ops/snapshots')
-DB = Path('/opt/poolrotator-runtime/state/ratings.db')
+DB = SOURCE.ledger
 PUBLIC = Path('/srv/poolrotator-wiki/public')
 STATE = Path('/var/lib/poolrotator-wiki-analytics')
 TTL = 600
 LABELS = ['Standard automatic', 'Standard fixed', 'Mania 7K', 'Mania 4K']
 TYPES = ['standard', 'standard', 'mania_7k', 'mania_4k']
 GUIDES = ['standard_auto','standard_fixed','mania_7k','mania_4k']
+PRESET_MODES = {
+    'standard-auto': ('standard', 0, None, True, False),
+    'standard-fixed': ('standard', 0, None, False, False),
+    'standard-loved': ('standard', 0, None, False, True),
+    'mania-4k': ('mania_4k', 3, 4, False, False),
+    'mania-7k': ('mania_7k', 3, 7, False, False),
+    'catch-fixed': ('catch', 2, None, False, False),
+    'taiko-fixed': ('taiko', 1, None, False, False),
+    'taiko-auto': ('taiko', 1, None, True, False),
+}
 LOG_PREFIX = r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[room[1-4]\] '
 PERIODS = {'all': 0, '7d': 7*86400, '14d': 14*86400, '30d': 30*86400}
 SCOPES = ['all', 'standard', 'mania_7k', 'mania_4k', 'catch']
@@ -158,12 +180,47 @@ def service_status(now):
 def room_type(row):
     title=(str(row['initial_name'] or '')+' '+str(row['last_name'] or '')).upper()
     if row['ruleset_id']==2:return 'catch'
+    if row['ruleset_id']==1:return 'taiko'
     if row['ruleset_id']==3 or re.search(r'\b[47]K\b',title):
         if re.search(r'\b7K\b',title):return 'mania_7k'
         if re.search(r'\b4K\b',title):return 'mania_4k'
         return 'mania_other'
     # This is the same legacy default used by the bot's PP statistics.
     return 'standard'
+
+def room_mode(ruleset_id, config, slot):
+    """Resolve the public mode from saved room settings, retaining slot defaults."""
+    config=config if isinstance(config,dict) else {}
+    preset=PRESET_MODES.get(config.get('preset'))
+    value=config.get('ruleset_id') if type(config.get('ruleset_id')) is int and 0 <= config['ruleset_id'] <= 3 else None
+    if value is None and preset:return preset[0]
+    if value is None and type(ruleset_id) is int and 0 <= ruleset_id <= 3:value=ruleset_id
+    if value == 1:return 'taiko'
+    if value == 2:return 'catch'
+    if value == 3:
+        keys=config.get('keys') if config.get('keys') in (4,7) else preset[2] if preset and preset[1] == 3 else None
+        if keys == 7:return 'mania_7k'
+        if keys == 4:return 'mania_4k'
+        return TYPES[slot] if TYPES[slot] in ('mania_7k','mania_4k') else 'mania_4k'
+    if value == 0:return 'standard'
+    return TYPES[slot]
+
+def room_presentation(mode, slot, config=None):
+    config=config if isinstance(config,dict) else {}
+    preset=PRESET_MODES.get(config.get('preset'))
+    if mode == 'standard':
+        loved=config.get('loved_mode') if isinstance(config.get('loved_mode'),bool) else bool(preset and preset[4])
+        automatic=config.get('auto_difficulty') if isinstance(config.get('auto_difficulty'),bool) else preset[3] if preset else None
+        if loved:return 'Standard Loved', 'standard_fixed'
+        if automatic is True:return 'Standard automatic', 'standard_auto'
+        if automatic is False:return 'Standard fixed', 'standard_fixed'
+        if slot in (0,1):return LABELS[slot], GUIDES[slot]
+        return 'Standard', 'start'
+    if mode == 'mania_7k':return 'Mania 7K', 'mania_7k'
+    if mode == 'mania_4k':return 'Mania 4K', 'mania_4k'
+    if mode == 'catch':return 'Catch fixed', 'catch'
+    if mode == 'taiko':return 'Taiko', 'taiko'
+    return LABELS[slot], GUIDES[slot]
 
 def log_timestamp(line):
     try:return time.mktime(time.strptime(line[:19],'%Y-%m-%d %H:%M:%S'))
@@ -250,13 +307,21 @@ def public_settings(config, universal, room):
     lo=number(mania.get('sr_min',cfg.get('sr_min')),None); hi=number(mania.get('sr_max',cfg.get('sr_max')),None)
     title=room['last_name'] if room else ''
     match=re.search(r'\((\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)\*\)',str(title or ''))
-    result={'difficulty':'Automatic' if cfg.get('auto_difficulty',False) else 'Fixed with player votes',
+    preset=PRESET_MODES.get(config.get('preset'))
+    auto=cfg.get('auto_difficulty') if isinstance(cfg.get('auto_difficulty'),bool) else preset[3] if preset else False
+    loved=cfg.get('loved_mode') if isinstance(cfg.get('loved_mode'),bool) else bool(preset and preset[4])
+    result={'difficulty':'Automatic' if auto else 'Fixed with player votes',
             'configured_range':[lo,hi], 'active_range':[float(match[1]),float(match[2])] if match else None}
+    ruleset_id=cfg.get('ruleset_id') if type(cfg.get('ruleset_id')) is int and cfg['ruleset_id'] in (0,1,2,3) else preset[1] if preset else room.get('ruleset_id') if isinstance(room,dict) else None
+    if type(ruleset_id) is int and 0 <= ruleset_id <= 3:result['ruleset_id']=ruleset_id
+    keys=cfg.get('keys') if cfg.get('keys') in (4,7) else preset[2] if preset else None
+    if type(keys) is int and keys in (4,7):result['keys']=keys
     for key in ['queue_ahead','countdown_seconds','auto_start_seconds','min_players','max_length']:
         value=mania.get(key,cfg.get(key))
         if type(value) in (int,float) and math.isfinite(value) and 0<=value<100000:result[key]=value
     for key in ['freestyle','voteskip_enabled','user_commands_enabled','mania_farm_enabled','mania_style_fallback_enabled']:
         if isinstance(cfg.get(key),bool):result[key]=cfg[key]
+    if isinstance(cfg.get('loved_mode'),bool) or preset:result['loved_mode']=loved
     for key in ['required_mods','allowed_mods']:
         if isinstance(cfg.get(key),list):result[key]=[m for m in cfg[key] if isinstance(m,str) and re.fullmatch(r'[A-Z0-9]{1,6}',m)][:16]
     return result
@@ -269,7 +334,7 @@ def enrich_map(info, mode, cache):
     if key not in cache:
         # Catch research catalogs are not public website indexes. Keep unknown
         # metadata until a separately permitted Catch display index is installed.
-        catalogs=[] if mode=='catch' else ([('farm.db','beatmaps'),('loved.db','beatmaps')] if mode=='standard' else [('mania_7k.db','maps'),('mania.db','maps')])
+        catalogs=[] if mode in ('catch','taiko') else ([('farm.db','beatmaps'),('loved.db','beatmaps')] if mode=='standard' else [('mania_7k.db','maps'),('mania.db','maps')])
         if mode=='all':catalogs=[('farm.db','beatmaps'),('loved.db','beatmaps'),('mania_7k.db','maps'),('mania.db','maps')]
         cache[key]=None
         for filename,table in catalogs:
@@ -436,7 +501,7 @@ def run(*, public=PUBLIC, state=STATE, now=None, publish_status=True):
             # against the room ledger before treating anyone as currently present.
             tails={}; ids={}
             for i in range(4):
-                alias='room'+str(i+1);lines=tail_lines(APP/'logs'/(alias+'.log'));tails[alias]=lines
+                alias='room'+str(i+1);lines=tail_lines(SOURCE.room_log(alias));tails[alias]=lines
                 created=[int(m[1]) for line in lines if (m:=re.search(LOG_PREFIX+r'bot INFO room (\d+) created\b',line))]
                 candidate=runtime[alias]['room_id'] if runtime is not None else created[-1] if created else latest.get(alias,{}).get('room_id')
                 ids[alias]=candidate
@@ -451,7 +516,7 @@ def run(*, public=PUBLIC, state=STATE, now=None, publish_status=True):
                         for key in ['best_gain','best_score']:
                             if player_row[key]:player_row[key]=enrich_map(player_row[key],mode,catalog_cache)
             stats={**shell,'available':True,'tracking_since':round(first),'scopes':scopes}
-            universal=read_json(APP/'instances/universal.json',{})
+            universal=read_json(SOURCE.config('universal'),{})
             for i in range(4):
                 alias='room'+str(i+1);candidate=ids[alias];row=rooms.get(candidate)
                 parsed=runtime[alias] if runtime is not None else playlist(tails[alias],map_by_id,map_by_label,candidate)
@@ -462,20 +527,23 @@ def run(*, public=PUBLIC, state=STATE, now=None, publish_status=True):
                     occupants=parsed['players'] if runtime is not None else conn.execute('SELECT COUNT(*) FROM autohost_room_players WHERE room_id=? AND last_join_at>COALESCE(last_leave_at,0)',(candidate,)).fetchone()[0]
                 # A closed room has no observation of an empty *open* room.
                 # Keep it out of the occupancy series and record it offline.
-                cfg=read_json(APP/'instances'/(alias+'.json'),{})
+                cfg=read_json(SOURCE.config(alias),{})
                 # A frozen MatchStarted ledger row is the strongest current-map
                 # evidence during gameplay, even when playlist promotion raced.
                 current=parsed['current_map'] if valid else None
                 if valid and phase=='PLAYING' and runtime is None:
                     playing=conn.execute('SELECT beatmap_id,map_label,star_rating FROM autohost_matches WHERE room_id=? AND result="playing" ORDER BY started_at DESC LIMIT 1',(candidate,)).fetchone()
                     if playing:current={'beatmap_id':playing[0],'label':clean(playing[1]),'stars':number(playing[2],None)}
-                current=enrich_map(current,TYPES[i],catalog_cache)
-                parsed['queue']=[enrich_map(m,TYPES[i],catalog_cache) for m in parsed['queue']]
-                status['rooms'].append({'alias':alias,'label':LABELS[i],'type':TYPES[i],'room_id':candidate if valid else None,
+                cfg=cfg if isinstance(cfg,dict) else {}
+                mode=room_mode(row.get('ruleset_id') if row else None,cfg,i)
+                label,guide=room_presentation(mode,i,cfg)
+                current=enrich_map(current,mode,catalog_cache)
+                parsed['queue']=[enrich_map(m,mode,catalog_cache) for m in parsed['queue']]
+                status['rooms'].append({'alias':alias,'label':label,'type':mode,'room_id':candidate if valid else None,
                     'state':phase,'players':occupants,'observed_at':parsed['observed_at'] if valid else None,
                     'current_map':current,'queue':parsed['queue'] if valid else [],'queue_known':bool(valid and parsed['queue_known']),
-                    'settings':public_settings(cfg if isinstance(cfg,dict) else {},universal if isinstance(universal,dict) else {},row),
-                    'guide':'lobbies:'+GUIDES[i]})
+                    'settings':public_settings(cfg,universal if isinstance(universal,dict) else {},row),
+                    'guide':'lobbies:'+guide})
             status['available']=True
     except (OSError,ValueError,TypeError,KeyError,sqlite3.Error) as exc:
         import traceback
@@ -484,8 +552,13 @@ def run(*, public=PUBLIC, state=STATE, now=None, publish_status=True):
         status['rooms']=[]
         # Do not retain named statistics when privacy cannot be verified.
     if not status['rooms']:
-        status['rooms']=[{'alias':'room'+str(i+1),'label':LABELS[i],'type':TYPES[i],'state':'STALE','players':None,
-                         'room_id':None,'observed_at':None,'current_map':None,'queue':[],'queue_known':False,'settings':{},'guide':'lobbies:'+GUIDES[i]} for i in range(4)]
+        status['rooms']=[]
+        for i in range(4):
+            cfg=read_json(SOURCE.config('room'+str(i+1)),{})
+            cfg=cfg if isinstance(cfg,dict) else {}
+            mode=room_mode(None,cfg,i);label,guide=room_presentation(mode,i,cfg)
+            status['rooms'].append({'alias':'room'+str(i+1),'label':label,'type':mode,'state':'STALE','players':None,
+                         'room_id':None,'observed_at':None,'current_map':None,'queue':[],'queue_known':False,'settings':{},'guide':'lobbies:'+guide})
     history=read_json(state/'observations.json')
     if not isinstance(history,list):history=history_seed()
     history=[r for r in history if isinstance(r,list) and len(r)==6 and now-31*86400<=number(r[0])<=now+30]

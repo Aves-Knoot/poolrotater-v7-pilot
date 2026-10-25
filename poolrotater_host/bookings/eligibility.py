@@ -52,9 +52,14 @@ class Eligibility:
     ingestion and explicit local alias policy.
     """
 
-    def __init__(self, store, clock=time.time):
+    def __init__(self, store, clock=time.time, current_booking_report=None):
         self.store = store
         self.clock = clock
+        # An authenticated exchange may supply its own report to the pending
+        # command check for this request only. It is intentionally not written
+        # here: Hub.accept persists the idempotent exchange response only
+        # after command selection succeeds.
+        self.current_booking_report = current_booking_report
         self.network_path = Path(store.path)
         self.root = Path(store.root)
         self.managed_path = self.root / 'managed-rooms.sqlite3'
@@ -101,24 +106,41 @@ class Eligibility:
                 and room['failure_code'] is None for room in native['rooms']))
         controller_eligible = controller_phase == 'running' or stopped_controller_safe
 
-        booking_db = _readonly(self.bookings_path)
-        try:
-            report = booking_db.execute('SELECT * FROM reports WHERE host=?', (host_id,)).fetchone()
-        except sqlite3.Error:
+        report = self.current_booking_report
+        if report is not None:
+            # This path is provided only by Hub.accept after token and host
+            # binding authentication. Revalidate its complete binding and pin
+            # anyway, so a malformed or accidentally reused row fails closed.
+            require(type(report) is dict and report.get('host') == host_id,
+                    'host_ineligible', 409)
+        else:
+            booking_db = _readonly(self.bookings_path)
+            try:
+                report = booking_db.execute('SELECT * FROM reports WHERE host=?', (host_id,)).fetchone()
+            except sqlite3.Error:
+                booking_db.close()
+                raise NetworkError('booking_eligibility_unavailable', 503) from None
             booking_db.close()
-            raise NetworkError('booking_eligibility_unavailable', 503) from None
-        booking_db.close()
-        require(report is not None and self._fresh(report['received'], now), 'host_ineligible', 409)
-        payload = _json(report['payload'])
+        require(report is not None, 'host_ineligible', 409)
+        try:
+            report = dict(report)
+            received = report['received']
+            sequence = report['sequence']
+            raw_payload = report['payload']
+            pin = report['pin']
+        except (KeyError, TypeError, ValueError):
+            raise NetworkError('host_ineligible', 409) from None
+        require(self._fresh(received, now), 'host_ineligible', 409)
+        payload = _json(raw_payload)
         require(type(payload) is dict and len(canonical(payload)) <= 262144 and set(payload) == {
             'protocol_version', 'host_id', 'installation_id', 'generation', 'sequence', 'sent_at',
             'capabilities', 'observations', 'receipts'}, 'host_ineligible', 409)
         require(payload['protocol_version'] == 1 and payload['host_id'] == host_id
                 and payload['installation_id'] == installation_id and payload['generation'] == generation
-                and type(payload['sequence']) is int and payload['sequence'] == report['sequence']
+                and type(payload['sequence']) is int and payload['sequence'] == sequence
                 and self._fresh(payload['sent_at'], now), 'host_ineligible', 409)
         pin = hashlib.sha256(canonical(payload)).hexdigest()
-        require(type(report['pin']) is str and report['pin'] == pin, 'host_ineligible', 409)
+        require(type(report.get('pin')) is str and report['pin'] == pin, 'host_ineligible', 409)
         caps = payload['capabilities']
         require(type(caps) is dict and set(caps) == {'version', 'enabled_aliases', 'supported_presets', 'active_booking_ids'}
                 and caps['version'] == 1, 'host_ineligible', 409)

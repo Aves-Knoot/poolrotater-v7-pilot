@@ -3,7 +3,7 @@ from ..network.contracts import (fields, require, identifier, integer, number, t
                                  canonical, base)
 MAX_EVENTS = 100
 MAX_BODY = 65536
-MODES = ('standard', 'mania4', 'mania7', 'catch')
+MODES = ('standard', 'mania4', 'mania7', 'catch', 'taiko')
 
 
 def consent(value):

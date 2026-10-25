@@ -11,6 +11,8 @@ PRESETS = {
     'mania-4k': {'ruleset': 3, 'keys': 4, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
     'mania-7k': {'ruleset': 3, 'keys': 7, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
     'standard-loved': {'ruleset': 0, 'keys': None, 'auto_difficulty': False, 'sr_min': 4.0, 'sr_max': 6.0},
+    'taiko-fixed': {'ruleset': 1, 'keys': None, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
+    'taiko-auto': {'ruleset': 1, 'keys': None, 'auto_difficulty': True, 'sr_min': 3.0, 'sr_max': 4.0},
     'catch-fixed': {'ruleset': 2, 'keys': None, 'auto_difficulty': False, 'sr_min': 3.0, 'sr_max': 4.0},
 }
 # Catch is explicit opt-in; upgrades and fresh defaults retain the original topology.

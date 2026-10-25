@@ -27,7 +27,7 @@ def apply_pool_styles(pool,cfg):
 def apply_worker_settings(bot,patch):
     """Called only from the worker's main-loop lifecycle queue."""
     mode=('mania-'+str(bot.cfg.get('mania_keys',4))+'k' if bot.cfg.get('ruleset_id')==3 else
-          'catch-fixed' if bot.cfg.get('ruleset_id')==2 else
+          ('taiko-auto' if bot.cfg.get('auto_difficulty') else 'taiko-fixed') if bot.cfg.get('ruleset_id')==1 else 'catch-fixed' if bot.cfg.get('ruleset_id')==2 else
           'standard-loved' if bot.cfg.get('loved_mode') else
           'standard-auto' if bot.cfg.get('auto_difficulty') else 'standard-fixed')
     settings.validate(patch,current={k:v for k,v in bot.cfg.items() if k in settings.FIELDS}|{'preset':mode})

@@ -1,4 +1,5 @@
 """Enrolled host booking exchange; independent of the public browser listener."""
+import copy
 import json
 import time
 from ..diagnostic_logs.common import private_database,transaction
@@ -48,7 +49,16 @@ class Repository:
             self.ledger.observe(value['host_id'],item['booking_id'],item['observation'])
         self.ledger.observe_receipts(value['host_id'],value['receipts'])
         leases=self.ledger.leases(value['host_id'],value['installation_id'],value['generation'])
-        commands=self.ledger.pending(value['host_id'])
+        # A slow host-side inspection can make its last stored report stale
+        # before the next exchange. Use this authenticated, validated report
+        # only for this request's pending-command eligibility check. Keep the
+        # shared ledger/default eligibility DB-backed for all other callers.
+        from .eligibility import Eligibility
+        request_ledger=copy.copy(self.ledger)
+        request_ledger.eligibility=Eligibility(self.store,clock=self.store.clock,
+            current_booking_report={'host':value['host_id'],'sequence':value['sequence'],
+                'pin':pin,'payload':canonical(value).decode(),'received':now})
+        commands=request_ledger.pending(value['host_id'])
         response={'ok':True,'sequence':value['sequence'],'leases':leases,'commands':[]}
         for command in commands:
             candidate={**response,'commands':[*response['commands'],command]}

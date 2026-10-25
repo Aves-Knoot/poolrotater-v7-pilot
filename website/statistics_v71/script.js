@@ -1,17 +1,39 @@
-
+/* Live headline counts are partial observations; historical gaps stay intact. */
 (function(global){
   const sources={owner:null,community:null};
+  const fresh=(data,now)=>data&&data.available===true&&Array.isArray(data.rooms)&&Number.isFinite(data.generated_at)&&Number.isFinite(data.expires_at)&&data.generated_at<=now+30&&data.expires_at>now&&data.expires_at>data.generated_at;
+  const countable=r=>r&&Number.isSafeInteger(r.room_id)&&r.room_id>0&&Number.isInteger(r.players)&&r.players>=0&&r.players<=128;
   global.prLiveOccupancyUpdate=function(kind,value){
     sources[kind]=value;const now=Date.now()/1000,o=sources.owner,c=sources.community;
-    let total=null;
-    if(o&&c&&o.available===true&&c.available===true&&Array.isArray(o.rooms)&&o.rooms.length===4&&Array.isArray(c.rooms)&&c.rooms.length<=100&&!c.more_available&&o.generated_at<=now+30&&o.expires_at>now&&c.generated_at<=now+30&&c.expires_at>now){
-      let n=0,known=true;const seen=new Set(),aliases=new Set();
-      for(const r of o.rooms){if(!/^room[1-4]$/.test(r.alias)||aliases.has(r.alias)){known=false;break;}aliases.add(r.alias);if(r.state==='OFFLINE')continue;if(!Number.isSafeInteger(r.room_id)||r.room_id<=0||!Number.isInteger(r.players)||r.players<0||r.players>128){known=false;break;}if(!seen.has(r.room_id)){seen.add(r.room_id);n+=r.players;}}
-      for(const r of c.rooms){if(r.visibility!==undefined&&r.visibility!=='public'||seen.has(r.room_id))continue;if(!Number.isSafeInteger(r.room_id)||r.room_id<=0||!Number.isInteger(r.players)||r.players<0||r.players>128||!['playing','starting','idle','draining'].includes(r.state)||!(r.fresh_until>now)||!(r.hide_at>now)){known=false;break;}seen.add(r.room_id);n+=r.players;}
-      if(known)total=n;
+    let total=0;const seen=new Set(),aliases=new Set();
+    if(fresh(o,now)&&o.rooms.length<=4)for(const r of o.rooms){
+      if(!countable(r)||!/^room[1-4]$/.test(r.alias)||aliases.has(r.alias)||seen.has(r.room_id)||!['PLAYING','STARTING','SCORING','IDLE'].includes(r.state))continue;
+      aliases.add(r.alias);seen.add(r.room_id);total+=r.players;
     }
-    if(typeof document!=='undefined')for(const el of document.querySelectorAll('[data-live-metric="players"],[data-home-people],[data-chart-current="total"]'))el.textContent=total===null?'—':new Intl.NumberFormat('en-US').format(total)+(el.hasAttribute('data-chart-current')?' here now':'');
+    if(c&&c.available===true&&Array.isArray(c.rooms)&&Number.isFinite(c.generated_at)&&Number.isFinite(c.expires_at)&&c.generated_at<=now+30&&now-c.generated_at<1800&&c.expires_at>c.generated_at&&[1,2].includes(c.schema)&&c.rooms.length<=100&&c.expires_at-c.generated_at<=60)for(const r of c.rooms){
+      if(!countable(r)||r.visibility!==undefined&&r.visibility!=='public'||seen.has(r.room_id)||!['playing','starting','idle','draining'].includes(r.state)||!Number.isFinite(r.fresh_until)||r.fresh_until<=now||!Number.isFinite(r.hide_at)||r.hide_at<=now)continue;
+      seen.add(r.room_id);total+=r.players;
+    }
+    if(typeof document!=='undefined')for(const el of document.querySelectorAll('[data-live-metric="players"],[data-home-people],[data-chart-current="total"]'))el.textContent=new Intl.NumberFormat('en-US').format(total)+(el.hasAttribute('data-chart-current')?' here now':'');
     return total;
+  };
+  global.prObservedAvailability=function(samples,seconds,now=Date.now()/1000){
+    if(![86400,604800,2592000].includes(seconds))seconds=86400;
+    let count=0,online=0;
+    for(const row of Array.isArray(samples)?samples:[]){
+      if(!Array.isArray(row)||row.length!==6||!Number.isFinite(row[0])||row[0]<now-seconds||row[0]>now||row[5]!==0&&row[5]!==1)continue;
+      count++;online+=row[5];
+    }
+    return {window_seconds:seconds,samples:count,online_samples:online,percent:count?100*online/count:null};
+  };
+  global.prLiveAvailabilityUpdate=function(activity){
+    const select=document.querySelector('[data-availability-window]');if(!select)return;
+    const seconds=Number(select.value),period=({'86400':'24 hours','604800':'7 days','2592000':'30 days'})[seconds]||'24 hours';
+    const result=global.prObservedAvailability(activity&&activity.samples,seconds);
+    for(const el of document.querySelectorAll('[data-live-metric="availability"]'))el.textContent=result.percent===null?'—':result.percent.toFixed(2)+'%';
+    for(const el of document.querySelectorAll('[data-availability-samples]'))el.textContent=result.samples.toLocaleString('en-US')+' service samples';
+    for(const el of document.querySelectorAll('.pr-availability-note'))el.textContent='Availability is based on '+result.samples.toLocaleString('en-US')+' service observations in the past '+period+'. Only recorded observations are included; short outages between observations can be missed.';
+    return result;
   };
   if(typeof setInterval==='function')setInterval(function(){global.prLiveOccupancyUpdate('owner',sources.owner);},1000);
 })(typeof window!=='undefined'?window:globalThis);
@@ -33,7 +55,7 @@
     const elapsed=running?Math.max(0,Math.min(duration,now-start)):0,ratio=running?elapsed/duration:0;
     const bar=card.querySelector('.pr-np-progress');if(!bar)return;
     bar.hidden=!running;bar.firstElementChild.style.transform='scaleX('+ratio+')';bar.setAttribute('aria-valuenow',String(Math.round(ratio*100)));bar.setAttribute('aria-valuetext',running?'Estimated '+clock(elapsed)+' of '+clock(duration):'Timing unavailable');
-    card.dataset.timed=String(running);card.dataset.finished=String(ratio>=1);put(card,'.pr-np-clock',running?(card.dataset.nominalSpeed==='true'?'Estimated at 1× ':'Estimated ')+clock(elapsed)+' / '+clock(duration):'');
+    card.dataset.timed=String(running);card.dataset.finished=String(ratio>=1);put(card,'.pr-np-clock',running?'Estimated '+clock(elapsed)+' / '+clock(duration):'');
   }
   function update(card,room,fresh,now){
     room=room||{};const state=fresh&&states[room.state]?room.state:'STALE',map=fresh?(room.current_map||{}):{},p=timing(room,fresh,now),community=room.ownership==='community';
@@ -625,6 +647,8 @@ jQuery(function(){
             expire(stats, expiredStats);
         }
         var chartSelect = live && live.querySelector('[name=pr_chart_window]');
+        var availabilitySelect = live && live.querySelector('[data-availability-window]');
+        if(availabilitySelect)availabilitySelect.addEventListener('change',function(){window.prLiveAvailabilityUpdate(activity);});
         function svgNode(tag, attrs, text) {
             var n = document.createElementNS('http://www.w3.org/2000/svg', tag);
             Object.keys(attrs || {}).forEach(function (key) { n.setAttribute(key, String(attrs[key])); });
@@ -687,12 +711,12 @@ jQuery(function(){
         if(chartSelect){
             chartSelect.addEventListener('change',graphs);
             live.querySelector('.pr-chart-form').addEventListener('submit',function(e){e.preventDefault();graphs();});
-            try{var embedded=document.getElementById('pr-activity-data');if(embedded){activity=JSON.parse(embedded.textContent);graphs();}}catch(_){}
+            try{var embedded=document.getElementById('pr-activity-data');if(embedded){activity=JSON.parse(embedded.textContent);graphs();window.prLiveAvailabilityUpdate(activity);}}catch(_){}
         }
         async function refreshLive() {
             if(!live)return;
             var controller=new AbortController(),timeout=setTimeout(function(){controller.abort();},10000);
-            try{var data=await(await get('/activity.json',controller.signal)).json();if(data.schema!==1||!Array.isArray(data.samples))throw Error('Unavailable');activity=data;graphs();historyTable();}
+            try{var data=await(await get('/activity.json',controller.signal)).json();if(data.schema!==1||!Array.isArray(data.samples))throw Error('Unavailable');activity=data;graphs();historyTable();window.prLiveAvailabilityUpdate(activity);}
             catch(_){/* Retain the dated historical observations while current status refreshes independently. */}
             finally{clearTimeout(timeout);}
         }
@@ -751,10 +775,8 @@ jQuery(function(){
         }
         function dashboard(data,valid) {
             var live=document.querySelector('[data-status-page]');if(!live)return;
-            var rooms=valid?data.rooms:[],service=valid?data.service||{}:{},availability=valid?data.availability||{}:{};
+            var rooms=valid?data.rooms:[],service=valid?data.service||{}:{};
             function metric(key,value){text(live,'[data-live-metric="'+key+'"]',value);}
-            var counts=rooms.filter(function(r){return Number.isInteger(r.players);});
-            metric('players',valid&&counts.length?counts.reduce(function(n,r){return n+r.players;},0):'—');
             window.prLiveOccupancyUpdate('owner',valid?data:null);
             var peak=valid?data.peak_players:null;
             if(valid){
@@ -765,13 +787,10 @@ jQuery(function(){
             metric('rooms',valid&&data.available?rooms.filter(function(r){return integer(r.room_id)&&r.state!=='OFFLINE'&&r.state!=='STALE';}).length+' / 4':'—');
             var seconds=service.uptime_seconds,minutes=Number.isFinite(seconds)?Math.floor(seconds/60):null;
             metric('uptime',minutes===null?'—':minutes>=1440?Math.floor(minutes/1440)+'d '+Math.floor(minutes%1440/60)+'h':minutes>=60?Math.floor(minutes/60)+'h '+minutes%60+'m':minutes+'m');
-            if(Number.isFinite(availability.percent))metric('availability',availability.percent.toFixed(2)+'%');
             var health=live.querySelector('.pr-dashboard-health'),status=typeof service.online==='boolean'?(service.online?'online':'offline'):'unknown';health.dataset.health=status;text(health,'[data-service-label]','Bot '+status);
             text(live,'[data-service-restarts]',Number.isInteger(service.restarts)?String(service.restarts):'Unknown');
-            if(Number.isInteger(availability.samples))text(live,'.pr-availability-note','Availability is based on '+availability.samples+' service observations in the past 24 hours. Short outages between observations can be missed.');
             live.querySelectorAll('[data-chart-current]').forEach(function(el){
                 if(el.dataset.chartCurrent==='total'){
-                    var complete=rooms.length===4&&rooms.every(function(r){return Number.isInteger(r.players)&&r.players>=0||r.players==null&&r.state==='OFFLINE';});
                     window.prLiveOccupancyUpdate('owner',valid?data:null);
                 }else{var room=rooms.find(function(r){return r.alias===el.dataset.chartCurrent;});el.textContent=room&&Number.isInteger(room.players)?room.players+' here now':'—';}
             });
@@ -989,7 +1008,7 @@ jQuery(function(){
       const m=r.current_map;if(m!=null){if(typeof m!=='object'||!Number.isSafeInteger(m.beatmap_id)||m.beatmap_id<=0)return false;for(const key of['title','artist','version'])if(m[key]!=null&&(typeof m[key]!=='string'||m[key].length>1024))return false;}
       return true;
     }
-    function usable(value,t){return value&&[1,2].includes(value.schema)&&value.available===true&&Array.isArray(value.rooms)&&value.rooms.length<=100&&Number.isFinite(value.generated_at)&&Number.isFinite(value.expires_at)&&value.generated_at<=t+30&&value.expires_at>value.generated_at&&value.expires_at-value.generated_at<=60&&t-value.generated_at<600;}
+    function usable(value,t){return value&&[1,2].includes(value.schema)&&value.available===true&&Array.isArray(value.rooms)&&value.rooms.length<=100&&Number.isFinite(value.generated_at)&&Number.isFinite(value.expires_at)&&value.generated_at<=t+30&&value.expires_at>value.generated_at&&value.expires_at-value.generated_at<=60&&t-value.generated_at<1800;}
     function render(value){
       const t=now(),incoming=usable(value,t);
       // A valid empty refresh is authoritative. A failed fetch is not a
@@ -997,14 +1016,14 @@ jQuery(function(){
       if(incoming)data=value;
       const retained=usable(data,t),valid=retained&&data.expires_at>t,delayed=!incoming||!valid||data.refresh_failed===true;
       clearTimeout(expiry);let next=valid?data.expires_at:t+30;const own=ownIds(),seen=new Set(),rooms=[];
-      for(const r of retained?data.rooms:[]){if(!validRoom(r)||(r.visibility!==undefined&&r.visibility!=='public')||own.has(r.room_id)||!Number.isSafeInteger(r.room_id)||r.room_id<=0||!Number.isFinite(r.hide_at)||r.hide_at<=t||typeof r.key!=='string'||!/^[a-f0-9]{24}$/.test(r.key)||seen.has(r.key))continue;seen.add(r.key);rooms.push({...r,ownership:'community'});next=Math.min(next,r.hide_at);if(valid&&r.fresh_until>t)next=Math.min(next,r.fresh_until);}
-      if(window.prLiveOccupancyUpdate)window.prLiveOccupancyUpdate('community',valid?data:null);
+      for(const r of retained?data.rooms:[]){if(!validRoom(r)||(r.visibility!==undefined&&r.visibility!=='public')||own.has(r.room_id)||!Number.isSafeInteger(r.room_id)||r.room_id<=0||!Number.isFinite(r.hide_at)||r.hide_at<=t||typeof r.key!=='string'||!/^[a-f0-9]{24}$/.test(r.key)||seen.has(r.key))continue;seen.add(r.key);rooms.push({...r,ownership:'community'});next=Math.min(next,r.hide_at);if(retained&&r.fresh_until>t)next=Math.min(next,r.fresh_until);}
+      if(window.prLiveOccupancyUpdate)window.prLiveOccupancyUpdate('community',retained?data:null);
       roots.forEach(root=>{
         const list=root.querySelector('[data-community-list]'),compact=root.dataset.communitySurface==='sidebar';
         const openSettings=new Set(Array.from(list.querySelectorAll('article')).filter(a=>a.querySelector('details[open]')).map(a=>a.dataset.liveKey));
         const focused=document.activeElement&&list.contains(document.activeElement)?{key:document.activeElement.closest('article').dataset.liveKey,cls:document.activeElement.className}:null;
         const nodes=[];
-        for(const room of rooms){const fresh=valid&&Number.isFinite(room.fresh_until)&&room.fresh_until>t&&room.state!=='unavailable';const article=element('article',undefined,'pr-community-room');article.setAttribute('data-community-card','');article.dataset.liveKey=room.key;article.dataset.preset=room.preset||'';article.dataset.state=fresh?room.state:'unavailable';article.dataset.roomType=room.preset==='catch-fixed'?'catch':String(room.preset||'').startsWith('mania')?'mania':'standard';article.id=(compact?'sidebar-community-':'community-')+room.key;article.append(ui.card(room,fresh,compact,t));
+        for(const room of rooms){const fresh=retained&&Number.isFinite(room.fresh_until)&&room.fresh_until>t&&room.state!=='unavailable';const article=element('article',undefined,'pr-community-room');article.setAttribute('data-community-card','');article.dataset.liveKey=room.key;article.dataset.preset=room.preset||'';article.dataset.state=fresh?room.state:'unavailable';article.dataset.roomType=room.preset==='catch-fixed'?'catch':String(room.preset||'').startsWith('taiko-')?'taiko':String(room.preset||'').startsWith('mania')?'mania':'standard';article.id=(compact?'sidebar-community-':'community-')+room.key;article.append(ui.card(room,fresh,compact,t));
           if(!compact){const body=element('div',undefined,'pr-room-body'),facts=element('div',undefined,'pr-community-facts');function fact(label,text){const n=element('p',undefined,'pr-community-fact');n.append(element('span',label),element('strong',text));facts.append(n);}if(fresh&&Number.isFinite(room.min_stars)&&Number.isFinite(room.max_stars))fact('Star range',room.min_stars.toFixed(2)+'–'+room.max_stars.toFixed(2)+'★');fact('Players in room',fresh&&Number.isInteger(room.players)&&room.players>=0&&room.players<=128?room.players+' players':'Unavailable');body.append(facts);const settings=ui.settings(room.settings,fresh);if(settings){settings.open=openSettings.has(room.key);body.append(settings);}article.append(body);}
           const filter=document.querySelector('[data-room-filter][aria-pressed="true"]');if(root.dataset.communitySurface==='dashboard'&&filter)article.hidden=filter.dataset.roomFilter!=='all'&&filter.dataset.roomFilter!==article.dataset.roomType;
           nodes.push(article);
@@ -1014,7 +1033,7 @@ jQuery(function(){
       });
       expiry=setTimeout(()=>render(data),Math.max(50,(next-t)*1000+20));
     }
-    async function poll(){if(busy||document.hidden)return;busy=true;const abort=new AbortController(),timeout=setTimeout(()=>abort.abort(),4000);try{const r=await fetch('/community/rooms.json',{cache:'no-store',credentials:'omit',signal:abort.signal});if(!r.ok)throw Error('unavailable');const date=Date.parse(r.headers.get('Date'));if(Number.isFinite(date))offset=date-Date.now();render(await r.json());}catch(_){render(null);}finally{clearTimeout(timeout);busy=false;}}
+    async function poll(){if(busy||document.hidden)return;busy=true;const abort=new AbortController(),timeout=setTimeout(()=>abort.abort(),15000);try{const r=await fetch('/community/rooms.json',{cache:'no-store',credentials:'omit',signal:abort.signal});if(!r.ok)throw Error('unavailable');const date=Date.parse(r.headers.get('Date'));if(Number.isFinite(date))offset=date-Date.now();render(await r.json());}catch(_){render(null);}finally{clearTimeout(timeout);busy=false;}}
     document.addEventListener('pr:lobby-status',event=>{const rooms=event.detail&&event.detail.rooms;ownerIds=new Set(Array.isArray(rooms)?rooms.map(r=>r.room_id).filter(Number.isSafeInteger):[]);if(data)render(data);});
     const embedded=document.querySelector('[data-community-initial]');if(embedded){try{render(JSON.parse(embedded.textContent));}catch(_){render(null);}}
     poll();setInterval(poll,30000);setInterval(()=>{if(!document.hidden)roots.forEach(root=>root.querySelectorAll('[data-live-card]').forEach(card=>ui.tick(card,now())));},1000);

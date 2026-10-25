@@ -134,7 +134,7 @@ class Policy:
         require(subject in ('user','key','host') and effect in ('suppress','allow','delete')
                 and (effect!='delete' or subject=='user'),'invalid_ratings_policy')
         if subject in ('user','key'):integer(user_id)
-        require(ruleset_id is None or (subject=='key' and type(ruleset_id) is int and ruleset_id==2),
+        require(ruleset_id is None or (subject=='key' and type(ruleset_id) is int and ruleset_id in (1,2)),
                 'invalid_ratings_policy')
         if subject=='key':
             integer(beatmap_id)

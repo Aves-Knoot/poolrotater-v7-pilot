@@ -106,7 +106,12 @@ def _time(now):
 
 
 def _extended(record):
+    # v2 remains the historical Catch projection; Taiko has its own additive feed.
     return 'catch' in record['content_ids'] or any('catch' in e['modes'] for e in record['exclusions']['events'])
+
+
+def _taiko_enabled(record):
+    return 'taiko' in record['content_ids'] or any('taiko' in e['modes'] for e in record['exclusions']['events'])
 
 
 def _legacy_feed(feed):
@@ -286,6 +291,7 @@ class Publisher:
         names={'exclusions.json'}
         if _extended(record):names.add('exclusions-v2.json')
         if 'loved' in record['content_ids'] or any('loved' in e['modes'] for e in record['exclusions']['events']):names.add('exclusions-loved.json')
+        if _taiko_enabled(record):names.add('exclusions-taiko.json')
         from .catalog_export import read_manifest
         for mode in record['content_ids']:
             info=objects['targets'].signed.targets[mode+'/manifest.json']
@@ -307,6 +313,11 @@ class Publisher:
         if 'exclusions-loved.json' in names:
             extra=objects['targets'].signed.targets['exclusions-loved.json']
             raw=canonical(_scoped_feed(record['exclusions'],{'loved'}))
+            require(extra.length==len(raw) and extra.hashes=={'sha256':hashlib.sha256(raw).hexdigest()},
+                    'pending_catalog_exclusion_identity_changed')
+        if 'exclusions-taiko.json' in names:
+            extra=objects['targets'].signed.targets['exclusions-taiko.json']
+            raw=canonical(_scoped_feed(record['exclusions'],{'taiko'}))
             require(extra.length==len(raw) and extra.hashes=={'sha256':hashlib.sha256(raw).hexdigest()},
                     'pending_catalog_exclusion_identity_changed')
         for name,info in objects['targets'].signed.targets.items():
@@ -690,6 +701,8 @@ class Publisher:
                 feeds['exclusions-v2.json']=_scoped_feed(feed,set(CORE_MODES)|{'catch'})
             if 'loved' in bundles or any('loved' in e['modes'] for e in feed['events']):
                 feeds['exclusions-loved.json']=_scoped_feed(feed,{'loved'})
+            if 'taiko' in bundles or any('taiko' in e['modes'] for e in feed['events']):
+                feeds['exclusions-taiko.json']=_scoped_feed(feed,{'taiko'})
             for name,body in feeds.items():
                 raw=canonical(body);info=TargetFile.from_data(name,raw,['sha256'])
                 targets.signed.targets[info.path]=info

@@ -320,6 +320,11 @@ def _initialize(root, marker):
         PPStatsStore(str(path), ruleset_id=3)
         # A fresh explicit Catch host prepares its namespace before workers can
         # lock schemas. Existing Standard/Mania installations are unchanged.
+        if any(room['preset'].startswith('taiko-') for room in load(root)[1]['rooms']):
+            from bot.taiko_ppstats import TaikoPPStatsStore
+            from bot.scoped_ratings import ScopedRatingStore
+            ScopedRatingStore(str(path),ruleset_id=1)
+            TaikoPPStatsStore(str(path),ruleset_id=1)
         if any(room['preset'] == 'catch-fixed' for room in load(root)[1]['rooms']):
             from bot.catch_ppstats import CatchPPStatsStore
             from bot.scoped_ratings import ScopedRatingStore
@@ -381,6 +386,13 @@ def prepare(root, marker, *, uid, owner_lease_held=False):
     # another installation's code/state. These imports perform no room actions.
     from bot.ratings import RatingStore
     from bot.ppstats import PPStatsStore
+    # Fresh-install schema initialization selects these stores only after the
+    # identity drop. Import their modules now while the staged payload remains
+    # traversable; constructors still run only inside _identity(uid), where
+    # the existing private-ledger checks and ownership rules apply.
+    from bot.scoped_ratings import ScopedRatingStore
+    from bot.catch_ppstats import CatchPPStatsStore
+    from bot.taiko_ppstats import TaikoPPStatsStore
     from .activity.reader import Reader
     from . import reconciliation, ownership_recovery
     with _identity(uid):

@@ -67,7 +67,7 @@ def pin_mania_validation(cfg, release):
 
 def make_worker_pool(cfg):
     """Worker-local Ranked policy; shared v6.7.2 factory/contracts stay pinned."""
-    if ruleset_id(cfg) in (2, 3) or cfg.get('loved_mode', False):
+    if ruleset_id(cfg) in (1, 2, 3) or cfg.get('loved_mode', False):
         return _managed_policy(make_pool(cfg), cfg)
     validate_mods(cfg.get('allowed_mods', []), cfg.get('required_mods', []))
     if cfg.get('freestyle') and (cfg.get('allowed_mods') or cfg.get('required_mods')):
@@ -100,7 +100,7 @@ def make_worker_pool(cfg):
 def managed_catalog_mode(cfg):
     rule = ruleset_id(cfg)
     return ('loved' if rule == 0 and cfg.get('loved_mode') else 'standard' if rule == 0
-            else 'catch' if rule == 2 else 'mania'+str(cfg['mania_keys']))
+            else 'taiko' if rule == 1 else 'catch' if rule == 2 else 'mania'+str(cfg['mania_keys']))
 
 
 def _managed_policy(pool, cfg):

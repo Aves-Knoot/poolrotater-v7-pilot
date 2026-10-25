@@ -46,7 +46,10 @@ function prHomePage($status = null, $statistics = null, $releases = null) {
     ];
     foreach ($choices as [$alias,$guide,$mode,$title,$badge,$symbol]) {
         $room = []; foreach ($rooms as $candidate) if (($candidate['alias'] ?? '') === $alias) $room = $candidate;
-        if (($room['type'] ?? '') === 'catch') { $guide='catch'; $mode='osu!catch'; $title='Fixed Catch difficulty'; $badge='CATCH'; $symbol='circle'; }
+        $ruleset=$room['settings']['ruleset_id']??$room['ruleset_id']??null;
+        $type=$room['type']??([0=>'standard',1=>'taiko',2=>'catch',3=>'mania'][$ruleset]??null);
+        if ($type === 'catch') { $guide='catch'; $mode='osu!catch'; $title='Fixed Catch difficulty'; $badge='CATCH'; $symbol='circle'; }
+        elseif ($type === 'taiko') { $guide='taiko'; $mode='osu!taiko'; $title='Taiko native and converted NM'; $badge='TAIKO'; $symbol='circle'; }
         $state = $room['state'] ?? 'STALE'; $id = $room['room_id'] ?? null;
         $joinable = is_int($id) && $id > 0 && !in_array($state,['OFFLINE','STALE'],true);
         $players = is_int($room['players'] ?? null) && $room['players'] >= 0 ? $room['players'].($room['players'] === 1 ? ' person' : ' people') : 'Count unavailable';

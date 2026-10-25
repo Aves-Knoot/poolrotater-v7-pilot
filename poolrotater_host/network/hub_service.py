@@ -22,7 +22,8 @@ USER = 'poolrotater-hub'
 UNIT = 'poolrotater-v7-hub.service'
 BOOKING_ASSETS=tuple('poolrotater_host/bookings/static/'+n for n in ('index.html','app.js','app.css'))
 PREVIEW_MODULES=('__init__.py','rating_outbox.py','mode.py','custom_greetings.py',
-    'pool.py','standard_pool.py','mania_pool.py','catch_pool.py','jump_catalog.py','composition.py',
+    'pool.py','standard_pool.py','mania_pool.py','catch_pool.py','taiko_pool.py','taiko_difficulty.py',
+    'jump_catalog.py','composition.py',
     'catch_catalog/__init__.py','catch_catalog/c5_selection.py','catch_catalog/c6_reader.py',
     'catch_catalog/c6_schema.py','catch_catalog/disk.py','catch_catalog/errors.py','catch_catalog/production.py')
 
@@ -115,8 +116,9 @@ try:
         if p.is_symlink() or s.st_uid!=0 or stat.S_IMODE(s.st_mode)&0o022:
             raise ValueError('unsafe code')
         if stat.S_ISDIR(s.st_mode):continue
-        if not stat.S_ISREG(s.st_mode) or s.st_nlink!=1 or s.st_size>1048576:raise ValueError('unsafe code')
         name=p.relative_to(base).as_posix()
+        limit=2097152 if name=='poolrotater_host/integrated_upgrade.py' else 1048576
+        if not stat.S_ISREG(s.st_mode) or s.st_nlink!=1 or s.st_size>limit:raise ValueError('unsafe code')
         if name=='inventory.json':continue
         actual.add(name)
         if name not in records['files'] or hashlib.sha256(p.read_bytes()).hexdigest()!=records['files'][name]:
@@ -211,7 +213,8 @@ def install_assets(kit, *, expected_inventory_sha256, cert, key,
         require(Path(name).as_posix()==name and '..' not in Path(name).parts and not Path(name).is_absolute(),'hub_kit_refused')
         for ancestor in (path,*path.parents):require(not ancestor.is_symlink(),'hub_kit_refused')
         info=path.lstat()
-        require(stat.S_ISREG(info.st_mode) and info.st_nlink==1 and info.st_size<=1024*1024
+        maximum=2*1024*1024 if name=='poolrotater_host/integrated_upgrade.py' else 1024*1024
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink==1 and info.st_size<=maximum
                 and re.fullmatch('[a-f0-9]{64}',digest or '') is not None
                 and hashlib.sha256(path.read_bytes()).hexdigest()==digest,'hub_kit_refused')
     config=settings(read_json(kit/'hub.json'))

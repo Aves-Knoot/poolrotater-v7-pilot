@@ -74,13 +74,16 @@ def merge(current,patch):
         # These values describe the chosen mode rather than unrelated host tuning.
         result['loved_mode']=patch.get('loved_mode',mode=='standard-loved')
         result['auto_difficulty']=patch.get('auto_difficulty',PRESETS[mode]['auto_difficulty'])
-        if mode.startswith('mania-') or mode in ('catch-fixed','standard-loved'):
+        if mode.startswith('mania-') or mode in ('catch-fixed','standard-loved','taiko-fixed','taiko-auto'):
             result['stream_enabled']=patch.get('stream_enabled',False)
-        if mode=='catch-fixed':
+        if mode in ('catch-fixed','taiko-fixed','taiko-auto'):
             for key,value in dict(allowed_mods=[],required_mods=[],freestyle=False,
                                   mania_farm_enabled=False,high_star_relax_enabled=False,
                                   min_passcount=0,max_map_age_years=0).items():
                 result[key]=copy.deepcopy(patch.get(key,value))
+        if mode.startswith('taiko-'):
+            result['auto_sr_bias']=patch.get('auto_sr_bias',0.)
+            result['auto_sr_half_width']=patch.get('auto_sr_half_width',.5)
         if 'selection_style' not in patch:result.pop('selection_style',None)
         if 'selection_styles' not in patch:result.pop('selection_styles',None)
         result.pop('mania_source_mode',None)
@@ -102,7 +105,7 @@ def validate(value, *, current=None, preset=None, allow_redacted=False):
     if type(mode) is not str or mode not in PRESETS:raise ConfigError('managed_settings_unsupported_preset')
     if (mode.startswith('mania-') or mode=='standard-loved') and combined.get('auto_difficulty') is True:
         raise ConfigError('managed_settings_fixed_difficulty_required')
-    if (mode.startswith('mania-') or mode in ('standard-loved','catch-fixed')) and combined.get('stream_enabled') is True:
+    if (mode.startswith('mania-') or mode in ('standard-loved','catch-fixed','taiko-fixed','taiko-auto')) and combined.get('stream_enabled') is True:
         raise ConfigError('managed_settings_unsupported_stream_pool')
     for key,item in value.items():
         if key in BOOLEANS or key=='auto_difficulty':
@@ -135,10 +138,14 @@ def validate(value, *, current=None, preset=None, allow_redacted=False):
         if low in combined and high in combined and (combined[low]>combined[high] or low=='sr_min' and combined[low]==combined[high]):
             raise ConfigError('managed_settings_invalid_range')
     styles=combined.get('selection_styles',[combined.get('selection_style','variety')])
-    valid_styles=STYLES-{'jump'} if mode.startswith('mania-') else {'variety'} if mode in ('standard-loved','catch-fixed') else {'variety','farm','stream','jump'}
+    valid_styles=STYLES-{'jump'} if mode.startswith('mania-') else {'variety'} if mode in ('standard-loved','catch-fixed','taiko-fixed','taiko-auto') else {'variety','farm','stream','jump'}
     if set(styles)-valid_styles or 'rice' in styles and 'noodle' in styles or 'variety' in styles and len(styles)>1:
         raise ConfigError('managed_settings_invalid_styles')
-    if mode=='catch-fixed':
+    if mode in ('taiko-fixed','taiko-auto'):
+        from bot.mode import validate_taiko_config
+        try:validate_taiko_config(combined)
+        except ValueError:raise ConfigError('managed_settings_invalid_taiko') from None
+    elif mode=='catch-fixed':
         if combined.get('min_passcount',0)!=0 or combined.get('max_map_age_years',0)!=0:
             raise ConfigError('managed_settings_invalid_catch_filters')
         from bot.mode import validate_catch_config

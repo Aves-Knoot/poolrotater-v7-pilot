@@ -24,6 +24,7 @@ from .storage import connection
 from .query import player
 
 SCHEME='player-totals-v1'
+TAIKO_SCHEME='player-totals-v3'
 INTERVAL=1200
 POLICY_INTERVAL=30
 POLICY_LEASE=120
@@ -43,7 +44,8 @@ def digest(value):
 
 def manifest(value):
     fields(value,('ok','format','scheme','server_epoch','host_id','policy_id','watermark','generated_at','rows','pages','content_id'))
-    require(value['ok'] is True and type(value['format']) is int and value['format']==1 and value['scheme']==SCHEME,'incompatible_statistics_replica')
+    require(value['ok'] is True and type(value['format']) is int and value['format']==1
+            and (value['scheme']==SCHEME or value['scheme']==TAIKO_SCHEME),'incompatible_statistics_replica')
     identifier(value['server_epoch']);identifier(value['host_id']);digest(value['policy_id'])
     integer(value['watermark'],0);number(value['generated_at']);integer(value['rows'],0,MAX_ROWS)
     require(type(value['pages']) is list and len(value['pages'])<=MAX_PAGES,'invalid_statistics_replica')
@@ -69,7 +71,7 @@ def page(value,entry):
             and len(canonical(value))==entry['bytes'] and fingerprint(value)==entry['sha256'],'invalid_statistics_replica')
     previous=(-1,0)
     for row in value['rows']:
-        fields(row,('ruleset_id','player'));require(type(row['ruleset_id']) is int and row['ruleset_id'] in (0,2,3),'invalid_statistics_replica')
+        fields(row,('ruleset_id','player'));require(type(row['ruleset_id']) is int and row['ruleset_id'] in (0,1,2,3),'invalid_statistics_replica')
         validate_player(row['player']);key=(row['ruleset_id'],row['player']['user_id'])
         require(key>previous,'invalid_statistics_replica');previous=key
     return value
@@ -83,7 +85,7 @@ class Publisher:
     """One process-wide source projection, shared by authenticated consumers."""
     def __init__(self,repository,*,background=False):
         self.repository=repository;self.store=repository.store;self.lock=threading.Lock()
-        self.projection=None;self.stamp=None;self.include_catch=False
+        self.projection=None;self.stamp=None;self.include_catch=False;self.include_taiko=False
         self.background=background
         self._schedule_lock=threading.Lock();self._pending={};self._failed_at={}
         self._worker=None;self._closed=False
@@ -93,19 +95,25 @@ class Publisher:
             self._closed=True;self._pending.clear();worker=self._worker
         if worker is not None:worker.join()
 
-    def _cached(self,host,epoch,policy,*,include_catch=False):
-        base=self.store.root/('activity-replicas-v2' if include_catch else 'activity-replicas')/host
+    @staticmethod
+    def _scope_dir(*,include_catch=False,include_taiko=False):
+        return 'activity-replicas-v3' if include_taiko else 'activity-replicas-v2' if include_catch else 'activity-replicas'
+
+    def _cached(self,host,epoch,policy,*,include_catch=False,include_taiko=False):
+        base=self.store.root/self._scope_dir(include_catch=include_catch,include_taiko=include_taiko)/host
         if not base.exists():return None
         _private(base,directory=True);pointer=base/'current.json'
         if not pointer.exists():return None
         value=manifest(read_json(_private(pointer)))
+        require(value['scheme']==(TAIKO_SCHEME if include_taiko else SCHEME),
+                'incompatible_statistics_replica')
         age=self.store.clock()-value['generated_at']
         if (value['host_id']!=host or value['server_epoch']!=epoch
                 or value['policy_id']!=policy or not 0<=age<MAX_AGE):return None
         return value
 
-    def _schedule(self,token,host,include_catch):
-        key=(host,include_catch)
+    def _schedule(self,token,host,include_catch,include_taiko):
+        key=(host,include_catch,include_taiko)
         with self._schedule_lock:
             if (self._closed or key in self._pending or len(self._pending)>=64
                     or self.store.clock()-self._failed_at.get(key,float('-inf'))<15):return
@@ -120,7 +128,7 @@ class Publisher:
                 if self._closed or not self._pending:
                     self._worker=None;return
                 key=next(iter(self._pending));token=self._pending[key]
-            try:self._current(token,include_catch=key[1])
+            try:self._current(token,include_catch=key[1],include_taiko=key[2])
             except Exception:
                 import logging
                 logging.getLogger(__name__).warning('statistics projection refresh deferred; retained previous verified generation')
@@ -128,14 +136,15 @@ class Publisher:
             finally:
                 with self._schedule_lock:self._pending.pop(key,None)
 
-    def current(self,token,*,include_catch=False):
+    def current(self,token,*,include_catch=False,include_taiko=False):
+        include_catch=include_catch or include_taiko
         host,epoch,policy,_=self.authority(token)
-        old=self._cached(host,epoch,policy,include_catch=include_catch)
+        old=self._cached(host,epoch,policy,include_catch=include_catch,include_taiko=include_taiko)
         if (old is not None and self.store.clock()-old['generated_at']<INTERVAL
                 and (self.background or self.stamp is not None)):
             return old
-        if not self.background:return self._current(token,include_catch=include_catch)
-        self._schedule(token,host,include_catch)
+        if not self.background:return self._current(token,include_catch=include_catch,include_taiko=include_taiko)
+        self._schedule(token,host,include_catch,include_taiko)
         if old is not None:return old
         raise NetworkError('hub_unavailable',503)
 
@@ -151,7 +160,8 @@ class Publisher:
                 watermark=db.execute('SELECT COALESCE(MAX(rowid),0) FROM events').fetchone()[0]
         return host['id'],epoch,policy,watermark
 
-    def _project(self,epoch,policy,watermark,now,*,include_catch=False):
+    def _project(self,epoch,policy,watermark,now,*,include_catch=False,include_taiko=False):
+        include_catch=include_catch or include_taiko
         snapshot=self.repository.snapshot(now=now,detached_authority=True)
         groups={}
         for kind in COLLECTIONS:
@@ -160,7 +170,7 @@ class Publisher:
                 if uid not in groups:groups[uid]={key:[] for key in COLLECTIONS}
                 groups[uid][kind].append(row)
         rows=[]
-        require(len(groups)*(3 if include_catch else 2)<=MAX_ROWS,'statistics_replica_capacity_required',503)
+        require(len(groups)*(4 if include_taiko else 3 if include_catch else 2)<=MAX_ROWS,'statistics_replica_capacity_required',503)
         for uid in sorted(groups):
             group={**snapshot,**groups[uid]}
             # Cross-mode name resolution must work even when one mode has zero totals.
@@ -169,7 +179,7 @@ class Publisher:
             host_groups=defaultdict(lambda:{key:[] for key in COLLECTIONS})
             for key in COLLECTIONS:
                 for r in groups[uid][key]:host_groups[r['host_id']][key].append(r)
-            for mode in ((0,2,3) if include_catch else (0,3)):
+            for mode in ((0,1,2,3) if include_taiko else (0,2,3) if include_catch else (0,3)):
                 result=player(group,uid,ruleset_id=mode)
                 # Hidden IDs are not included in snapshot records at all.
                 require(not result['hidden'],'invalid_statistics_replica')
@@ -180,19 +190,23 @@ class Publisher:
                     own[host]={key:totals[key] for key in TOTALS}
                 rows.append({'ruleset_id':mode,'player':result,'own':own})
         rows.sort(key=lambda r:(r['ruleset_id'],r['player']['user_id']))
-        self.projection=rows;self.stamp=(epoch,policy,watermark,now);self.include_catch=include_catch
+        self.projection=rows;self.stamp=(epoch,policy,watermark,now);self.include_catch=include_catch;self.include_taiko=include_taiko
 
-    def _current(self,token,*,include_catch=False):
+    def _current(self,token,*,include_catch=False,include_taiko=False):
         with self.lock:
             host,epoch,policy,watermark=self.authority(token);now=self.store.clock()
-            if self.include_catch!=include_catch or self.stamp is None or self.stamp[:2]!=(epoch,policy) or not 0<=now-self.stamp[3]<INTERVAL:
-                self._project(epoch,policy,watermark,now,include_catch=include_catch)
+            if (self.include_catch!=include_catch or self.include_taiko!=include_taiko or self.stamp is None
+                    or self.stamp[:2]!=(epoch,policy) or not 0<=now-self.stamp[3]<INTERVAL):
+                self._project(epoch,policy,watermark,now,include_catch=include_catch,include_taiko=include_taiko)
                 # A hide/revoke/consent change during projection must never publish stale policy.
                 check=self.authority(token)
                 require(check[:3]==(host,epoch,policy),'statistics_replica_policy_changed',409)
-            base=directory(self.store.root/('activity-replicas-v2' if include_catch else 'activity-replicas'));hostbase=directory(base/host)
+            base=directory(self.store.root/self._scope_dir(include_catch=include_catch,include_taiko=include_taiko));hostbase=directory(base/host)
             pointer=hostbase/'current.json'
             old=manifest(read_json(pointer)) if pointer.exists() else None
+            if old is not None:
+                require(old['scheme']==(TAIKO_SCHEME if include_taiko else SCHEME),
+                        'incompatible_statistics_replica')
             if old and (old['server_epoch'],old['policy_id'],old['watermark'],old['generated_at'])==self.stamp:
                 return old
             pages=[];entries=[]
@@ -204,7 +218,7 @@ class Publisher:
                 body={'ok':True,'format':1,'index':len(pages),'rows':rows};raw=canonical(body)
                 require(len(raw)<=MAX_PAGE,'statistics_replica_capacity_required',503)
                 pages.append(body);entries.append({'index':body['index'],'rows':len(rows),'bytes':len(raw),'sha256':fingerprint(body)})
-            value={'ok':True,'format':1,'scheme':SCHEME,'server_epoch':epoch,'host_id':host,'policy_id':policy,
+            value={'ok':True,'format':1,'scheme':TAIKO_SCHEME if include_taiko else SCHEME,'server_epoch':epoch,'host_id':host,'policy_id':policy,
                    'watermark':self.stamp[2],'generated_at':self.stamp[3],'rows':len(self.projection),'pages':entries}
             value['content_id']=fingerprint(value);manifest(value)
             stage=Path(tempfile.mkdtemp(prefix='.build-',dir=hostbase));target=hostbase/value['content_id']
@@ -231,11 +245,14 @@ class Publisher:
             except (OSError,ValueError,NetworkError):continue
             shutil.rmtree(candidate)
 
-    def read_page(self,token,content_id,index,*,include_catch=False):
+    def read_page(self,token,content_id,index,*,include_catch=False,include_taiko=False):
+        include_catch=include_catch or include_taiko
         digest(content_id);integer(index,0,MAX_PAGES-1)
         host,epoch,policy,_=self.authority(token)
-        base=_private(self.store.root/('activity-replicas-v2' if include_catch else 'activity-replicas')/host/content_id,directory=True)
+        base=_private(self.store.root/self._scope_dir(include_catch=include_catch,include_taiko=include_taiko)/host/content_id,directory=True)
         value=manifest(read_json(base/'manifest.json'))
+        require(value['scheme']==(TAIKO_SCHEME if include_taiko else SCHEME),
+                'incompatible_statistics_replica')
         require(value['host_id']==host and value['server_epoch']==epoch and value['policy_id']==policy,'statistics_replica_policy_changed',409)
         require(index<len(value['pages']),'statistics_replica_not_found',404)
         return page(read_json(_private(base/f'page-{index}.json'),maximum=MAX_PAGE),value['pages'][index])
@@ -317,6 +334,7 @@ class Replica:
         with self.metadata() as db:state=self.observation(db) if db is not None else None
         if state is None or state['phase']=='legacy':return False,None
         if state['phase']!='ready':return True,None
+        if mode==1 and state['manifest']['scheme']!=TAIKO_SCHEME:return False,None
         with self.database(state) as db:
             row=db.execute('SELECT payload FROM replica_players WHERE user_id=? AND ruleset_id=?',(uid,mode)).fetchone()
         value=json.loads(row[0]) if row else None
@@ -327,6 +345,7 @@ class Replica:
         with self.metadata() as db:state=self.observation(db) if db is not None else None
         if state is None or state['phase']=='legacy':return False,None
         if state['phase']!='ready':return True,None
+        if mode==1 and state['manifest']['scheme']!=TAIKO_SCHEME:return False,None
         with self.database(state) as db:
             rows=db.execute('SELECT user_id FROM replica_names WHERE normalized=? AND ruleset_id=? ORDER BY user_id',(name.casefold(),mode)).fetchall()
             if len(rows)!=1:return True,None
@@ -385,15 +404,26 @@ class Replica:
         with connection(self.path) as db:
             self.schema(db);old=db.execute('SELECT * FROM replica_meta WHERE id=1').fetchone()
             if old and not force and old['checked']<=now<old['next_check']:return {'ok':True,'phase':'idle','transferred':0}
-        route='/v2/activity/replica' if any(r['preset']=='catch-fixed' for r in load(self.root)[1]['rooms']) else '/v1/activity/replica'
+        rooms=load(self.root)[1]['rooms']
+        from ..managed_host.projection import read as read_managed_projection
+        managed=read_managed_projection(self.root)
+        projected=[row['settings'] for row in managed['rooms'].values()] if managed else []
+        rooms=[*rooms,*projected]
+        include_taiko=any(r.get('ruleset_id')==1 or str(r.get('preset','')).startswith('taiko-') for r in rooms)
+        include_catch=include_taiko or any(r.get('ruleset_id')==2 or r.get('preset')=='catch-fixed' for r in rooms)
+        route='/v3/activity/replica' if include_taiko else '/v2/activity/replica' if include_catch else '/v1/activity/replica'
         try:
             try:reply=transport.request('GET',route+'/current',token=token)
             except NetworkError as exc:
-                if exc.status!=404 or route.startswith('/v1/'):raise
+                if exc.status!=404 or route.startswith('/v1/') or include_taiko:raise
                 route='/v1/activity/replica'
                 reply=transport.request('GET',route+'/current',token=token)
         except NetworkError as exc:
             if exc.status==404 and exc.code=='route_not_found':
+                if include_taiko:
+                    # Keep the previous Standard/Catch generation intact. A
+                    # pre-Taiko server has not verified Taiko totals.
+                    raise NetworkError('statistics_taiko_replica_unavailable',503) from None
                 with connection(self.path) as db:
                     db.execute('INSERT OR REPLACE INTO replica_meta VALUES(1,?,?,?,?)',('{}',now,now+INTERVAL,'legacy'))
                     db.execute('DELETE FROM replica_players');db.execute('DELETE FROM replica_names')
@@ -402,6 +432,8 @@ class Replica:
                 with connection(self.path) as db:db.execute("UPDATE replica_meta SET phase='unavailable',next_check=0 WHERE id=1")
             raise
         value=manifest(reply)
+        require((value['scheme']==TAIKO_SCHEME) if include_taiko else (value['scheme']==SCHEME),
+                'incompatible_statistics_replica')
         require(value['server_epoch']==credential['server_epoch'] and value['host_id']==credential['host_id'],'foreign_statistics_replica')
         require(-300<=now-value['generated_at']<=MAX_AGE,'statistics_replica_expired')
         payload={**{k:marker[k] for k in ('installation_id','generation')},'manifest':value}

@@ -13,6 +13,11 @@ def inspect_catalog(path: Path, preset: str) -> dict:
     if (not path.is_file() and not (preset == 'catch-fixed' and path.is_dir())) or path.is_symlink():
         raise ConfigError('catalog missing or not a regular local file')
     spec = PRESETS[preset]
+    if spec['ruleset'] == 1:
+        from .catalog_taiko import read_rows
+        count=sum(1 for _ in read_rows(path))
+        if not count:raise ConfigError('empty Taiko catalog')
+        return {'maps':count,'tables':['taiko_maps','taiko_auto_calibration'],'research_only':False,'bytes':path.stat().st_size}
     if spec['ruleset'] == 2:
         if path.is_file():
             with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
@@ -57,6 +62,18 @@ def inspect_catalog(path: Path, preset: str) -> dict:
 
 
 def make_pool(root: Path, room: dict, *, ratings: Path | None = None, resolved=None):
+    if PRESETS[room['preset']]['ruleset'] == 1:
+        from bot.taiko_pool import TaikoPool
+        from .catalog_store import resolved_catalogs,CatalogStore
+        from .catalog_exclusions import ExclusionPolicy,attach_policy
+        from .ratings.reader import for_settings,profile
+        resolved=resolved if resolved is not None else resolved_catalogs(root)
+        if resolved is None or 'taiko' not in resolved.get('bundles',{}):
+            raise ConfigError('signed managed Taiko catalog required')
+        folder,manifest=resolved['bundles']['taiko'];rp=profile(root)
+        reader=for_settings({'ruleset_id':1,'ratings_reader_mode':rp['mode'],'ratings_reader_root':str(root),'ratings_reader_epoch':rp['server_epoch']})
+        pool=TaikoPool(folder/'catalog.db',purpose='production',sr_min=room['sr_min'],sr_max=room['sr_max'],max_length=240,min_passcount=0,ratings_db=str(ratings) if ratings else None,ratings_reader=reader)
+        return attach_policy(pool,ExclusionPolicy(CatalogStore.open(root),'taiko',manifest['content_id']))
     if PRESETS[room['preset']]['ruleset'] == 2:
         from .layout import load
         from .catalog_store import resolved_catalogs, mode_for, CatalogStore

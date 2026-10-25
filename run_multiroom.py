@@ -136,6 +136,16 @@ def load_rooms(paths, universal=None):
 
 
 def make_pool(cfg):
+    if ruleset_id(cfg) == 1:
+        from bot.mode import validate_taiko_config
+        from bot.taiko_pool import TaikoPool
+        validate_taiko_config(cfg)
+        if cfg.get('_host_managed_catalogs') is not True and cfg.get('_host_offline') is not True:
+            raise ValueError('Taiko requires a signed managed catalog or explicit offline test')
+        from poolrotater_host.ratings.reader import for_settings
+        return TaikoPool(cfg['taiko_catalog'],purpose='production',
+            **{k:cfg[k] for k in ('sr_min','sr_max','max_length','min_passcount','max_map_age_years','ratings_db') if k in cfg},
+            ratings_reader=for_settings(cfg),limit=cfg.get('pool_limit',200000))
     if ruleset_id(cfg) == 2:
         from bot.mode import validate_catch_mods
         from bot.catch_pool import CatchPool, ProductionCatchPool

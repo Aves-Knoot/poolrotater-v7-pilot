@@ -10,7 +10,8 @@ import re
 import uuid
 from ..diagnostic_logs.common import transaction
 from ..network.contracts import require,identifier
-from .contracts import digest
+from ..catalog_export import MODES as CATALOG_MODES
+from .contracts import digest,require_catalog_client_version
 
 def review(hosts,observations,*,expected_hosts,required_version,now):
     require(type(expected_hosts) is list and expected_hosts and len(set(expected_hosts))==len(expected_hosts),
@@ -49,8 +50,9 @@ def queue(repository,*,expected_hosts,required_version,mode,content_id,batch_id)
     """
     from ..catalog_store import mode_for
     identifier(batch_id)
-    require(mode in ('standard','mania4','mania7','catch','loved') and type(content_id) is str
+    require(mode in CATALOG_MODES and type(content_id) is str
             and re.fullmatch('[a-f0-9]{64}',content_id) is not None,'catalog_fleet_target_refused')
+    require_catalog_client_version(mode,required_version)
     now=repository.store.clock()
     with repository.store.transaction() as db:
         hosts=[dict(r) for r in db.execute('SELECT id,revoked,received,heartbeat,installation_id,generation FROM hosts')]

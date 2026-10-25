@@ -8,6 +8,7 @@ import sqlite3
 from . import __version__
 from .checks import check
 from .config import ConfigError, PRESETS
+from .catalog_export import MODES as CATALOG_MODES
 from .layout import load, setup
 from .network.contracts import NetworkError
 
@@ -33,7 +34,7 @@ def main(argv=None):
     download.add_argument('--ca-file', required=True, type=Path)
     download.add_argument('--ca-sha256', required=True)
     download.add_argument('--destination', required=True, type=Path)
-    download.add_argument('--mode', required=True, choices=('standard', 'mania4', 'mania7', 'catch', 'loved'))
+    download.add_argument('--mode', required=True, choices=tuple(sorted(CATALOG_MODES)))
     for action in ('install', 'check', 'code-proof', 'status', 'support', 'unit', 'configure', 'authorize', 'cancel',
                    'recover', 'pacing-recover', 'catalog-import', 'catalog-recover',
                    'catalog-trust-replace', 'catalog-trust-recover', 'start', 'stop', 'remove',
@@ -127,7 +128,7 @@ def main(argv=None):
             command.add_argument('--trust-root', required=True, type=Path)
             command.add_argument('--trust-sha256', required=True)
             if action == 'catalog-import':
-                command.add_argument('--mode', required=True, action='append', choices=('standard', 'mania4', 'mania7', 'catch', 'loved'))
+                command.add_argument('--mode', required=True, action='append', choices=tuple(sorted(CATALOG_MODES)))
     for name in ('setup', 'check', 'status', 'config', 'runtime-config', 'simulate'):
         command = commands.add_parser(name)
         command.add_argument('--root', type=Path, required=True, help='explicit private host directory')

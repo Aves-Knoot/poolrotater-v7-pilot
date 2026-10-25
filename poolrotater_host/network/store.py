@@ -65,8 +65,16 @@ class Store:
     def _files(self):
         for suffix in ('','-wal','-shm','-journal'):
             p=Path(str(self.path)+suffix)
-            if not os.path.lexists(p): continue
-            s=p.lstat()
+            if not os.path.lexists(p):
+                if not suffix:raise FileNotFoundError(p)
+                continue
+            try:s=p.lstat()
+            except FileNotFoundError:
+                # SQLite may remove an optional sidecar between lexists and
+                # lstat while finishing a transaction. The main database is
+                # required and a disappearing main file must still fail.
+                if suffix:continue
+                raise
             require(stat.S_ISREG(s.st_mode) and s.st_uid == os.geteuid() and s.st_nlink == 1 and not stat.S_IMODE(s.st_mode)&0o077, 'unsafe_hub_database')
             require(s.st_size <= 256*1024**2, 'hub_capacity_required', 503)
 
@@ -215,6 +223,7 @@ class Store:
                 # Catch is an explicit v2 directory capability. Old v1 readers
                 # must not reject all legacy rooms because of an unknown preset.
                 if protocol_version==1 and stored['preset']=='catch-fixed':continue
+                if protocol_version<3 and stored['preset'].startswith('taiko-'):continue
                 from .display import V1_ROOM_FIELDS
                 observation = {k: stored[k] for k in V1_ROOM_FIELDS}
                 skew = host['received'] - payload['sent_at'] if payload.get('protocol_version') == 2 else None
@@ -225,14 +234,14 @@ class Store:
                 stale=age>=600
                 rich = None
                 display_value = payload.get('display_rooms',{}).get(stored['alias'])
-                if protocol_version == 2 and display_value is not None:
+                if protocol_version in (2,3) and display_value is not None:
                     import copy
                     rich = copy.deepcopy(display_value)
                     if stale:
                         rich['match'] = None; rich['playing_players'] = None
                     elif rich['match']:
                         rich['match']['clock_skew_seconds'] = correction
-                rooms.append({**observation,**({'display':rich} if protocol_version == 2 else {}),'host_id':host['id'],'operator':host['label'],
+                rooms.append({**observation,**({'display':rich} if protocol_version in (2,3) else {}),'host_id':host['id'],'operator':host['label'],
                               'age_seconds':round(age,2),'freshness':'stale' if stale else 'fresh',
                               'state':'unavailable' if stale else observation['state'],
                               'occupants':None if stale else observation['occupants'],

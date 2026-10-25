@@ -1,5 +1,5 @@
 """Credential-free community directory, independent of the four owner feeds."""
-import hashlib,http.client,json,math,os,re,ssl,sqlite3,stat,tempfile,time,uuid
+import hashlib,http.client,json,math,os,re,ssl,sqlite3,stat,tempfile,time,uuid,logging
 from pathlib import Path
 try:
     from .display_model import DisplayIndex, map_display, playback, public_settings
@@ -11,11 +11,11 @@ except ImportError:  # Isolated (-I) installed publisher: no sys.path mutation.
     _display_spec.loader.exec_module(_display)
     DisplayIndex,map_display,playback,public_settings=(_display.DisplayIndex,_display.map_display,_display.playback,_display.public_settings)
 ORIGIN='https://91.107.237.182:9444'
-HOST='91.107.237.182';PORT=9444;RESOURCE='/v1/rooms?limit=100'
-MAX_BYTES=262144;FETCH_SECONDS=4;CACHE_SECONDS=60;FRESH_SECONDS=180;HIDE_SECONDS=600
+HOST='91.107.237.182';PORT=9444;RESOURCE='/v3/rooms?limit=100'
+MAX_BYTES=262144;FETCH_SECONDS=15;CACHE_SECONDS=60;FRESH_SECONDS=600;HIDE_SECONDS=1800
 TOP={'ok','protocol_version','server_epoch','generated_at','rooms','next_offset'}
 ROW={'alias','osu_room_id','preset','state','occupants','visibility','title','min_stars','max_stars','observed_at','code_version','catalog_version','current_map','host_id','operator','age_seconds','freshness','join_url','distribution'}
-PRESETS={'standard-auto','standard-fixed','mania-4k','mania-7k','catch-fixed'}
+PRESETS={'standard-auto','standard-fixed','mania-4k','mania-7k','catch-fixed','taiko-fixed','taiko-auto'}
 STATES={'idle','starting','playing','draining','unavailable'}
 def require(value):
     if not value:raise ValueError('invalid public directory')
@@ -28,8 +28,18 @@ def identity(v):
     except Exception:raise ValueError('invalid public identity') from None
 
 
+class DirectoryHTTPError(ValueError):
+    def __init__(self,status):
+        self.status=status if type(status)is int and 100<=status<=599 else None
+        super().__init__('directory HTTP refusal')
+
+
 class DirectoryV2Unavailable(ValueError):
     """Only the explicit legacy unknown-route reply permits downgrade."""
+
+
+class DirectoryV3Unavailable(ValueError):
+    """The hub does not yet expose the Taiko-aware directory capability."""
 
 
 def validate_display(display,row):
@@ -44,12 +54,15 @@ def validate_display(display,row):
     for key in('allowed_mods','required_mods'):
         mods=settings[key];require(type(mods)is list and len(mods)<=32 and all(type(mod)is str for mod in mods) and len(set(mods))==len(mods))
         for mod in mods:require(type(mod)is str and re.fullmatch('[A-Z0-9]{1,16}',mod))
-    expected=3 if row['preset'].startswith('mania-') else 2 if row['preset']=='catch-fixed' else 0
+    expected=3 if row['preset'].startswith('mania-') else 2 if row['preset']=='catch-fixed' else 1 if row['preset'].startswith('taiko-') else 0
     require(settings['ruleset_id']==expected)
     require(settings['keys'] in (None,4 if row['preset']=='mania-4k' else 7) if expected==3 else settings['keys']is None)
     if row['preset']=='catch-fixed':
         require(settings['auto_difficulty']is False and settings['freestyle']is False
                 and settings['selection_style']=='variety'
+                and all(mod=='NM' for key in('allowed_mods','required_mods') for mod in settings[key]))
+    if row['preset'].startswith('taiko-'):
+        require(settings['freestyle']is False and settings['keys']is None
                 and all(mod=='NM' for key in('allowed_mods','required_mods') for mod in settings[key]))
     if display['playing_players']is not None:integer(display['playing_players'],0,128)
     match=display['match']
@@ -57,11 +70,12 @@ def validate_display(display,row):
         require(type(match)is dict and set(match)=={'playlist_item_id','beatmap_id','started_at','clock_rate','participants','clock_skew_seconds'})
         integer(match['playlist_item_id'],1);integer(match['beatmap_id'],1);number(match['started_at'])
         if match['clock_rate']is not None:number(match['clock_rate'],.25,3)
+        if row['preset'].startswith('taiko-'):require(match['clock_rate']is None or match['clock_rate']==1)
         if match['participants']is not None:integer(match['participants'],0,128)
         if match['clock_skew_seconds']is not None:number(match['clock_skew_seconds'],-30,30)
 
 def project(value,*,now,owner_room_ids=(),owner_host_id=None,metadata_lookup=None):
-    number(now);require(type(value)is dict and set(value)==TOP and value['ok']is True and type(value['protocol_version'])is int and value['protocol_version']in(1,2))
+    number(now);require(type(value)is dict and set(value)==TOP and value['ok']is True and type(value['protocol_version'])is int and value['protocol_version']in(1,2,3))
     identity(value['server_epoch']);number(value['generated_at']);require(-30<=now-value['generated_at']<=CACHE_SECONDS)
     require(type(value['rooms'])is list and len(value['rooms'])<=100)
     if value['next_offset']is not None:integer(value['next_offset'],1,1000000)
@@ -111,7 +125,7 @@ def decode(raw):
     return json.loads(raw,object_pairs_hook=pairs,parse_constant=lambda _:(_ for _ in ()).throw(ValueError('non-finite JSON')))
 
 def fetch_directory(ca_file,ca_sha256,*,connection_factory=http.client.HTTPSConnection,resource=RESOURCE):
-    require(resource in('/v1/rooms?limit=100','/v2/rooms?limit=100'))
+    require(resource in('/v1/rooms?limit=100','/v2/rooms?limit=100','/v3/rooms?limit=100'))
     require(type(ca_sha256)is str and re.fullmatch('[a-f0-9]{64}',ca_sha256))
     fd=os.open(ca_file,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
     with os.fdopen(fd,'rb')as stream:
@@ -119,36 +133,90 @@ def fetch_directory(ca_file,ca_sha256,*,connection_factory=http.client.HTTPSConn
         ca=stream.read(65537);require(hashlib.sha256(ca).hexdigest()==ca_sha256)
     context=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT);context.minimum_version=ssl.TLSVersion.TLSv1_2
     context.load_verify_locations(cadata=ca.decode('ascii'))
-    deadline=time.monotonic()+FETCH_SECONDS;connection=connection_factory(HOST,PORT,timeout=2,context=context)
+    deadline=time.monotonic()+FETCH_SECONDS;connection=connection_factory(HOST,PORT,timeout=FETCH_SECONDS,context=context)
     try:
         connection.request('GET',resource,headers={'Accept':'application/json','User-Agent':'PoolRotater-public-directory/1','Cache-Control':'no-cache'})
         require(time.monotonic()<deadline)
-        if connection.sock is not None:connection.sock.settimeout(max(.01,min(2,deadline-time.monotonic())))
+        if connection.sock is not None:connection.sock.settimeout(max(.01,min(FETCH_SECONDS,deadline-time.monotonic())))
         response=connection.getresponse()
-        if response.status==404 and resource.startswith('/v2/'):
+        if response.status==404 and resource.startswith(('/v2/','/v3/')):
             require((response.getheader('Content-Type')or'').split(';')[0].strip()=='application/json')
             raw=response.read(MAX_BYTES+1);require(time.monotonic()<deadline);error=decode(raw)
-            if type(error)is dict and set(error)=={'ok','error'} and error['ok']is False and error['error']=='route_not_found':raise DirectoryV2Unavailable()
-        require(response.status==200)
+            if type(error)is dict and set(error)=={'ok','error'} and error['ok']is False and error['error']=='route_not_found':
+                raise DirectoryV3Unavailable() if resource.startswith('/v3/') else DirectoryV2Unavailable()
+        if response.status!=200:raise DirectoryHTTPError(response.status)
         require((response.getheader('Content-Type')or'').split(';')[0].strip()=='application/json')
         length=response.getheader('Content-Length')
         if length is not None:require(length.isdigit() and int(length)<=MAX_BYTES)
         chunks=[];size=0
         while True:
             require(time.monotonic()<deadline)
-            if connection.sock is not None:connection.sock.settimeout(max(.01,min(2,deadline-time.monotonic())))
+            if connection.sock is not None:connection.sock.settimeout(max(.01,min(FETCH_SECONDS,deadline-time.monotonic())))
             raw=response.read(min(16384,MAX_BYTES+1-size));size+=len(raw);require(size<=MAX_BYTES)
             if not raw:break
             chunks.append(raw)
         return decode(b''.join(chunks))
     finally:connection.close()
 
-def unavailable(now):return {'schema':1,'available':False,'generated_at':now,'expires_at':now+CACHE_SECONDS,'source':'self-reported community rooms','rooms':[],'more_available':False}
-def last_seen(destination, *, now, owner_room_ids=()):
-    """Retain only bounded public identity when a refresh cannot be verified.
 
-    Never carry map/players/settings/links into this fallback and never extend
-    hide_at. A successful empty directory does not use this path.
+def fetch_compatible_directory(ca_file,ca_sha256,*,fetcher=None):
+    """Prefer the Taiko-aware route and downgrade only on explicit route absence."""
+    fetcher=fetcher or fetch_directory
+    try:return fetcher(ca_file,ca_sha256,resource='/v3/rooms?limit=100')
+    except DirectoryV3Unavailable:
+        try:return fetcher(ca_file,ca_sha256,resource='/v2/rooms?limit=100')
+        except DirectoryV2Unavailable:return fetcher(ca_file,ca_sha256,resource='/v1/rooms?limit=100')
+
+def unavailable(now):return {'schema':1,'available':False,'generated_at':now,'expires_at':now+CACHE_SECONDS,'source':'self-reported community rooms','rooms':[],'more_available':False}
+def cached_details(old, *, now):
+    """Revalidate whitelisted public display data; never copy arbitrary cache keys."""
+    out={}
+    for k in ('players','playing_players','match_participants'):
+        n=old.get(k)
+        if n is not None:integer(n,0,128)
+        out[k]=n
+    ceiling=100 if old['preset']=='catch-fixed' else 20
+    number(old['min_stars'],0,ceiling);number(old['max_stars'],old['min_stars'],ceiling)
+    out.update(min_stars=old['min_stars'],max_stars=old['max_stars'])
+    current=old.get('current_map');out['current_map']=None
+    if current is not None:
+        require(type(current)is dict);integer(current.get('beatmap_id'),1);text(current.get('title'));number(current.get('stars'),0,ceiling)
+        m={k:current[k] for k in ('beatmap_id','title','stars')}
+        for k in ('artist','version'):
+            if k in current:text(current[k],180);m[k]=current[k]
+        for k in ('beatmapset_id','total_length','hit_length'):
+            if k in current:
+                number(current[k],.001,10**7 if k=='beatmapset_id'else 86400)
+                if k=='beatmapset_id':integer(current[k],1,10**7)
+                m[k]=current[k]
+        if 'beatmapset_id'in m:m['cover_url']='https://assets.ppy.sh/beatmaps/'+str(m['beatmapset_id'])+'/covers/cover.jpg';m['metadata_source']='central-display-index'
+        out['current_map']=m
+    settings=old.get('settings')
+    if settings is not None:validate_display({'settings':settings,'playing_players':None,'match':None},old)
+    out['settings']=public_settings(settings)
+    out['playback']=None
+    estimate=old.get('playback')
+    if estimate is not None and old['state']=='playing' and current:
+        require(type(estimate)is dict)
+        integer(estimate.get('match_id'),1);require(estimate.get('beatmap_id')==current['beatmap_id'])
+        number(estimate.get('started_at'));number(estimate.get('duration_seconds'),.001,86400);number(estimate.get('estimated_end_at'))
+        require(abs(estimate['started_at']+estimate['duration_seconds']-estimate['estimated_end_at'])<2)
+        result={k:estimate[k]for k in ('started_at','duration_seconds','estimated_end_at','match_id','beatmap_id')}
+        for k in ('approximate','estimated','nominal_speed'):
+            if k in estimate:require(type(estimate[k])is bool);result[k]=estimate[k]
+        if 'clock_rate'in estimate:
+            number(estimate['clock_rate'],.25,3)
+            if old['preset'].startswith('taiko-') and estimate['clock_rate']!=1:raise ValueError('unsupported Taiko clock rate')
+            result['clock_rate']=estimate['clock_rate']
+        out['playback']=result
+    return out
+
+
+def last_seen(destination, *, now, owner_room_ids=()):
+    """Keep qualified display until ORIGINAL room freshness/hide deadlines.
+
+    A refresh failure renews neither room deadline nor match time. Successful
+    empty/private withdrawal remains authoritative and never uses this cache.
     """
     result=unavailable(now)
     try:
@@ -169,31 +237,53 @@ def last_seen(destination, *, now, owner_room_ids=()):
             rid=old.get('room_id');integer(rid,1)
             key=old.get('key');require(type(key)is str and re.fullmatch('[a-f0-9]{24}',key))
             require(key not in seen);seen.add(key)
-            text(old.get('title'));text(old.get('operator'),80);require(old.get('preset')in PRESETS)
+            text(old.get('title'));text(old.get('operator'),80);require(old.get('preset')in PRESETS and old.get('state')in STATES)
             number(old.get('hide_at'));number(old.get('fresh_until'))
-            # An impossible future hide deadline cannot renew the cache.
-            require(old['hide_at']<=previous['generated_at']+HIDE_SECONDS)
+            require(old['hide_at']<=previous['generated_at']+HIDE_SECONDS
+                    and old['fresh_until']<=previous['generated_at']+FRESH_SECONDS
+                    and (old['fresh_until']==0 or old['fresh_until']<=old['hide_at']-HIDE_SECONDS+FRESH_SECONDS+.01))
             if old['hide_at']<=now or rid in known or old.get('visibility','public')!='public':continue
-            rooms.append({'key':key,'room_id':rid,'title':old['title'],'operator':old['operator'],
+            room={'key':key,'room_id':rid,'title':old['title'],'operator':old['operator'],
                 'preset':old['preset'],'ownership':'community','state':'unavailable',
                 'players':None,'playing_players':None,'match_participants':None,
                 'current_map':None,'settings':None,'playback':None,
                 'fresh_until':0,'hide_at':old['hide_at'],'self_reported':True,
-                'browser_url':None,'join_url':None})
+                'browser_url':None,'join_url':None}
+            if old['fresh_until']>now and old['state']!='unavailable':
+                try:
+                    details=cached_details(old,now=now)
+                    room.update(details,state=old['state'],fresh_until=old['fresh_until'],
+                        browser_url='https://osu.ppy.sh/multiplayer/rooms/'+str(rid),join_url='osu://room/'+str(rid))
+                except (ValueError,KeyError,TypeError):pass  # Invalid rich cache retains identity only.
+            rooms.append(room)
         if rooms:
             result.update(available=True,rooms=rooms,refresh_failed=True,
                           more_available=previous.get('more_available')is True)
-    except (OSError,ValueError,KeyError,TypeError):
-        pass
+    except (OSError,ValueError,KeyError,TypeError):pass
     return result
 
 
-def publish(destination,fetch,*,now=None,owner_room_ids=(),owner_host_id=None,metadata_lookup=None):
+def refresh_diagnostic(error,elapsed,rooms):
+    category=('http_status'if isinstance(error,DirectoryHTTPError)else
+        'timeout'if isinstance(error,TimeoutError)else 'tls'if isinstance(error,ssl.SSLError)else
+        'connection'if isinstance(error,(OSError,http.client.HTTPException))else
+        'validation'if isinstance(error,(ValueError,KeyError,TypeError))else'unexpected')
+    return {'event':'community_refresh','outcome':'failed'if error else'ok',
+        'category':category if error else None,'http_status':getattr(error,'status',None)if isinstance(error,DirectoryHTTPError)else None,
+        'elapsed_seconds':round(elapsed,3),'retained_rooms':rooms}
+
+
+def publish(destination,fetch,*,now=None,owner_room_ids=(),owner_host_id=None,metadata_lookup=None,fetch_started=None):
     """Refresh atomically; preserve bounded last-seen identities on outage."""
     now=time.time()if now is None else now
     destination=Path(destination)
+    started=time.monotonic() if fetch_started is None else fetch_started;error=None
     try:value=project(fetch(),now=now,owner_room_ids=owner_room_ids,owner_host_id=owner_host_id,metadata_lookup=metadata_lookup)
-    except Exception:value=last_seen(destination,now=now,owner_room_ids=owner_room_ids)
+    except Exception as failure:
+        error=failure;value=last_seen(destination,now=now,owner_room_ids=owner_room_ids)
+    diagnostic=refresh_diagnostic(error,time.monotonic()-started,len(value['rooms']))
+    logger=logging.getLogger('community_refresh')
+    (logger.warning if error else logger.info)(json.dumps(diagnostic,sort_keys=True))
     temporary=None
     try:
         with tempfile.NamedTemporaryFile(dir=destination.parent,prefix='.community-',mode='w',delete=False)as f:
@@ -230,13 +320,12 @@ def main():
         with os.fdopen(fd,'rb')as stream:
             st=os.fstat(stream.fileno());require(stat.S_ISREG(st.st_mode) and st.st_nlink==1 and st.st_size<=MAX_BYTES)
             ids=owner_ids(decode(stream.read(MAX_BYTES+1)))
-        try:directory=fetch_directory(args.ca_file,args.ca_sha256,resource='/v2/rooms?limit=100')
-        except DirectoryV2Unavailable:directory=fetch_directory(args.ca_file,args.ca_sha256)
+        directory=fetch_compatible_directory(args.ca_file,args.ca_sha256)
         return directory,ids
     # Capture IDs from the same refresh, rather than private network bindings.
-    now=time.time()
+    now=time.time();fetch_started=time.monotonic()
     try:value,ids=fetch();fetch_value=lambda:value
-    except Exception:fetch_value=lambda:(_ for _ in()).throw(ValueError('directory unavailable'));ids=()
+    except Exception as error:fetch_value=lambda error=error:(_ for _ in()).throw(error);ids=()
     index=None
     try:
         if args.display_index:
@@ -244,7 +333,9 @@ def main():
             except (OSError,ValueError,sqlite3.Error)as error:
                 # Index unavailability must not withdraw otherwise valid rooms.
                 print('Community map metadata unavailable: '+type(error).__name__)
-        publish(args.output,fetch_value,now=now,owner_room_ids=ids,owner_host_id=args.owner_host_id,metadata_lookup=index.lookup if index else None)
+        publish(args.output,fetch_value,now=now,owner_room_ids=ids,owner_host_id=args.owner_host_id,metadata_lookup=index.lookup if index else None,fetch_started=fetch_started)
     finally:
         if index:index.close()
-if __name__=='__main__':main()
+if __name__=='__main__':
+    logging.basicConfig(level=logging.INFO,format='%(message)s')
+    main()

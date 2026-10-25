@@ -68,7 +68,7 @@ def configuration(root,marker,original,*,shadow=None):
         if 'sr_max' in desired:row['sr_max']=desired['sr_max']
         if 'default_response_language' in desired:row['language']=desired['default_response_language']
         spec=PRESETS[preset]
-        filename='loved.db' if preset=='standard-loved' else 'standard.db' if spec['ruleset']==0 else 'catch.db' if spec['ruleset']==2 else 'mania_'+str(spec['keys'])+'k.db'
+        filename='loved.db' if preset=='standard-loved' else 'standard.db' if spec['ruleset']==0 else 'taiko.db' if spec['ruleset']==1 else 'catch.db' if spec['ruleset']==2 else 'mania_'+str(spec['keys'])+'k.db'
         row['catalog']='catalogs/'+filename
     return result
 

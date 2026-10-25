@@ -28,8 +28,10 @@ SCHEMA = (
 
 
 # Reserved internal SQLite namespace. Never a provider beatmap ID on the wire.
-# Legacy map-only keys remain unchanged; Catch native NM has an explicit domain.
+# Every key below CATCH_KEY_BASE remains a valid legacy map-only identity.
+# Catch and Taiko have additive provider-ID ranges above that legacy boundary.
 CATCH_KEY_BASE = 2**52
+TAIKO_KEY_BASE = CATCH_KEY_BASE + 2**33
 MAX_PROVIDER_MAP_ID = 2**32 - 1
 
 
@@ -37,6 +39,12 @@ def storage_key(beatmap_id, context=None, *, map_origin=None, key_count=None):
     if type(beatmap_id) is not int or not 0 < beatmap_id < CATCH_KEY_BASE:
         raise ValueError('rating_map_identity_invalid')
     value = provenance(context)
+    if value['ruleset_id'] == 1:
+        if (beatmap_id > MAX_PROVIDER_MAP_ID
+                or map_origin not in ('taiko-native-nm', 'taiko-convert-nm')
+                or value['required_mods'] or key_count is not None):
+            raise ValueError('rating_taiko_identity_required')
+        return TAIKO_KEY_BASE + beatmap_id
     if value['ruleset_id'] != 2:
         if map_origin in ('catch-native-nm', 'native-catch'):
             raise ValueError('rating_catch_identity_required')
@@ -48,9 +56,11 @@ def storage_key(beatmap_id, context=None, *, map_origin=None, key_count=None):
 
 
 def map_key(beatmap_id, ruleset_id=None):
-    """Translate a public lookup; only explicit Catch stores use its namespace."""
+    """Translate public lookups; only explicit ruleset stores use scoped keys."""
     if ruleset_id == 2:
         return storage_key(beatmap_id, {'ruleset_id': 2}, map_origin='catch-native-nm')
+    if ruleset_id == 1:
+        return storage_key(beatmap_id, {'ruleset_id': 1}, map_origin='taiko-native-nm')
     return storage_key(beatmap_id)
 
 
@@ -60,6 +70,8 @@ def public_key(key):
         raise ValueError('rating_map_identity_invalid')
     if CATCH_KEY_BASE < key <= CATCH_KEY_BASE + MAX_PROVIDER_MAP_ID:
         return key - CATCH_KEY_BASE, 2, 'native-NM'
+    if TAIKO_KEY_BASE < key <= TAIKO_KEY_BASE + MAX_PROVIDER_MAP_ID:
+        return key - TAIKO_KEY_BASE, 1, 'taiko'
     if key < CATCH_KEY_BASE:
         return key, None, 'legacy-map'
     raise ValueError('rating_map_identity_invalid')
@@ -183,7 +195,8 @@ def capture(conn, *, beatmap_id, user_id, rating, observed_at, map_origin, key_c
     revision = conn.execute('SELECT revision FROM rating_revision_cache WHERE beatmap_id=? AND user_id=?',
                             (key, user_id)).fetchone()
     event_id = str(uuid.uuid4())
-    event = {'format': 2 if key >= CATCH_KEY_BASE else FORMAT, 'event_id': event_id, 'installation_id': meta[1],
+    event_format = {1:3, 2:2}.get(provenance(context)['ruleset_id'], FORMAT)
+    event = {'format': event_format, 'event_id': event_id, 'installation_id': meta[1],
              'generation': meta[2], 'sequence': meta[3]+1, 'kind': 'rating_set',
              'beatmap_id': beatmap_id, 'user_id': user_id, 'rating': rating,
              'base_revision': revision[0] if revision else None,

@@ -119,10 +119,16 @@ class State:
         with transaction(self.path) as db:
             old=db.execute('SELECT * FROM delivered WHERE id=?',(value['id'],)).fetchone()
             if old:require(old['digest']==pin,'managed_operation_conflict',409)
-            else:db.execute('INSERT INTO delivered(id,digest) VALUES(?,?)',(value['id'],pin))
+            else:
+                # An operation admitted locally is not a hub delivery, even
+                # when the hub later supplies the same UUID and payload.
+                require(db.execute('SELECT 1 FROM operations WHERE id=?',(value['id'],)).fetchone() is None
+                        and db.execute('SELECT 1 FROM local_actions WHERE id=?',(value['id'],)).fetchone() is None,
+                        'managed_operation_conflict',409)
+                db.execute('INSERT INTO delivered(id,digest) VALUES(?,?)',(value['id'],pin))
             if old and old['refusal']:return json.loads(old['refusal'])
         from ..network.contracts import NetworkError
-        try:return self.enqueue(value)
+        try:return self._enqueue(value,from_hub=True)
         except (NetworkError,ValueError,TypeError) as exc:
             code=exc.code if isinstance(exc,NetworkError) and exc.code in ERRORS else 'invalid_settings'
             receipt={'id':value['id'],'alias':value['alias'],'phase':'expired' if code=='operation_expired' else 'refused',
@@ -264,22 +270,32 @@ class State:
             if affected or resume:self._intent_changed(db)
             return True
     def local_lifecycle(self,alias,action,*,operation_id,actor):
-        """Discord exact retries reuse the original revision/expiry/binding."""
+        """Local exact retries reuse the original revision/expiry/binding.
+
+        Local operations retain their journal and audit receipts, but must not
+        enter the hub delivery outbox: the hub never issued these commands.
+        """
+        self.refresh_binding()
         check_alias(alias);identifier(operation_id)
         require(action in ('open','close','restart'),'invalid_managed_action')
         with transaction(self.path) as db:
+            # A rebind may race the refresh above. Refuse the old snapshot rather
+            # than returning a retained receipt from the previous enrollment.
+            require(self._get(db,'binding')==self.binding,'host_identity_mismatch',409)
             require(db.execute('SELECT 1 FROM local_actions WHERE id=?',(operation_id,)).fetchone() is None,'managed_operation_conflict',409)
-            old=db.execute('SELECT payload FROM operations WHERE id=?',(operation_id,)).fetchone()
-        if old:
-            value=json.loads(old['payload'])
-            require(all(value[k]==v for k,v in {'alias':alias,'action':action,'actor':actor}.items()),'managed_operation_conflict',409)
-            return self.operation(operation_id)
+            require(db.execute('SELECT 1 FROM delivered WHERE id=?',(operation_id,)).fetchone() is None,'managed_operation_conflict',409)
+            old=db.execute('SELECT * FROM operations WHERE id=?',(operation_id,)).fetchone()
+            if old:
+                value=json.loads(old['payload'])
+                require(all(value[k]==v for k,v in {'alias':alias,'action':action,'actor':actor}.items()),'managed_operation_conflict',409)
+                require(all(value.get(k)==v for k,v in self.binding.items()),'managed_operation_conflict',409)
+                return self._receipt(old)
         row=self.room(alias)
         value={'protocol_version':1,'policy_version':1,'id':operation_id,**self.binding,
             'alias':alias,'actor':actor,'role':'FLEET_ADMIN','action':action,'timing':'when_empty','patch':{},
             'expected_revision':row['revision'],'expected_room_generation':row['room_generation'],
             'expires_at':self.clock()+600,'cancel_operation_id':None}
-        return self.receive(value)
+        return self.enqueue(value)
     def operator_start(self):
         """Explicit local action only; never reopen individually stopped slots."""
         with transaction(self.path) as db:
@@ -384,10 +400,18 @@ class State:
                     'room_ownership_requires_review',409)
             db.execute("UPDATE reservations SET phase='uncertain' WHERE alias=?",(alias,))
     def enqueue(self,value):
+        """Admit a local command without manufacturing a remote receipt."""
+        return self._enqueue(value,from_hub=False)
+    def _enqueue(self,value,*,from_hub):
         self.refresh_binding();request(value);require(all(value[k]==v for k,v in self.binding.items()),'host_identity_mismatch',403)
         now=self.clock()
         raw=canonical(value).decode();pin=digest(value)
         with transaction(self.path) as db:
+            delivered=db.execute('SELECT digest FROM delivered WHERE id=?',(value['id'],)).fetchone()
+            require((delivered is not None and delivered['digest']==pin) if from_hub else delivered is None,
+                    'managed_operation_conflict',409)
+            require(db.execute('SELECT 1 FROM local_actions WHERE id=?',(value['id'],)).fetchone() is None,
+                    'managed_operation_conflict',409)
             old=db.execute('SELECT * FROM operations WHERE id=?',(value['id'],)).fetchone()
             if old:
                 require(old['digest']==pin,'managed_operation_conflict',409)

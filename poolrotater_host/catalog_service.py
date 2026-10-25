@@ -223,7 +223,7 @@ def prepare(destination,*,wheel_cache):
             target.parent.mkdir(mode=0o755,parents=True,exist_ok=True);target.write_bytes(path.read_bytes());target.chmod(0o644)
         # Existing catalog validators import these stdlib map-selection contracts
         # for DT/jump provenance; preserve them rather than inventing constants.
-        for name in ('__init__.py','standard_pool.py','pool.py','jump_catalog.py'):
+        for name in ('__init__.py','standard_pool.py','pool.py','jump_catalog.py','taiko_pool.py','taiko_difficulty.py'):
             path=source.parent/'bot'/name;no_links(path);target=runtime/'bot'/name
             target.parent.mkdir(mode=0o755,exist_ok=True);target.write_bytes(path.read_bytes());target.chmod(0o644)
         # Catch validators are pure catalog contracts; no research inputs or
@@ -313,62 +313,78 @@ def _install_assets(kit,*,expected_inventory_sha256,cert,key,served,custody,
 def configure_refresh(state,*,custody,bundles,exclusions=None,allow_expired_pending_renewal=False,operator_exclusions=None):
     """Admin pins explicit settled all-mode inputs; no collector is invoked."""
     require(os.geteuid()==0,'catalog_administrator_required')
-    protected(state,directory=True);protected(custody,directory=True,private=True)
-    from .catalog_publication import Publisher
-    publisher=Publisher(custody);require(complete_modes(bundles),'all_prepared_catalog_modes_required')
-    require(type(allow_expired_pending_renewal) is bool,'catalog_refresh_configuration_refused')
-    inputs={}
-    for mode,path in bundles.items():
-        path=path_word(path);protected(path,directory=True)
-        manifest=inspect_bundle(path);require(manifest['mode']==mode,'catalog_refresh_mode_refused')
-        for child in path.rglob('*'):protected(child,directory=child.is_dir(),maximum=2**31)
-        inputs[mode]={'path':str(path),'manifest_sha256':sha256(path/'manifest.json')}
-    feed=None
-    if exclusions is not None:
-        exclusions=path_word(exclusions);protected(exclusions,maximum=65536)
-        from .catalog_exclusions import validate_feed
-        validate_feed(public_json(exclusions,maximum=65536));feed={'path':str(exclusions),'sha256':sha256(exclusions)}
-    operator=None
-    if operator_exclusions is not None:
-        from .catalog_operator_exclusions import read_policy
-        path=path_word(operator_exclusions);uid=path.lstat().st_uid
-        read_policy(path,uid);operator={'path':str(path),'uid':uid}
-    config={'format':1,'custody':str(custody),'repository_id':publisher.state['repository_id'],
-            'bootstrap_sha256':publisher.state['bootstrap_sha256'],'served':str(publisher.served),'inputs':inputs,
-            'exclusions':feed,'allow_expired_pending_renewal':allow_expired_pending_renewal,
-            'operator_exclusions':operator}
-    atomic_json(Path(state)/'refresh.json',config)
+    protected(state,directory=True);custody=protected(custody,directory=True,private=True)
+    # Use the same scheduler -> publisher lock order as refresh(). This prevents
+    # a daily timer run from publishing a stale five-mode refresh.json after an
+    # administrator has configured an additive Taiko input.
+    with file_lease(Path(custody)/'scheduler.lock', timeout=30):
+        from .catalog_publication import Publisher
+        publisher=Publisher(custody);require(complete_modes(bundles),'all_prepared_catalog_modes_required')
+        require(type(allow_expired_pending_renewal) is bool,'catalog_refresh_configuration_refused')
+        inputs={}
+        for mode,path in bundles.items():
+            path=path_word(path);protected(path,directory=True)
+            manifest=inspect_bundle(path);require(manifest['mode']==mode,'catalog_refresh_mode_refused')
+            for child in path.rglob('*'):protected(child,directory=child.is_dir(),maximum=2**31)
+            inputs[mode]={'path':str(path),'manifest_sha256':sha256(path/'manifest.json')}
+        feed=None
+        if exclusions is not None:
+            exclusions=path_word(exclusions);protected(exclusions,maximum=65536)
+            from .catalog_exclusions import validate_feed
+            validate_feed(public_json(exclusions,maximum=65536));feed={'path':str(exclusions),'sha256':sha256(exclusions)}
+        operator=None
+        if operator_exclusions is not None:
+            from .catalog_operator_exclusions import read_policy
+            path=path_word(operator_exclusions);uid=path.lstat().st_uid
+            read_policy(path,uid);operator={'path':str(path),'uid':uid}
+        config={'format':1,'custody':str(custody),'repository_id':publisher.state['repository_id'],
+                'bootstrap_sha256':publisher.state['bootstrap_sha256'],'served':str(publisher.served),'inputs':inputs,
+                'exclusions':feed,'allow_expired_pending_renewal':allow_expired_pending_renewal,
+                'operator_exclusions':operator}
+        atomic_json(Path(state)/'refresh.json',config)
     return {'ok':True,'refresh_configured':True,'timer_enabled':False,'research_collection_or_analysis':False}
 
 
-def refresh(state,*,dry_run=False,only_exclusions=False):
-    require(os.geteuid()==0,'catalog_administrator_required')
-    protected(state,directory=True);protected(Path(state)/'refresh.json',private=True)
+def _refresh_config(state):
     config=read_json(Path(state)/'refresh.json')
     # Existing sealed refresh profiles remain readable until explicitly bound
     # to the owner-maintained source. No source path is inferred from chat.
     config.setdefault('operator_exclusions',None)
     fields(config,('format','custody','repository_id','bootstrap_sha256',
                   'served','inputs','exclusions','allow_expired_pending_renewal','operator_exclusions'))
-    require(type(only_exclusions) is bool,'catalog_refresh_configuration_refused')
-    if only_exclusions:require(config['operator_exclusions'] is not None,'catalog_operator_exclusions_not_configured')
-    require(type(config['format']) is int and config['format']==1 and type(config['allow_expired_pending_renewal']) is bool
+    require(type(config['format']) is int and config['format']==1
+            and type(config['allow_expired_pending_renewal']) is bool
             and complete_modes(config['inputs']),'catalog_refresh_configuration_refused')
-    from .catalog_publication import Publisher
-    publisher=Publisher(protected(config['custody'],directory=True,private=True))
-    require(publisher.state['repository_id']==config['repository_id'] and publisher.state['bootstrap_sha256']==config['bootstrap_sha256']
-            and str(publisher.served)==config['served'],'catalog_refresh_authority_refused')
-    # The publisher owns the durable lease. Separate scheduler invocations must
-    # not observe the same pending receipt and both publish a follow-up.
-    with file_lease(Path(config['custody'])/'scheduler.lock'):
-        publisher=Publisher(config['custody'])
+    if config['operator_exclusions'] is not None:
+        fields(config['operator_exclusions'],('path','uid'))
+    return config
+
+def refresh(state,*,dry_run=False,only_exclusions=False):
+    require(os.geteuid()==0,'catalog_administrator_required')
+    protected(state,directory=True);protected(Path(state)/'refresh.json',private=True)
+    require(type(only_exclusions) is bool,'catalog_refresh_configuration_refused')
+    # First read selects the immutable custody path only. Re-read and validate
+    # refresh.json after taking its scheduler lease so a waiter cannot publish
+    # configuration it read before an atomic configure_refresh replacement.
+    first=_refresh_config(state)
+    custody=protected(first['custody'],directory=True,private=True)
+    with file_lease(Path(custody)/'scheduler.lock'):
+        config=_refresh_config(state)
+        require(protected(config['custody'],directory=True,private=True)==custody,
+                'catalog_refresh_authority_refused')
+        if only_exclusions:require(config['operator_exclusions'] is not None,'catalog_operator_exclusions_not_configured')
+        from .catalog_publication import Publisher
+        publisher=Publisher(custody)
+        require(publisher.state['repository_id']==config['repository_id']
+                and publisher.state['bootstrap_sha256']==config['bootstrap_sha256']
+                and str(publisher.served)==config['served'],'catalog_refresh_authority_refused')
         if not dry_run and (publisher.state['pending'] is not None or publisher.state['renewal'] is not None):
             try:publisher.resume()
             except ConfigError as error:
                 require(str(error)=='pending_catalog_metadata_expired' and config['allow_expired_pending_renewal'],
                         'catalog_refresh_pending_requires_review')
                 publisher.renew_pending()
-            publisher=Publisher(config['custody'])
+            publisher=Publisher(custody)
         bundles={}
         for mode,item in config['inputs'].items():
             fields(item,('path','manifest_sha256'));path=protected(item['path'],directory=True)

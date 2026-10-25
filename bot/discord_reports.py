@@ -12,7 +12,7 @@ class DiscordReports:
 
     def __init__(self, path: str, ruleset_id: int | None = None):
         self.path = str(path)
-        if ruleset_id not in (None, 0, 2, 3):
+        if ruleset_id not in (None, 0, 1, 2, 3):
             raise ValueError("Unsupported report ruleset")
         self.ruleset_id = ruleset_id
 
@@ -23,23 +23,25 @@ class DiscordReports:
         # Temporary views scope all existing report SQL without altering the
         # production schema or any stored rows. Legacy unlabelled rooms are osu.
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if self.ruleset_id == 2:
+        if self.ruleset_id in (1,2):
             # Old/unlabelled ledgers are Standard evidence, never Catch data.
             # Cold Catch reports must be empty instead of adopting old tables.
-            from .rating_outbox import CATCH_KEY_BASE, MAX_PROVIDER_MAP_ID
+            from .rating_outbox import CATCH_KEY_BASE, TAIKO_KEY_BASE, MAX_PROVIDER_MAP_ID
+            base=TAIKO_KEY_BASE if self.ruleset_id==1 else CATCH_KEY_BASE
+            suffix='taiko' if self.ruleset_id==1 else 'catch'
             for table in ('autohost_matches','autohost_room_players'):
                 if table in tables:
                     if 'autohost_room_rulesets' in tables:
-                        conn.execute(f'CREATE TEMP VIEW {table} AS SELECT t.* FROM main.{table} t JOIN main.autohost_room_rulesets rr ON rr.room_id=t.room_id WHERE rr.ruleset_id=2')
+                        conn.execute(f'CREATE TEMP VIEW {table} AS SELECT t.* FROM main.{table} t JOIN main.autohost_room_rulesets rr ON rr.room_id=t.room_id WHERE rr.ruleset_id={self.ruleset_id}')
                     else:
                         conn.execute(f'CREATE TEMP VIEW {table} AS SELECT * FROM main.{table} WHERE 0')
             for table in ('autohost_lobby_time','autohost_pp_achievements'):
-                if table+'_catch' in tables:
-                    conn.execute(f'CREATE TEMP VIEW {table} AS SELECT * FROM main.{table}_catch')
+                if table+'_'+suffix in tables:
+                    conn.execute(f'CREATE TEMP VIEW {table} AS SELECT * FROM main.{table}_{suffix}')
                 elif table in tables:
                     conn.execute(f'CREATE TEMP VIEW {table} AS SELECT * FROM main.{table} WHERE 0')
-            if 'map_ratings_catch' in tables:
-                conn.execute(f'CREATE TEMP VIEW map_ratings AS SELECT beatmap_id-{CATCH_KEY_BASE} AS beatmap_id,user_id,rating,created_at,map_origin,key_count FROM main.map_ratings_catch WHERE beatmap_id>{CATCH_KEY_BASE} AND beatmap_id<={CATCH_KEY_BASE+MAX_PROVIDER_MAP_ID}')
+            if 'map_ratings_'+suffix in tables:
+                conn.execute(f'CREATE TEMP VIEW map_ratings AS SELECT beatmap_id-{base} AS beatmap_id,user_id,rating,created_at,map_origin,key_count FROM main.map_ratings_{suffix} WHERE beatmap_id>{base} AND beatmap_id<={base+MAX_PROVIDER_MAP_ID}')
             elif 'map_ratings' in tables:
                 conn.execute('CREATE TEMP VIEW map_ratings AS SELECT * FROM main.map_ratings WHERE 0')
             return conn

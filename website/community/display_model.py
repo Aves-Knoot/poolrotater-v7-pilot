@@ -10,7 +10,8 @@ import sqlite3
 import stat
 
 MODES = {'standard-auto': 'standard', 'standard-fixed': 'standard',
-         'mania-4k': 'mania_4k', 'mania-7k': 'mania_7k', 'catch-fixed': 'catch'}
+         'mania-4k': 'mania_4k', 'mania-7k': 'mania_7k', 'catch-fixed': 'catch',
+         'taiko-fixed': 'taiko', 'taiko-auto': 'taiko'}
 EXCLUDED_MAPS = frozenset({1549496})
 MAX_INDEX_BYTES = 64 * 1024**2
 
@@ -125,6 +126,10 @@ def playback(state, current_map, match, *, now, observed_at, fresh, settings=Non
                and settings.get('required_mods') == [])
     if nominal:
         rate = 1.0
+    taiko_nm = isinstance(settings, dict) and settings.get('ruleset_id') == 1
+    if taiko_nm:
+        if rate not in (None, 1, 1.0):return None
+        rate=1.0
     length = current_map.get('total_length')
     if (type(match.get('playlist_item_id')) is not int or match['playlist_item_id'] <= 0
             or match.get('beatmap_id') != current_map.get('beatmap_id')

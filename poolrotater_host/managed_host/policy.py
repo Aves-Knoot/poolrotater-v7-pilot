@@ -116,6 +116,8 @@ def prepare_data(root,marker,*,uid,owner_lease_held=False):
     from ..layout import atomic_json
     from bot.scoped_ratings import ScopedRatingStore
     from bot.catch_ppstats import CatchPPStatsStore
+    from bot.taiko_ppstats import TaikoPPStatsStore
+    from bot.taiko_preferences import prepare as prepare_preferences
     # The installer imports from a root-private temporary payload. Load lazy
     # code dependencies before changing UID; never widen its permissions or
     # touch player data as root merely to make imports work.
@@ -143,6 +145,9 @@ def prepare_data(root,marker,*,uid,owner_lease_held=False):
         _private(backup)
         with backup.open('rb') as stream:pin=hashlib.file_digest(stream,'sha256').hexdigest()
         require(value['backup']=={'sha256':pin,'bytes':backup.stat().st_size},'managed_backup_changed')
+        prepare_preferences(root/'state/controller-ratings.db')
+        ScopedRatingStore(str(root/'state/controller-ratings.db'),ruleset_id=1)
+        TaikoPPStatsStore(str(root/'state/controller-ratings.db'),ruleset_id=1)
         ScopedRatingStore(str(root/'state/controller-ratings.db'),ruleset_id=2)
         CatchPPStatsStore(str(root/'state/controller-ratings.db'),ruleset_id=2)
         value['phase']='complete';atomic_json(path,value)

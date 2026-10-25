@@ -17,7 +17,7 @@ def main():
     raw=sys.stdin.buffer.read(786433)
     if len(raw)>786432:return 1
     value=json.loads(raw);url=urlsplit(value['origin'])
-    maximum=512*1024 if value['path'].split('?',1)[0] in ('/v1/events/batches','/v1/ratings/state-query',
+    maximum=512*1024 if value['path'].split('?',1)[0] in ('/v1/events/batches','/v1/ratings/state-query','/v3/ratings/snapshots/current','/v3/ratings/snapshot-page','/v2/ratings/snapshots/current','/v2/ratings/snapshot-page','/v3/activity/replica/current','/v3/activity/replica/page','/v3/activity/query',
                          '/v1/ratings/snapshots/current','/v1/ratings/snapshot-page','/v1/activity/replica/current','/v1/activity/replica/page',
                          '/v2/activity/replica/current','/v2/activity/replica/page') else 65536
     if maximum==65536 and len(raw)>262144:return 1

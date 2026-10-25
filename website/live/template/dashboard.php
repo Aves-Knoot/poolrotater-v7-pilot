@@ -16,6 +16,19 @@ function prDashboardTime($seconds) {
     return $seconds>=86400 ? floor($seconds/86400).'d '.floor($seconds%86400/3600).'h' : ($seconds>=3600 ? floor($seconds/3600).'h '.floor($seconds%3600/60).'m' : floor($seconds/60).'m');
 }
 function prDashboardLength($seconds) { return floor($seconds/60).':'.str_pad((string)floor($seconds%60),2,'0',STR_PAD_LEFT); }
+function prDashboardRoomType($room) {
+    $type=$room['type']??null;
+    if(in_array($type,['standard','catch','taiko'],true))return $type;
+    if(in_array($type,['mania','mania_4k','mania_7k','mania_other'],true))return 'mania';
+    $ruleset=$room['settings']['ruleset_id']??$room['ruleset_id']??null;
+    if(is_int($ruleset))return [0=>'standard',1=>'taiko',2=>'catch',3=>'mania'][$ruleset]??'unknown';
+    $preset=$room['preset']??'';
+    if(str_starts_with($preset,'taiko-'))return 'taiko';
+    if($preset==='catch-fixed')return 'catch';
+    if(str_starts_with($preset,'mania-'))return 'mania';
+    $alias=$room['alias']??'';
+    return in_array($alias,['room1','room2'],true)?'standard':(in_array($alias,['room3','room4'],true)?'mania':'unknown');
+}
 function prDashboardQueue($room,$fresh) {
     if (!$fresh || empty($room['queue_known'])) return '<p class="pr-queue-empty">' . ($fresh?'The next map is being prepared.':'Waiting for a fresh room update.') . '</p>';
     if (empty($room['queue'])) return '<p class="pr-queue-empty">No upcoming maps in the observed queue.</p>';
@@ -32,9 +45,11 @@ function prDashboardQueue($room,$fresh) {
 }
 function prDashboardRoomCard($room,$fresh) {
     $alias=$room['alias'];$settings=$room['settings']??[];
+    $type=prDashboardRoomType($room);$room['type']=$type;
     $descriptions=['room1'=>'Difficulty follows the room. Keep the rounds flowing.','room2'=>'A steady difficulty range, with player votes.','room3'=>'Seven keys. Find your next Mania challenge.','room4'=>'Four keys. A fresh mix of Mania maps.'];
-    $out='<article class="pr-room-card pr-dash-room" id="'.hsc($alias).'" data-room-type="'.(($room['type']??'')==='catch'?'catch':(in_array($alias,['room1','room2'],true)?'standard':'mania')).'">'.prNowPlayingCard($room,$fresh,false);
-    $out.='<div class="pr-room-body"><p class="pr-room-description">'.hsc(($room['type']??'')==='catch'?'Native osu!catch NM, Ranked/Approved charts and fixed difficulty with player votes.':($descriptions[$alias]??'Automatic multiplayer')).'</p><div class="pr-room-pills"><span><span class="pr-pill-label">Difficulty</span> <b data-room-range>';
+    $description=$type==='catch'?'Native osu!catch NM, Ranked/Approved charts and fixed difficulty with player votes.':($type==='taiko'?'osu!taiko NM native and qualified converted charts.':($descriptions[$alias]??'Automatic multiplayer'));
+    $out='<article class="pr-room-card pr-dash-room" id="'.hsc($alias).'" data-room-type="'.hsc($type).'">'.prNowPlayingCard($room,$fresh,false);
+    $out.='<div class="pr-room-body"><p class="pr-room-description">'.hsc($description).'</p><div class="pr-room-pills"><span><span class="pr-pill-label">Difficulty</span> <b data-room-range>';
     $range=$fresh?($settings['active_range']??[]):[];
     $out.=count($range)===2?prAnalyticsNumber($range[0],2).'–'.prAnalyticsNumber($range[1],2).'★':'Unknown';
     $out.='</b></span><span><span class="pr-pill-label">Map limit</span> <b data-room-limit>'.($fresh&&is_numeric($settings['max_length']??null)?prDashboardLength($settings['max_length']):'Unknown').'</b></span></div>';
@@ -100,27 +115,38 @@ function prDashboardGraph($samples,$index,$label,$since,$states=[],$total=false)
     $out.='<text x="40" y="194">'.hsc(gmdate('M j H:i',$since)).'</text><text x="640" y="194" text-anchor="end">'.hsc(gmdate('M j H:i',$end)).' UTC</text></svg>';
     return $out.'<div class="pr-chart-summary"><span>Peak <b>'.$peak.'</b></span><span>Average <b>'.prAnalyticsNumber($average,1).'</b></span><span>'.count($known).($total?' complete readings':' readings').'</span>'.($total?'':'<span>'.count($offline).' offline</span>').'<span>'.$unavailable.' unavailable</span></div>';
 }
+function prDashboardAvailability($samples,$seconds=86400,$now=null) {
+    $now=$now??time();if(!in_array($seconds,[86400,604800,2592000],true))$seconds=86400;
+    $count=0;$online=0;
+    foreach(is_array($samples)?$samples:[] as $row){
+        if(!is_array($row)||count($row)!==6||!is_numeric($row[0])||!is_finite((float)$row[0])||$row[0]<$now-$seconds||$row[0]>$now||!in_array($row[5],[0,1],true))continue;
+        $count++;$online+=$row[5];
+    }
+    return ['window_seconds'=>$seconds,'samples'=>$count,'online_samples'=>$online,'percent'=>$count?100*$online/$count:null];
+}
 function prDashboardStatus($embedStatus=true) {
     require_once __DIR__.'/community.php';
     $community=prCommunityRead('/srv/poolrotator-wiki/public/community/rooms.json');
     $data=prAnalyticsData('status');$activity=prAnalyticsData('activity');$fresh=prAnalyticsFresh($data);$service=$data['service']??[];$rooms=$data['rooms']??[];
     if(count($rooms)!==4){$rooms=[];foreach(['standard_automatic','standard_fixed','mania_7k','mania_4k'] as $i=>$guide)$rooms[]=['alias'=>'room'.($i+1),'label'=>['Standard automatic','Standard fixed','Mania 7K','Mania 4K'][$i],'state'=>'STALE','players'=>null,'room_id'=>null,'queue'=>[],'queue_known'=>false,'settings'=>[],'guide'=>'lobbies:'.$guide];}
-    $availability=$data['availability']??[];
+    $availability=prDashboardAvailability($activity['samples']??[]);
     $knownCounts=array_filter($rooms,fn($r)=>is_int($r['players']??null));
     $players=prCombinedOccupancy($data,$community);
     $open=$fresh&&!empty($data['available'])?count(array_filter($rooms,fn($r)=>is_int($r['room_id']??null)&&!in_array($r['state']??'STALE',['STALE','OFFLINE'],true))):null;
     $state=$fresh&&isset($service['online'])?($service['online']?'online':'offline'):'unknown';
     echo '<section class="pr-live-status pr-dashboard" data-status-page data-expires="'.(int)($data['expires_at']??0).'"><header class="pr-dashboard-hero"><div><span class="pr-dashboard-eyebrow">PLAY TOGETHER</span><h1>Live lobbies</h1><p>Find your next map. Jump into the round.</p></div><div class="pr-dashboard-connection"><span class="pr-dashboard-health" data-health="'.hsc($state).'"><i aria-hidden="true"></i><span data-service-label>Bot '.hsc($state).'</span></span>'.(!empty($data['generated_at'])?prAnalyticsUpdated($data):'<p class="pr-updated">Waiting for fresh status</p>').'</div></header>';
     echo '<div class="pr-service-metrics pr-metric-grid">';
-    $metrics=[['players','People here',$players===null?'—':(string)$players,'Across owner and community rooms','people'],['rooms','Rooms open',$open===null?'—':$open.' / 4','Pick a ruleset below','rooms'],['uptime','Current uptime',$fresh&&isset($service['uptime_seconds'])?prDashboardTime($service['uptime_seconds']):'—','This uninterrupted run','clock'],['availability','Availability · 24h',isset($availability['percent'])?prAnalyticsNumber($availability['percent'],2).'%':'—','Based on observed samples','activity']];
+    $metrics=[['players','People here',$players===null?'—':(string)$players,'Across owner and community rooms','people'],['rooms','Rooms open',$open===null?'—':$open.' / 4','Pick a ruleset below','rooms'],['uptime','Current uptime',$fresh&&isset($service['uptime_seconds'])?prDashboardTime($service['uptime_seconds']):'—','This uninterrupted run','clock'],['availability','Availability',isset($availability['percent'])?prAnalyticsNumber($availability['percent'],2).'%':'—','Based on observed samples','activity']];
     $peak=$data['peak_players']??null;
     $peakValid=is_array($peak)&&is_int($peak['count']??null)&&$peak['count']>=0&&$peak['count']<=2048&&is_int($peak['tracking_since']??null)&&$peak['tracking_since']>=1600000000&&$peak['tracking_since']<=time()+30;
     foreach ($metrics as [$key,$label,$value,$hint,$icon]) {
-        echo '<div class="pr-metric"><div class="pr-metric-label">'.prDashboardIcon($icon).'<span>'.hsc($label).'</span></div><strong data-live-metric="'.$key.'">'.hsc($value).'</strong><small>'.hsc($hint).'</small>';
+        echo '<div class="pr-metric"><div class="pr-metric-label">'.prDashboardIcon($icon).'<span>'.hsc($label).'</span>';
+        if($key==='availability')echo '<select class="pr-availability-select" data-availability-window aria-label="Availability time window"><option value="86400">24 hours</option><option value="604800">7 days</option><option value="2592000">30 days</option></select>';
+        echo '</div><strong data-live-metric="'.$key.'">'.hsc($value).'</strong><small'.($key==='availability'?' data-availability-samples':'').'>'.($key==='availability'?prAnalyticsNumber($availability['samples']).' service samples':hsc($hint)).'</small>';
         if ($key==='players') echo '<small class="pr-peak-record"><span>Peak observed <b data-live-peak>'.($peakValid?(int)$peak['count']:'—').'</b></span><span data-live-peak-since>'.($peakValid?'since '.hsc(gmdate('M j, Y',$peak['tracking_since'])):'').'</span></small>';
         echo '</div>';
     }
-    echo '</div><div class="pr-room-toolbar" id="rooms"><div><h2>Choose your room</h2><p>Choose a ruleset and join a round.</p></div><div class="pr-room-filters" role="group" aria-label="Filter lobbies"><button type="button" data-room-filter="all" aria-pressed="true">All rooms</button><button type="button" data-room-filter="standard" aria-pressed="false">Standard</button><button type="button" data-room-filter="mania" aria-pressed="false">Mania</button><button type="button" data-room-filter="catch" aria-pressed="false">Catch</button></div></div><div class="pr-room-grid">';
+    echo '</div><div class="pr-room-toolbar" id="rooms"><div><h2>Choose your room</h2><p>Choose a ruleset and join a round.</p></div><div class="pr-room-filters" role="group" aria-label="Filter lobbies"><button type="button" data-room-filter="all" aria-pressed="true">All rooms</button><button type="button" data-room-filter="standard" aria-pressed="false">Standard</button><button type="button" data-room-filter="mania" aria-pressed="false">Mania</button><button type="button" data-room-filter="catch" aria-pressed="false">Catch</button><button type="button" data-room-filter="taiko" aria-pressed="false">Taiko</button></div></div><div class="pr-room-grid">';
     foreach ($rooms as $room) echo prDashboardRoomCard($room,$fresh);
     echo '</div><p class="pr-dashboard-timing">Status updates every 10 seconds. Song progress is approximate. <a href="#about_status">How it works ↓</a></p>';
     require_once __DIR__.'/community.php';
@@ -139,7 +165,7 @@ function prDashboardStatus($embedStatus=true) {
     foreach ($labels as $i=>$label) echo '<article class="pr-activity-panel" data-series="'.$i.'"><div class="pr-chart-heading"><h3><i aria-hidden="true"></i>'.hsc($label).'</h3><span data-chart-current="room'.($i+1).'">'.($fresh&&is_int($rooms[$i]['players']??null)?$rooms[$i]['players'].' here now':'—').'</span></div><div data-chart="'.$i.'">'.prDashboardGraph($activity['samples']??[],$i,$label,time()-(int)$window,$roomStates).'</div></article>';
     echo '</div><div class="pr-activity-foot"><p>Five-minute readings, including spectators · per-room zero means an empty open room · red marks mean confirmed offline · other gaps mean unavailable data. Network totals include listed community rooms and offline owner rooms as zero; incomplete or stale coverage leaves a gap.</p><span data-history-updated>'.(!empty($activity['samples'])?'Last observation '.hsc(gmdate('M j H:i',(int)$activity['samples'][count($activity['samples'])-1][0])).' UTC':'No observations yet').'</span></div><details class="pr-chart-data"><summary>View recent observations <span aria-hidden="true">⌄</span></summary><div class="pr-table-scroll"><table><thead><tr><th>Time (UTC)</th><th>Standard auto</th><th>Standard fixed</th><th>7K</th><th>4K</th><th>Total · all rooms</th></tr></thead><tbody>';
     foreach (array_reverse(array_slice($activity['samples']??[],-24)) as $row) {echo '<tr><td>'.hsc(gmdate('M j H:i',(int)$row[0])).'</td>';foreach(array_slice($row,1,4) as $i=>$count) echo '<td>'.(is_int($count)?$count:(($roomStates[$row[0]][$i+1]??null)===0?'Offline':'—')).'</td>';echo '<td>'.(array_column($activity['network_totals']??[],1,0)[$row[0]]??'—').'</td></tr>';}
-    echo '</tbody></table></div></details></section><details class="pr-service-details"><summary>Service health &amp; observation details <span aria-hidden="true">⌄</span></summary><div><p>Automatic restarts this activation: <b data-service-restarts>'.($fresh&&isset($service['restarts'])?(int)$service['restarts']:'Unknown').'</b>.</p><p class="pr-availability-note">Availability is based on '.(int)($availability['samples']??0).' service observations in the past 24 hours. Short outages between observations can be missed.</p><p>Chart history begins '.hsc(gmdate('M j, Y',(int)($data['history_since']??time()))).'.</p></div></details><noscript><p class="pr-unavailable">This is a snapshot. Reload for current room status; use Show activity to change the chart window.</p></noscript></section>';
+    echo '</tbody></table></div></details></section><details class="pr-service-details"><summary>Service health &amp; observation details <span aria-hidden="true">⌄</span></summary><div><p>Automatic restarts this activation: <b data-service-restarts>'.($fresh&&isset($service['restarts'])?(int)$service['restarts']:'Unknown').'</b>.</p><p class="pr-availability-note">Availability is based on '.(int)($availability['samples']??0).' service observations in the past 24 hours. Only recorded observations are included; short outages between observations can be missed.</p><p>Chart history begins '.hsc(gmdate('M j, Y',(int)($data['history_since']??time()))).'.</p></div></details><noscript><p class="pr-unavailable">This is a snapshot. Reload for current room status; use Show activity to change the chart window.</p></noscript></section>';
     if($embedStatus) echo '<script type="application/json" id="pr-now-playing-data">'.json_encode($data,JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT).'</script>';
     echo '<script type="application/json" id="pr-activity-data">'.json_encode($activity,JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT).'</script>';
 }

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS shadow_map_ratings_catch (
     beatmap_id INTEGER NOT NULL,user_id INTEGER NOT NULL,rating INTEGER NOT NULL,
     created_at REAL NOT NULL,PRIMARY KEY(beatmap_id,user_id));
 """
+TAIKO_SCHEMA = CATCH_SCHEMA.replace('_catch', '_taiko')
 
 
 class _CatchRatingConnection(sqlite3.Connection):
@@ -43,19 +44,28 @@ class _CatchRatingConnection(sqlite3.Connection):
         return super().executemany(self._sql(sql),parameters)
 
 
+class _TaikoRatingConnection(_CatchRatingConnection):
+    @staticmethod
+    def _sql(sql):
+        for name in ('map_ratings','shadow_map_ratings'):
+            sql=re.sub(r'\b'+name+r'\b',name+'_taiko',sql)
+        return sql
+
+
 class ScopedRatingStore(LegacyRatingStore):
     def __init__(self,path='ratings.db',*,initialize=True,reader=None,ruleset_id=None):
         self.ruleset_id=ruleset_id
         self.reader=reader
         self._validate_reader_scope()
-        if initialize and ruleset_id == 2:
+        if initialize and ruleset_id in (1, 2):
             # Fresh/stopped preparation only. Room workers pass initialize=False.
             LegacyRatingStore(path,initialize=True,reader=None)
-            with sqlite3.connect(str(path),timeout=30) as db:db.executescript(CATCH_SCHEMA)
+            with sqlite3.connect(str(path),timeout=30) as db:
+                db.executescript(CATCH_SCHEMA if ruleset_id == 2 else TAIKO_SCHEMA)
         super().__init__(path,initialize=initialize,reader=reader)
 
     def _validate_reader_scope(self):
-        if self.reader is not None and ((self.ruleset_id == 2) != (getattr(self.reader, 'ruleset_id', None) == 2)):
+        if self.reader is not None and (self.ruleset_id != getattr(self.reader, 'ruleset_id', None)):
             raise ValueError('rating_reader_scope_mismatch')
 
 
@@ -85,11 +95,11 @@ class ScopedRatingStore(LegacyRatingStore):
         bid, uid, val = int(beatmap_id), int(user_id), int(rating)
         from .rating_outbox import storage_key
         origin = str(map_origin or "unknown")[:32]
-        if self.ruleset_id == 2:
-            if context is None or context.get('ruleset_id') != 2:
-                raise ValueError('rating_catch_identity_required')
-        elif context is not None and context.get('ruleset_id') == 2:
-            raise ValueError('rating_catch_store_required')
+        if self.ruleset_id in (1, 2):
+            if context is None or context.get('ruleset_id') != self.ruleset_id:
+                raise ValueError('rating_ruleset_identity_required')
+        elif context is not None and context.get('ruleset_id') in (1, 2):
+            raise ValueError('rating_scoped_store_required')
         public_bid = bid
         bid = storage_key(bid, context, map_origin=origin, key_count=key_count)
         keys = int(key_count) if key_count in (4, 7) else None
@@ -290,8 +300,9 @@ class ScopedRatingStore(LegacyRatingStore):
         if type(public) is not bool:
             raise ValueError("explicit_room_visibility_required")
         if preset:
-            mode = {"mania-4k": "mania4", "mania-7k": "mania7", "catch-fixed": "catch"}.get(preset, "standard")
-        if mode not in ("standard", "mania4", "mania7", "catch"):
+            mode = {"mania-4k": "mania4", "mania-7k": "mania7", "catch-fixed": "catch",
+                    "taiko-fixed": "taiko", "taiko-auto": "taiko"}.get(preset, "standard")
+        if mode not in ("standard", "mania4", "mania7", "catch", "taiko"):
             raise ValueError("invalid_activity_mode")
         now = float(time.time() if observed_at is None else observed_at)
         conn = self._conn()
@@ -309,9 +320,10 @@ class ScopedRatingStore(LegacyRatingStore):
     def worst(self, min_votes: int = 4, ratio: float = 0.6) -> list[int]:
         """Maps the lobby dislikes, for pruning from the pool later."""
         conn = self._conn()
-        from .rating_outbox import CATCH_KEY_BASE, MAX_PROVIDER_MAP_ID
-        low,high = ((CATCH_KEY_BASE+1,CATCH_KEY_BASE+MAX_PROVIDER_MAP_ID)
-                    if self.ruleset_id == 2 else (1,CATCH_KEY_BASE-1))
+        from .rating_outbox import CATCH_KEY_BASE, TAIKO_KEY_BASE, MAX_PROVIDER_MAP_ID
+        base = CATCH_KEY_BASE if self.ruleset_id == 2 else TAIKO_KEY_BASE if self.ruleset_id == 1 else None
+        low,high = ((base+1,base+MAX_PROVIDER_MAP_ID) if base is not None
+                    else (1,CATCH_KEY_BASE-1))
         rows = conn.execute(
             """
             SELECT beatmap_id, SUM(rating>0) up, SUM(rating<0) down,
@@ -325,7 +337,7 @@ class ScopedRatingStore(LegacyRatingStore):
         ).fetchall()
         conn.close()
         return [
-            r["beatmap_id"]-CATCH_KEY_BASE if self.ruleset_id == 2 else r["beatmap_id"]
+            r["beatmap_id"]-base if base is not None else r["beatmap_id"]
             for r in rows
             if (r["down"] or 0) / max(r["n"], 1) >= ratio
         ]
@@ -341,7 +353,8 @@ class ScopedRatingStore(LegacyRatingStore):
             c = None
             try:
                 c = sqlite3.connect(self.path, timeout=30,
-                                    factory=_CatchRatingConnection if self.ruleset_id==2 else sqlite3.Connection)
+                                    factory=(_CatchRatingConnection if self.ruleset_id==2 else
+                                             _TaikoRatingConnection if self.ruleset_id==1 else sqlite3.Connection))
                 c.row_factory = sqlite3.Row
                 c.execute("PRAGMA busy_timeout=30000")
                 c.execute("PRAGMA foreign_keys=ON")

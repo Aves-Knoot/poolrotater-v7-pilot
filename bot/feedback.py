@@ -53,7 +53,8 @@ class FeedbackReplies:
             try:
                 row = connection.execute(
                     'SELECT event_id FROM rating_outbox WHERE beatmap_id=? AND user_id=? '
-                    'ORDER BY sequence DESC LIMIT 1', key,
+                    'ORDER BY sequence DESC LIMIT 1',
+                    (self.store._rating_key(beatmap_id) if hasattr(self.store,'_rating_key') else beatmap_id,user_id),
                 ).fetchone()
             finally:
                 connection.close()

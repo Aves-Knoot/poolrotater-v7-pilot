@@ -12,6 +12,9 @@ from ..config import ConfigError
 from ..catalog_export import MODES
 
 
+STANDARD_REFRESH = '.staging/managed-standard-refresh.json'
+
+
 def _require(value):
     if not value:raise ConfigError('managed_catalog_preparation_requires_review')
 
@@ -25,10 +28,11 @@ def prepare_store(store,repository,*,owner_lease_held=False):
     else:_require(os.geteuid()==0)
     record=store.path/'.staging/managed-prewarm.json'
     def read():
-        from ..layout import read_json
-        if not os.path.lexists(record):return None
-        store._check_path(record)
-        return read_json(record,maximum=65536)
+        # Catalog journals are protected root-owned control records (0644),
+        # unlike private host settings. CatalogStore._read applies the correct
+        # ownership, mode, no-link and bounded-JSON checks for this namespace.
+        try:return store._read('.staging/managed-prewarm.json',optional=True)
+        except ConfigError:raise ConfigError('managed_catalog_prewarm_requires_review') from None
     value=read();binding={k:store.binding[k] for k in ('installation_id','generation','host_root','service_uid')}
     if value is not None:
         _require(type(value) is dict and set(value)=={'format','binding','bootstrap_sha256','before','after','phase'}
@@ -78,6 +82,178 @@ def prepare_store(store,repository,*,owner_lease_held=False):
     return {'ok':True,'reference':after,'all_modes_prepared':True,'existing_modes_replaced':False}
 
 
+def _same_except_standard(before, after):
+    return (set(before['modes']) == set(after['modes'])
+            and all(before['modes'][mode] == after['modes'][mode]
+                    for mode in before['modes'] if mode != 'standard')
+            and before['modes'].get('standard') != after['modes'].get('standard')
+            and after['serial'] == before['serial'] + 1)
+
+
+def _refresh_standard_store_locked(store, repository, *, owner_lease_held=False):
+    """Refresh only the authenticated Standard target while workers are stopped.
+
+    The journal is separate from managed-prewarm because that receipt only
+    describes filling absent modes. It binds resumable stage/commit recovery to
+    this exact installation and preserves all non-Standard mode identities.
+    """
+    _require(owner_lease_held is True)
+    if store.fixture:
+        from ..runtime_package import fixture_only
+        fixture_only()
+    else:
+        _require(os.geteuid() == 0)
+    record_path = store.path / STANDARD_REFRESH
+    binding = {k: store.binding[k] for k in
+               ('installation_id', 'generation', 'host_root', 'service_uid')}
+
+    def write(value):
+        store._write(record_path, value)
+
+    def read():
+        value = store._read(STANDARD_REFRESH, optional=True)
+        if value is None:
+            return None
+        _require(type(value) is dict and set(value) ==
+                 {'format', 'binding', 'bootstrap_sha256', 'before', 'after', 'phase'}
+                 and type(value['format']) is int and value['format'] == 1
+                 and value['binding'] == binding
+                 and value['bootstrap_sha256'] == store.trust.identity
+                 and value['phase'] in ('staging', 'ready', 'complete'))
+        store._validate_reference(value['before'])
+        if value['after'] is not None:
+            store._validate_reference(value['after'])
+        return value
+
+    def candidate():
+        value = store._read('candidate.json', optional=True)
+        return None if value is None else store._journal(value)
+
+    def validate_candidate(proposal, before):
+        _require(proposal is not None and proposal['before'] == before
+                 and _same_except_standard(before, proposal['after']))
+        # Authenticate the complete activated set from the store's immutable
+        # receipts. _complete also checks that the current host config's modes
+        # are covered without changing that config.
+        store._complete(proposal['after'])
+        return proposal['after']
+
+    def terminal_candidate(proposal, current):
+        if proposal is None:
+            return False
+        store._complete(proposal['after'])
+        _require(proposal['after'] == current
+                 and proposal['before']['serial'] + 1 == current['serial'])
+        return True
+
+    value = read()
+    current = store.current(allow_pending=True)
+    pending = store._read('pending.json', optional=True)
+    proposal = candidate()
+
+    if value is not None and value['phase'] != 'complete':
+        _require(current in (value['before'], value['after']))
+        if value['phase'] == 'ready':
+            _require(value['after'] is not None
+                     and _same_except_standard(value['before'], value['after']))
+            expected = {'format': 1, 'before': value['before'], 'after': value['after']}
+            if pending is not None:
+                _require(pending == expected)
+                store.recover()
+                current = store.current(allow_pending=True)
+                pending = None
+            if current == value['after']:
+                store._complete(current)
+                value['phase'] = 'complete';write(value)
+                return {'ok': True, 'reference': current,
+                        'standard_refreshed': current != value['before']}
+            _require(current == value['before'] and pending is None and proposal == expected)
+            committed = store.commit()
+            _require(committed == value['after'])
+            value['phase'] = 'complete';write(value)
+            return {'ok': True, 'reference': committed, 'standard_refreshed': True}
+
+        # A crash during CatalogStore.commit can leave its pending transaction
+        # before the journal advances to ready only if our stage call had not
+        # returned; we never start commit before publishing ready.
+        _require(value['phase'] == 'staging' and value['after'] is None
+                 and pending is None and current == value['before'])
+        if proposal is not None and proposal['after'] == current:
+            # The previous completed activation may have left its terminal
+            # proposal behind when this new journal was written.
+            terminal_candidate(proposal, current)
+            (store.path / 'candidate.json').unlink()
+            proposal = None
+        if proposal is None:
+            staged = store.stage(repository, ['standard'])
+            if staged == current:
+                # CatalogStore removes candidate.json on identical content.
+                value.update(after=current, phase='complete');write(value)
+                return {'ok': True, 'reference': current,
+                        'standard_refreshed': False}
+            proposal = candidate()
+        after = validate_candidate(proposal, value['before'])
+        value.update(after=after, phase='ready');write(value)
+        committed = store.commit()
+        _require(committed == after)
+        value['phase'] = 'complete';write(value)
+        return {'ok': True, 'reference': committed, 'standard_refreshed': True}
+
+    # A completed journal is historical evidence; a subsequent valid catalog
+    # activation may have moved the reference since then. Start a fresh bound
+    # refresh from the current complete set.
+    _require(pending is None)
+    _require('standard' in current['modes'] and set(current['modes']) == set(MODES))
+
+    if proposal is not None:
+        terminal_candidate(proposal, current)
+        (store.path / 'candidate.json').unlink()
+    value = {'format': 1, 'binding': binding,
+             'bootstrap_sha256': store.trust.identity,
+             'before': current, 'after': None, 'phase': 'staging'}
+    write(value)
+    staged = store.stage(repository, ['standard'])
+    if staged == current:
+        value.update(after=current, phase='complete');write(value)
+        return {'ok': True, 'reference': current, 'standard_refreshed': False}
+    proposal = candidate()
+    after = validate_candidate(proposal, current)
+    value.update(after=after, phase='ready');write(value)
+    committed = store.commit()
+    _require(committed == after)
+    value['phase'] = 'complete';write(value)
+    return {'ok': True, 'reference': committed, 'standard_refreshed': True}
+
+
+def refresh_standard_store(store, repository, *, owner_lease_held=False):
+    """Serialize the refresh receipt with the stopped-owner preparation path."""
+    from ..layout import file_lease
+    _require(owner_lease_held is True)
+    with file_lease(store.path / '.staging/managed-standard-refresh.lock'):
+        return _refresh_standard_store_locked(store, repository,
+                                              owner_lease_held=owner_lease_held)
+
+
+def prepare_store_and_refresh_standard(store, repository, *, owner_lease_held=False):
+    """Recover this helper's in-flight commit before legacy prewarm inspects it."""
+    _require(owner_lease_held is True)
+    receipt=store._read(STANDARD_REFRESH,optional=True)
+    recovered_refresh=False
+    if receipt is not None:
+        _require(type(receipt) is dict and receipt.get('phase') in
+                 ('staging','ready','complete'))
+        if receipt['phase']!='complete':
+            recovered=refresh_standard_store(store,repository,
+                                             owner_lease_held=owner_lease_held)
+            recovered_refresh=recovered['standard_refreshed']
+    prepared=prepare_store(store,repository,owner_lease_held=owner_lease_held)
+    refreshed=refresh_standard_store(store,repository,
+                                     owner_lease_held=owner_lease_held)
+    return {**prepared,'reference':refreshed['reference'],
+            'standard_refreshed':recovered_refresh or refreshed['standard_refreshed'],
+            'existing_modes_replaced':recovered_refresh or refreshed['standard_refreshed']}
+
+
 def prepare(target,current):
     """Fixed protected source; never accepts paths/URLs/credentials from the hub."""
     from ..pilot_installation import _admin,_stopped
@@ -97,10 +273,7 @@ def prepare(target,current):
             _require(path.is_file() and path.stat().st_nlink==1 and path.stat().st_size<=65536
                      and hashlib.sha256(path.read_bytes()).hexdigest()==CA_SHA256)
         else:write_code(path,CA_PEM.encode('ascii'),mode=0o444,replace=False)
-        if not os.path.lexists(store.path/'pending.json'):
-            reference=store.current()
-            if set(reference['modes'])==set(MODES):
-                return {'ok':True,'reference':reference,'all_modes_prepared':True,'existing_modes_replaced':False}
         repository=HttpsOrigin(ORIGIN,target['prefix']/'managed-catalog-delivery',
                                ca_file=path,ca_sha256=CA_SHA256,timeout=30,deadline=60)
-        return prepare_store(store,repository,owner_lease_held=True)
+        return prepare_store_and_refresh_standard(store,repository,
+                                                  owner_lease_held=True)

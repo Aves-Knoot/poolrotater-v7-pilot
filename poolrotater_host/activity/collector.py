@@ -234,7 +234,7 @@ class Collector:
 
     def _achievements(self,source,target,profile,hidden,*,limit=500,reviewed_rooms=None):
         added=0;reviewed=set(reviewed_rooms or ())
-        for table,fallback_mode in (('autohost_pp_achievements','standard'),('autohost_pp_achievements_mania','mania'),('autohost_pp_achievements_catch','catch')):
+        for table,fallback_mode in (('autohost_pp_achievements','standard'),('autohost_pp_achievements_mania','mania'),('autohost_pp_achievements_catch','catch'),('autohost_pp_achievements_taiko','taiko')):
             if not self._table(source,table):continue
             cursor_key='cursor_'+table+('_history' if reviewed_rooms is not None else '')
             saved=target.execute('SELECT value FROM meta WHERE key=?',(cursor_key,)).fetchone()
@@ -258,7 +258,7 @@ class Collector:
                 if not historical and not ranges:
                     cursor=row['source_row'];continue
                 mode=ranges[0][2] if ranges else fallback_mode
-                if fallback_mode=='catch' and mode!='catch':
+                if fallback_mode in ('catch','taiko') and mode!=fallback_mode:
                     cursor=row['source_row'];continue
                 p={k:row[k] for k in ('room_id','user_id','username','achievement_key','beatmap_id','playlist_item_id','created_at','profile_gain_pp','score_pp','accuracy','top_rank')}
                 p.update(mode=mode,historical=historical)
@@ -330,7 +330,7 @@ class Collector:
                 rooms_signature=canonical(sorted(set(public_room_ids))).decode()
                 prior_rooms=target.execute('SELECT value FROM meta WHERE key=?',(rooms_key,)).fetchone()
                 if prior_rooms is None or prior_rooms[0]!=rooms_signature:
-                    target.execute("DELETE FROM meta WHERE key IN ('cursor_autohost_pp_achievements_history','cursor_autohost_pp_achievements_mania_history','cursor_autohost_pp_achievements_catch_history')")
+                    target.execute("DELETE FROM meta WHERE key IN ('cursor_autohost_pp_achievements_history','cursor_autohost_pp_achievements_mania_history','cursor_autohost_pp_achievements_catch_history','cursor_autohost_pp_achievements_taiko_history')")
                     target.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',(rooms_key,rooms_signature))
                 added=self._achievements(source,target,profile,hidden,limit=limit,reviewed_rooms=public_room_ids)
                 if include_lobby_totals:
@@ -347,7 +347,7 @@ class Collector:
                         target.execute("INSERT INTO meta VALUES(?,?)",('history_cutoff_'+profile['consent_id'],str(cutoff)))
                         if exclude_unreviewed_players:
                             target.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('history_public_review_'+profile['consent_id'],canonical(sorted(reviewed)).decode()))
-                        for table,mode in (('autohost_lobby_time','standard'),('autohost_lobby_time_mania','mania'),('autohost_lobby_time_catch','catch')):
+                        for table,mode in (('autohost_lobby_time','standard'),('autohost_lobby_time_mania','mania'),('autohost_lobby_time_catch','catch'),('autohost_lobby_time_taiko','taiko')):
                             if not self._table(source,table):continue
                             for row in source.execute('SELECT * FROM '+table):
                                 if not provider_identity(row['user_id']):
@@ -375,7 +375,7 @@ class Collector:
                         added+=enqueued
                         target.execute('UPDATE history_baselines SET queued=1 WHERE consent_id=? AND source_key=?',(profile['consent_id'],pending['source_key']))
                 complete=True
-                for table in ('autohost_pp_achievements','autohost_pp_achievements_mania','autohost_pp_achievements_catch'):
+                for table in ('autohost_pp_achievements','autohost_pp_achievements_mania','autohost_pp_achievements_catch','autohost_pp_achievements_taiko'):
                     if not self._table(source,table):continue
                     maximum=source.execute('SELECT COALESCE(MAX(rowid),0) FROM '+table).fetchone()[0]
                     cursor=target.execute('SELECT value FROM meta WHERE key=?',('cursor_'+table+'_history',)).fetchone()
