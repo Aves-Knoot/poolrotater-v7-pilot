@@ -47,11 +47,13 @@ interruption failed before the new code was installed; it is retained and is not
 claimed as recovered. The accepted normal paths do not turn that failure into a
 supported automatic recovery.
 
-No matching source/runtime release, signed feed, compatible hub deployment,
-production rollout, owner Lobby 3 Taiko pilot, or actual gameplay observation
-has occurred. H and I health receipts verified synthetic Discord routing; actual
-Discord was not configured, so live Discord behavior is unverified. Do not treat
-catalog publication, source tests, or two normal installed paths alone as release
-deployment. See
+Matching source/runtime assets are published on GitHub, and signed pilot
+metadata45 offers the exact runtime to v7.3.0/v7.3.1/v7.3.2. The compatible hub,
+website and actual community Discord bridge are deployed; six wiki pages have
+normal verified revisions. Owner rollout is safely queued and occupied rooms
+continue; client installation, the selected owner Lobby3 Taiko pilot and actual
+gameplay remain unverified. H and I used synthetic Discord routing; the
+production bridge connection is separate live evidence, and Taiko room-specific
+presentation still needs the pilot. See
 [`TAIKO_RATINGS_RELEASE_PLAN.md`](TAIKO_RATINGS_RELEASE_PLAN.md) for the
 remaining release gates.

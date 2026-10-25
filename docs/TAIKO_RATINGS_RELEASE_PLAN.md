@@ -1,6 +1,6 @@
 # PoolRotater v7.3.3 ratings and Taiko release plan
 
-> R25 v7.3.3 passed normal installed automatic-upgrade acceptance on H (v7.3.0) and I (v7.3.2), 2 of 2. The unchanged validator checked all six evidence references for each path. A separate B pre-admission controller-interruption case failed before candidate code could be installed; it is a known legacy limitation, excluded from acceptance and disclosed for release. Proceed with the proven normal update path while retaining that exception. R25 is not yet published or deployed, and the full release goal remains incomplete.
+> R25 v7.3.3 passed normal installed automatic-upgrade acceptance on H (v7.3.0) and I (v7.3.2), 2 of 2. The unchanged validator checked all six evidence references for each path. A separate B pre-admission controller-interruption case failed before candidate code could be installed; it is a known legacy limitation, excluded from acceptance and disclosed for release. Proceed with the proven normal update path while retaining that exception. R25 is published on GitHub and the signed pilot feed; the compatible hub, actual Discord bridge and website are deployed. Safe client rollout and the selected owner L3 pilot remain in progress, so the full release goal is incomplete.
 
 ## Goal and acceptance rule
 
@@ -20,7 +20,7 @@ inventory, identity, booking, or ownership checks to force an update through.
 
 ## Current state
 
-- R25 is frozen at the runtime hash above with 324 payload files and 27 wheels;
+- R25 is frozen at runtime `45254e8a24bee3b4c86259a31528e3e06a11b54aa201afca54e63981f0e45a41` with 324 payload files and 27 wheels;
   storage and environment are unchanged. The source preflight confirms that
   the source files match the candidate.
 - H's exact v7.3.0 automatic-upgrade path is accepted using the six retained
@@ -39,11 +39,18 @@ inventory, identity, booking, or ownership checks to force an update through.
   controller interruption failed before the incoming candidate could run; that
   extra case is not accepted as recovery and remains a documented legacy limit.
   The release proceeds on the two validated normal paths with this exception
-  disclosed. Hub deployment, publication, owner pilot and final documentation
-  remain incomplete.
+  disclosed. GitHub/source/artifacts, compatible hub and actual Discord bridge,
+  website, signed feed and six wiki pages are published. Client adoption, the
+  owner pilot and final completion audit remain incomplete.
 - Catalog service publication 17 is complete and must not be replayed. Matching
-  R25 hub/catalog kits are prepared, but hub deployment, signed client offers,
-  owner/community rollout, and the selected owner L3 pilot remain pending.
+  R25 hub and website deployments are verified. Signed metadata sequence 45
+  offers the exact controller to v7.3.0/v7.3.1/v7.3.2. Owner operation
+  `83e0096d-6791-4a19-880f-549c72e71673` downloaded the full artifact and is
+  draining empty siblings while the occupied 4K room continues. Queued is not
+  installed. Both Xikeon and Strohm subsequently discovered, fully downloaded and queued
+  v7.3.3 through ordinary polling with no updater error or operator command.
+  Their installation is still pending safe boundaries; the selected owner L3
+  pilot remains pending the owner upgrade.
 - Historical broad and feature results are reused only for unchanged code.
   The loopback ratings component proof records verified replies in 5.078s and
   5.074s, plus same-event recovery after HTTP 503. It is not installed TLS,
@@ -163,15 +170,15 @@ supported path and disclose this specific limitation. The accepted paths include
 occupied rooms playing
 while empty siblings drain, active-booking protection, deliberately stopped
 rooms, valid configuration edits while waiting, interrupted-download resumption,
-and helper/controller interruption recovered only through supported
+and updater-helper interruption recovered only through supported
 transactions without duplicate room creation or repeated `MakeRoom` attempts.
 
 After each commit, verify registration, runtime, updater status, and actual
 running version agree. Verify network reporting, ratings, and statistics
 recover automatically; retain mixed-host-version compatibility throughout
 rollout. H and I health receipts verify synthetic Discord routing; actual
-Discord was not configured on either test host. Real Discord recovery and
-presentation remain to be checked during rollout. Preserve all
+Discord was not configured on either test host. The deployed production community bridge has a verified live Discord
+connection. Room-specific Taiko presentation remains to be checked in the pilot. Preserve all
 credentials/settings/history and room intent.
 Fix any reproduced path defect that would otherwise need operator rescue before
 release. Failed trials are not acceptance; retain their authority and do not replay
@@ -225,3 +232,28 @@ compatible hub/source/artifact/feed rollout is verified, intended host state is
 preserved, the pilot and presentation are verified, and required public
 documentation and final audit are updated. Continue autonomously until then;
 stop only for genuinely required human input or an unsafe unresolved condition.
+
+## Production checkpoint — 2026-10-25
+
+- Matching GitHub source/tag `75e694e781357942d3fc76a4d8650f5493368db8`
+  and eight remotely verified release assets are published as v7.3.3.
+- Compatible hub, activity publisher, booking portal and community Discord
+  bridge are deployed with protected before-images. The bridge dependency
+  closure was corrected centrally and actual connection verified; no client
+  runtime changed. Website deployment refreshed all four exporters and both
+  full 184,711-row display indexes.
+- Signed pilot metadata45/release34 preserves the trust root and prior release
+  descriptors. A first signing attempt refused before custody access because
+  historical SDK bytecode violated inventory; exact source was verified,
+  bytecode quarantined, no authority mutation proved, then publication succeeded.
+- Six wiki pages were committed through normal DokuWiki locks/revisions;
+  release, hosting and Taiko pages return HTTP200 without PHP errors.
+- Owner L3 is the explicitly selected pilot slot and is outside the enabled
+  booking allocation (room2). Recheck live capacity, ownership and leases before
+  opening it after the owner controller upgrade. Existing rooms/settings stay
+  preserved. No actual Taiko room or gameplay has yet been claimed.
+- Operational receipts are under `work/validation/taiko733/reports/`, including
+  `signed-feed-publication.json`, `r25-hub-cutover.json`,
+  `r25-website-deployment.json`, `r25-wiki-publication.json` and the original
+  requirement audit. The released source archive/tag remain immutable; this
+  documentation checkpoint does not modify the runtime artifact.
