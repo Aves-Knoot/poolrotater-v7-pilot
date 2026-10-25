@@ -1,3 +1,18 @@
+## Current checkpoint — Strohm diagnostic received; owner upgrade draining safely
+
+The user supplied Strohm’s collector JSON and explicitly asked to update the owner rooms and launch Taiko on L3. The former missing-collector blocker is resolved. The full release goal is active and incomplete. Do not mark it achieved from donor/publication receipts alone.
+
+Strohm’s unchanged configuration, complete profiles/projection steps, and six-mode catalog prewarm narrow the remaining failure to Standard catalog staging. The Standard-refresh journal is staging with no candidate/pending/after reference. The exact refusal remains hidden by the old generic error mapper. A real credential-free public HTTPS/TUF Standard039 download/validation passed in 5.358 seconds. One further same-operation guarded completion (22e64407…) still refused without startup or job changes. Do not repeat blindly. A new optional data request asks for filesystem free bytes and delivery-cache custody/counts; no raw credentials/config requested. All four Strohm slots remain known closed.
+
+The owner’s explicit empty maintenance request 04c3854b-e5bf-4c91-a339-27f60c7f7795 has closed empty Catch while occupied 4K continues. A reviewed coordinator is waiting for the same request’s complete receipt; it will not close occupied rooms. It uses the exact published stopped installer, quiescent ownership review/backup, a temporary systemd managed-reconciliation condition during catalog import, and pinned CA/bootstrap/all-six catalogs. Runtime/ownership/inventory checks remain intact. L3 will be configured/opened through normal managed operations after the upgrade is healthy. Check the live coordinator before doing overlapping lifecycle work.
+
+The exact published v7.3.3 runtime includes the diagnostic_logs.common.check_database fix for disappearing optional SQLite sidecars; missing primary databases still fail. Receipt: reports/r25-database-sidecar-fix-artifact-check.json.
+
+Xikeon’s automatic v7.3.3 upgrade already succeeded, with three running rooms and the reserved fourth stopped. Offline follow-up diagnostic improvements passed the affected checks and review; they are unpublished and are not presented as a fix for Strohm’s still-unidentified local staging refusal.
+
+Historical candidate ZIP revisions (46 files, 1,223,161,652 bytes) were individually SHA256-verified on the storage box before local removal. Location: /mnt/poolrotater-storagebox/development-archives/v733-candidate-revisions-20261025. Manifest and explanation remain under candidate/revisions and reports/candidate-revisions-offload-20261025.json. Current release artifacts remain local.
+
+
 # PoolRotater v7.3.3 ratings and Taiko release plan
 
 > Live rollout checkpoint: Xikeon automatically installed v7.3.3 and reports

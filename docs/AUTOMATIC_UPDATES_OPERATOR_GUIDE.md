@@ -36,5 +36,6 @@ receipts verify the Taiko catalog and the latest full Standard selection
 catalog (Standard content `03928b8f8f5999bd7e0e7517007319abe4f4294e63f821479b547dffc3c04af9`;
 Taiko content `71ececd64c6b8f3a34deed1008e0f80054c2e6de129add8a327ee2f3d3288f49`).
 The separate B failure is retained but not accepted. Catalog checks do not
-change an existing room's ruleset or intent. R25 has not been released, and this
-proof does not establish live Discord presentation or gameplay.
+change an existing room's ruleset or intent. R25 is published. Normal donor acceptance does not establish every live
+host upgrade or gameplay acceptance; see V7_3_3_TAIKO_RATINGS.md for the current
+production rollout hold and the unlaunched owner Taiko pilot.

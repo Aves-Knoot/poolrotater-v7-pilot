@@ -1,11 +1,10 @@
 # v7.3.3 R25: Taiko and ruleset-separated ratings
 
-> Live rollout checkpoint: Xikeon automatically installed v7.3.3 and reports
-> three running rooms, one deliberately stopped slot and no failure codes.
-> Strohm registered v7.3.3 but held at configuration preparation before startup;
-> a single guarded completion refused. Local read-only diagnostic output is
-> required. The owner remains on v7.3.2 with healthy Catch/4K rooms, and further
-> update checks temporarily paused. The L3 Taiko pilot is not yet launched.
+> Live rollout checkpoint: Xikeon automatically installed v7.3.3. Another
+> live host committed the runtime but its Standard archive transfer stopped at
+> roughly 94%; settings are unchanged and disk/cache checks pass. Its remote
+> completion admission still refuses before startup. The owner is draining at
+> empty boundaries; occupied 4K keeps playing. L3 Taiko has not yet launched.
 
 
 R25 technical acceptance passed both normal installed automatic-upgrade paths:
