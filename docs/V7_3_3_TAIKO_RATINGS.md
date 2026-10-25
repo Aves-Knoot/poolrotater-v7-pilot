@@ -1,5 +1,13 @@
 # v7.3.3 R25: Taiko and ruleset-separated ratings
 
+> Live rollout checkpoint: Xikeon automatically installed v7.3.3 and reports
+> three running rooms, one deliberately stopped slot and no failure codes.
+> Strohm registered v7.3.3 but held at configuration preparation before startup;
+> a single guarded completion refused. Local read-only diagnostic output is
+> required. The owner remains on v7.3.2 with healthy Catch/4K rooms, and further
+> update checks temporarily paused. The L3 Taiko pilot is not yet launched.
+
+
 R25 technical acceptance passed both normal installed automatic-upgrade paths:
 H from v7.3.0 and fresh I from v7.3.2 (2 of 2), including native commit and
 post-upgrade health. The runtime SHA-256 is
@@ -57,3 +65,14 @@ production bridge connection is separate live evidence, and Taiko room-specific
 presentation still needs the pilot. See
 [`TAIKO_RATINGS_RELEASE_PLAN.md`](TAIKO_RATINGS_RELEASE_PLAN.md) for the
 remaining release gates.
+
+## Live rollout under review
+
+On 2026-10-25 one live Loved/Standard host committed registration of the exact
+release but held at configuration preparation before startup. Its config hashes
+are unchanged. A guarded remote completion refused; the local preparation
+records are needed to identify the cause. This is not accepted as successful
+production rollout and is not the earlier pre-admission controller-fault case.
+The owner update is deferred, with the active 4K worker preserved. Keep held
+state intact and return the maintainer's read-only diagnostic output rather
+than reinstalling, clearing ownership or repeating startup.

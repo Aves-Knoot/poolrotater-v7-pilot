@@ -1,5 +1,13 @@
 # PoolRotater v7.3.3 ratings and Taiko release plan
 
+> Live rollout checkpoint: Xikeon automatically installed v7.3.3 and reports
+> three running rooms, one deliberately stopped slot and no failure codes.
+> Strohm registered v7.3.3 but held at configuration preparation before startup;
+> a single guarded completion refused. Local read-only diagnostic output is
+> required. The owner remains on v7.3.2 with healthy Catch/4K rooms, and further
+> update checks temporarily paused. The L3 Taiko pilot is not yet launched.
+
+
 > R25 v7.3.3 passed normal installed automatic-upgrade acceptance on H (v7.3.0) and I (v7.3.2), 2 of 2. The unchanged validator checked all six evidence references for each path. A separate B pre-admission controller-interruption case failed before candidate code could be installed; it is a known legacy limitation, excluded from acceptance and disclosed for release. Proceed with the proven normal update path while retaining that exception. R25 is published on GitHub and the signed pilot feed; the compatible hub, actual Discord bridge and website are deployed. Safe client rollout and the selected owner L3 pilot remain in progress, so the full release goal is incomplete.
 
 ## Goal and acceptance rule
@@ -257,3 +265,42 @@ stop only for genuinely required human input or an unsafe unresolved condition.
   `r25-website-deployment.json`, `r25-wiki-publication.json` and the original
   requirement audit. The released source archive/tag remain immutable; this
   documentation checkpoint does not modify the runtime artifact.
+
+## Live rollout hold — 2026-10-25
+
+Strohm's ordinary update registered the exact v7.3.3 runtime and committed its
+native upgrade, then held at configuration preparation before any startup.
+Independent diagnostics report unchanged configuration hashes; the specific
+preparation guard is not exposed by the old remote protocol. One guarded native
+completion request refused without changing the job or attempting startup.
+This is a new live acceptance failure, distinct from the disclosed pre-admission
+controller-interruption case; its cause is not yet established.
+
+The maintainer requested a tested stdlib-only read-only collector's JSON output
+from Strohm. No reinstall, OAuth, ownership clear, journal edits or repeated
+startup is authorized as a workaround. The collector excludes secret values
+and does not import the installed application, call services/network/DBs or
+write instance state. Its six focused safety tests passed, and it handled the
+owner's real 29-file configuration inventory without changes.
+
+The owner's never-admitted update was canceled through the exact staged
+protected native entry. Its occupied 4K identity stayed unchanged; Catch's
+canceled-drain restoration is being completed through that same native code.
+The owner's update polls remain temporarily paused pending diagnosis. Xikeon's
+last report still shows a safe queued update, not installation. The publisher
+forbids channel sequence rollback and changing a channel would not cancel
+already pinned operations; no authority or transaction shortcut is used.
+
+The full goal remains incomplete: diagnose this new hold, validate its repair,
+complete safe owner/community deployment and the selected L3 Taiko pilot, then
+finish the requirement audit. Requested local read-only evidence is currently
+required before a justified fix or another completion attempt.
+
+Owner cancellation follow-up: Catch reopened through the native deterministic
+restore operation; the active 4K worker was not stopped and later performed its
+logged ordinary 7200-second refresh only after the room emptied. Both rooms
+are healthy, unlocked and positively owned; slots2/3 remain off. The native
+cancellation-restoration audit flag nevertheless requires review and was not
+modified. Preserve its receipts for the next hardening fix. Managed and
+recovery timers are restored; only ordinary update polling remains temporarily
+paused, with its original enablement recorded for restoration.
