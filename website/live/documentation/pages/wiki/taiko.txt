@@ -1,6 +1,6 @@
 ====== Taiko rooms ======
 
-v7.3.3 is published on GitHub. Its normal installed upgrade acceptance passed on v7.3.0 H and v7.3.2 I (2 of 2). A separate extra B pre-admission controller-interruption case failed before incoming code could run and remains unaccepted; this limitation is documented. The signed pilot feed now offers v7.3.3 to supported existing hosts; safe automatic rollout is underway.
+v7.3.3 is published on GitHub. Its normal installed upgrade acceptance passed on v7.3.0 H and v7.3.2 I (2 of 2). A separate extra B pre-admission controller-interruption case failed before incoming code could run and remains unaccepted; this limitation is documented. The owner, Xikeon and Strohm are now running the exact published v7.3.3 runtime; their intended stopped slots remain stopped.
 
 ===== Fixed and automatic rooms =====
 
@@ -18,4 +18,8 @@ Taiko good/bad ratings and personal statistics use a separate ruleset identity f
 
 The signed offer is enabled. Supported existing hosts use their ordinary updater; no reinstall, new OAuth authorization or new operator command is required. Occupied rooms continue while empty siblings drain. Controller installation waits until all configured rooms are empty and active bookings are clear; deliberately stopped slots remain stopped. Both normal installed R25 tests verified preservation and post-upgrade health. The separate extra B pre-admission controller-interruption case failed and remains unaccepted; it is not claimed as recovered.
 
-The community Discord bridge and website are deployed; website timing is approximate, and Discord cards do not show map progress. The live Discord connection is verified, but no owner Lobby 3 Taiko pilot or actual Taiko gameplay is claimed.
+The owner’s Lobby 3 Taiko pilot is running. Startup, chat access, qualified map selection, clean ownership, live-page labels and the actual Discord status card have been verified. Live worker events and saved match history now verify three completed, scored Taiko matches on Lobby 3, plus one earlier aborted match. This confirms real play, scoring and map progression; it does not claim every command or edge case has been exercised. Catch remains on owner L1, Mania 4K on L4, and L2 is reserved. See [[lobbies:taiko|the Taiko room guide]] and [[status:start|Live Lobbies]] for current room links. Website timing is approximate; Discord cards show artwork, maps, settings and players without map progress.
+
+===== Completed catalog recovery =====
+
+Strohm resumed a retained partial Standard download and completed the same held transaction using its already-installed v7.3.3 native entry. Its older independent recovery helper was still pinned to v7.2.6 and refused the newer contract before dispatch. Settings and intended room states were retained; no reinstall, new OAuth setup or ownership clear was used. A bounded-transfer/recovery-pin follow-up is being validated separately and is not yet published.

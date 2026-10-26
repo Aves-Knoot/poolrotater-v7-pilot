@@ -2,6 +2,8 @@
 
 PoolRotater supports **osu!taiko** with fixed or automatic difficulty. The owner's **Lobby 3** currently runs the automatic Taiko pilot on v7.3.3. Use [[status:start#room3|Live Lobbies]] for the current map, range, settings and Join button; room IDs can change after maintenance.
 
+Actual Taiko play and scoring are verified: live events and saved match history record three completed, scored matches and one earlier aborted match on October 26 UTC. This does not claim every player command or recovery edge case has been exercised.
+
 ===== Maps and settings =====
 
 The complete prepared Taiko catalog contains 37,635 Ranked/Approved charts: 37,447 native charts and 188 officially qualified conversions. Selection uses Taiko difficulty, length limits, exclusions, song spacing and recent-map history. The room shows the currently eligible pool; it does not play every catalog row indiscriminately.

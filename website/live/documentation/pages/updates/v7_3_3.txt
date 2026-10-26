@@ -4,7 +4,7 @@
 
 v7.3.3 is running on the owner host and both community hosts. The owner now runs Catch on Lobby 1, a Taiko automatic-difficulty pilot on Lobby 3, and Mania 4K on Lobby 4. Lobby 2 remains reserved/private and stopped. Existing settings were preserved; the owner intentionally changed only Lobby 3's mode and activated the new signed catalog bindings. Current links and settings are on [[status:start|Live Lobbies]].
 
-The Taiko pilot's startup, chat access, map selection, queue, website artwork/settings and Discord panel are verified. Actual Taiko player gameplay has not yet been observed. Its NoMod normal-speed catalog and the latest Standard catalog are activated.
+The Taiko pilot's startup, chat access, map selection, queue, website artwork/settings and Discord panel are verified. Live event logs and saved match history now verify three completed, scored Taiko matches and one earlier aborted match (October 26 UTC). This establishes real play and scoring, without claiming every command or edge case has been tested. Its NoMod normal-speed catalog and the latest Standard catalog are activated.
 
 One community host's Standard transfer stopped at about 94%. Its configuration remained unchanged, but its independently pinned v7.2.6 recovery reader could not dispatch the newer controller contract. Completion through the already-installed v7.3.3 native entry resumed the verified partial download and restored its two intended rooms. Reporting, ratings and updater status are healthy. Bounded transfer retries and recovery-pin refresh are being validated for a follow-up release; those new changes are not yet published. The separate earlier pre-admission interruption test remains a documented limitation.
 
@@ -23,4 +23,4 @@ H and I accepted R25 receipts verify Taiko content ''71ececd64c6b8f3a34deed1008e
 
 Both normal installed paths verified settings, catalog references and intended running/stopped rooms while exercising booking protection, a waiting configuration edit, interrupted-download resume and automatic helper retry. Controller installation waits until all configured rooms are empty and bookings clear; empty siblings can drain separately and off slots remain stopped. The separate extra B pre-admission controller-interruption case failed and remains unaccepted; it is not claimed as recovered.
 
-The hub, community Discord bridge and website deployments are verified. The Discord connection is live, but no owner Lobby 3 pilot or actual Taiko gameplay has been verified. Signed-feed delivery is active; downloaded or queued does not yet mean installed.
+The hub, community Discord bridge and website deployments are verified. The Discord connection and owner Lobby 3 Taiko pilot are live, and actual Taiko play and scoring have been verified. Signed-feed delivery is active; downloaded or queued does not yet mean installed.

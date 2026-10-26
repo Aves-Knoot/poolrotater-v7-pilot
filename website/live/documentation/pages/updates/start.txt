@@ -18,16 +18,16 @@ Shared-controller updates wait until all configured rooms on each host are empty
 
 ===== v7.3.3 release =====
 
-**v7.3.3 is published on GitHub.** Its normal installed paths passed on v7.3.0 H and v7.3.2 I (2 of 2). A separate extra B pre-admission controller-interruption case failed before incoming code could run and remains unaccepted; it is documented as a limitation. The signed pilot feed now offers the release to supported existing hosts; safe automatic rollout is underway.
+**v7.3.3 is published on GitHub.** Its normal installed paths passed on v7.3.0 H and v7.3.2 I (2 of 2). A separate extra B pre-admission controller-interruption case failed before incoming code could run and remains unaccepted; it is documented as a limitation. The owner, Xikeon and Strohm have installed the exact published release, with intended stopped slots preserved.
 
 This release includes fixed/automatic Taiko presets using qualified normal-speed NoMod difficulty; separate Taiko rating/statistics identity; bounded ratings retries and verified shared-count replies; and a full prepared Taiko catalog. The selected catalog contains 37,635 Ranked/Approved charts (37,447 native and 188 officially qualified conversions); player research tables are not shipped. H and I receipts confirm the Taiko and latest full Standard catalog references on both normal installed paths.
 
-Controller updates preserve occupied rooms and deliberately stopped slots. Empty siblings may drain one at a time, while controller installation waits until every configured room is empty and active bookings are clear. This behavior and settings preservation passed on both normal paths; the separate extra B pre-admission controller-interruption case failed and remains unaccepted. The hub, community Discord bridge and website deployments are verified. The Discord connection is live; no owner Lobby 3 Taiko pilot or actual Taiko gameplay is claimed. Signed-feed delivery is active; downloaded or queued does not yet mean installed.
+Controller updates preserve occupied rooms and deliberately stopped slots. Empty siblings may drain one at a time, while controller installation waits until every configured room is empty and active bookings are clear. This behavior and settings preservation passed on both normal paths; the separate extra B pre-admission controller-interruption case failed and remains unaccepted. The hub, community Discord bridge and website deployments are verified. The Discord connection and owner Lobby 3 Taiko pilot are live. Live events and saved history verify three completed, scored Taiko matches and one earlier aborted match (October 26 UTC). Signed-feed delivery is active; downloaded or queued does not yet mean installed.
 
 ===== Recent patches =====
 
 ^ Version ^ Main changes ^ Availability ^
-| [[updates:v7_3_3|v7.3.3]] | Fixed/automatic Taiko, separated ratings/statistics, prepared Taiko catalog | Published on GitHub and the signed pilot feed; safe rollout underway |
+| [[updates:v7_3_3|v7.3.3]] | Fixed/automatic Taiko, separated ratings/statistics, prepared Taiko catalog | Published on GitHub and the signed pilot feed; installed on owner, Xikeon and Strohm |
 | [[updates:v7_2_13|v7.2.13]] | Chat-denial isolation, Discord relay lifecycle and hub snapshot repair | Published; automatic safe controller rollout from v7.2.12 |
 | [[updates:v7_2_12|v7.2.12]] | Shared stats/private totals and signed direct safe-update admission | Published; affected older hosts need one-time queue activation |
 | [[updates:v7_2_11|v7.2.11]] | Root/service identity repair for controller queue | Superseded by v7.2.12 activation |
