@@ -1,6 +1,43 @@
 /* Live headline counts are partial observations; historical gaps stay intact. */
 (function(global){
   const sources={owner:null,community:null};
+  function ownerMode(room){
+    room=room&&typeof room==='object'?room:{};const settings=room.settings&&typeof room.settings==='object'?room.settings:{};
+    const type=room.type;
+    if(type==='mania_7k'||type==='mania_4k'||['standard','taiko','catch'].includes(type))return type;
+    const label=String(room.label||'').toLowerCase(),ruleset=settings.ruleset_id!==undefined?settings.ruleset_id:room.ruleset_id;
+    if(Number.isInteger(ruleset)&&ruleset>=0&&ruleset<=3){if(ruleset===0)return'standard';if(ruleset===1)return'taiko';if(ruleset===2)return'catch';const keys=settings.keys||room.keys;if(keys===7)return'mania_7k';if(keys===4)return'mania_4k';return /\b7k\b|seven[ -]?key/.test(label)?'mania_7k':/\b4k\b|four[ -]?key/.test(label)?'mania_4k':'mania';}
+    const preset=room.preset||settings.preset;
+    if(['standard-auto','standard-fixed','standard-loved'].includes(preset))return'standard';
+    if(preset==='catch-fixed')return'catch';if(['taiko-auto','taiko-fixed'].includes(preset))return'taiko';
+    if(preset==='mania-7k')return'mania_7k';if(preset==='mania-4k')return'mania_4k';
+    if(type==='mania'||type==='mania_other'){const keys=settings.keys||room.keys;if(keys===7)return'mania_7k';if(keys===4)return'mania_4k';}
+    if(/\btaiko\b/.test(label))return'taiko';if(/\bcatch\b/.test(label))return'catch';
+    if(/\b7k\b|seven[ -]?key/.test(label))return'mania_7k';if(/\b4k\b|four[ -]?key/.test(label))return'mania_4k';
+    if(/\bstandard\b/.test(label))return'standard';if(type==='mania'||type==='mania_other')return'mania';return null;
+  }
+  function ownerInfo(room,slot){
+    room=room&&typeof room==='object'?room:{};const settings=room.settings&&typeof room.settings==='object'?room.settings:{};
+    const mode=ownerMode(room),preset=room.preset||settings.preset;let label='Lobby '+slot,title=label,displayMode='Mode unavailable',guide='start',badge='LOBBY '+slot,symbol='circle',description='Mode unavailable for Lobby '+slot+'.',category='unknown';
+    if(mode==='taiko'){label='osu!taiko';title='Taiko native and converted NM';displayMode='osu!taiko';guide='taiko';badge='TAIKO';description='osu!taiko normal-speed NM selection, using native charts and qualified conversions.';category='taiko';}
+    else if(mode==='catch'){label='osu!catch';title='Native Catch difficulty';displayMode='osu!catch';guide='catch';badge='CATCH';description='Native osu!catch NM charts with fixed difficulty and player votes.';category='catch';}
+    else if(mode==='mania_7k'||mode==='mania_4k'||mode==='mania'){
+      category='mania';displayMode='osu!mania';symbol='keys';const keys=mode==='mania_7k'?7:mode==='mania_4k'?4:null;
+      label=keys===7?'osu!mania · 7K':keys===4?'osu!mania · 4K':'osu!mania';title=keys===7?'Seven-key sessions':keys===4?'Four-key sessions':'Mania sessions';guide=keys===7?'mania_7k':keys===4?'mania_4k':'start';badge=keys===7?'7K':keys===4?'4K':'MANIA';description=keys===7?'Seven-key osu!mania sessions.':keys===4?'Four-key osu!mania sessions.':'osu!mania sessions; key count unavailable.';
+    }else if(mode==='standard'){
+      category='standard';displayMode='osu!standard';const loved=typeof settings.loved_mode==='boolean'?settings.loved_mode:preset==='standard-loved';let automatic=settings.auto_difficulty;if(typeof automatic!=='boolean')automatic=preset==='standard-auto'?true:preset==='standard-fixed'?false:null;
+      if(loved){label='Standard · Loved';title='Standard Loved';guide='standard_loved';badge='LOVED';}
+      else if(automatic===true){label='Standard · Auto';title='Automatic difficulty';guide='standard_auto';badge='AUTO';}
+      else if(automatic===false){label='Standard · Fixed';title='Vote on difficulty';guide='standard_fixed';badge='FIXED';}
+      else{label='osu!standard';title='Standard rooms';guide='start';badge='STD';}
+      description='osu!standard multiplayer with the current room difficulty settings.';
+    }
+    const loved=typeof settings.loved_mode==='boolean'?settings.loved_mode:preset==='standard-loved';let automatic=settings.auto_difficulty;if(typeof automatic!=='boolean')automatic=preset==='standard-auto'?true:preset==='standard-fixed'?false:null;
+    const suffix=mode==='taiko'?'Taiko':mode==='catch'?'Catch':mode==='mania_7k'?'Mania 7K':mode==='mania_4k'?'Mania 4K':mode==='mania'?'Mania':mode==='standard'?(loved?'Standard Loved':automatic===true?'Standard Auto':automatic===false?'Standard Fixed':'Standard'):'';
+    const history='Lobby '+slot+(suffix?' · '+suffix:'');
+    return {mode:mode,displayMode:displayMode,label:label,title:title,guide:guide,badge:badge,symbol:symbol,description:description,category:category,history:history};
+  }
+  global.prLiveOwnerRoomInfo=ownerInfo;
   const fresh=(data,now)=>data&&data.available===true&&Array.isArray(data.rooms)&&Number.isFinite(data.generated_at)&&Number.isFinite(data.expires_at)&&data.generated_at<=now+30&&data.expires_at>now&&data.expires_at>data.generated_at;
   const countable=r=>r&&Number.isSafeInteger(r.room_id)&&r.room_id>0&&Number.isInteger(r.players)&&r.players>=0&&r.players<=128;
   global.prLiveOccupancyUpdate=function(kind,value){
@@ -60,6 +97,7 @@
   function update(card,room,fresh,now){
     room=room||{};const state=fresh&&states[room.state]?room.state:'STALE',map=fresh?(room.current_map||{}):{},p=timing(room,fresh,now),community=room.ownership==='community';
     card.dataset.state=state;card.dataset.nominalSpeed=String(Boolean(p&&p.nominal_speed));card.dataset.start=p?p.started_at:0;card.dataset.duration=p?p.duration_seconds:0;card.dataset.map=String(Boolean(map.title||map.label));
+    if(!community&&global.prLiveOwnerRoomInfo){const match=/^room([1-4])$/.exec(String(room.alias||card.dataset.npRoom||'')),slot=match?Number(match[1]):null;if(slot){const info=global.prLiveOwnerRoomInfo(room,slot);put(card,'.pr-np-room',info.label);}}
     put(card,'.pr-np-people',fresh&&Number.isInteger(room.players)&&room.players>=0&&room.players<=128?room.players+' in room':'—');
     const title=String(map.title||map.label||(state==='OFFLINE'?'Room is offline':state==='STALE'?'Status temporarily unavailable':'Waiting for the next map')).slice(0,160),link=card.querySelector('.pr-np-title');
     link.textContent=title;link.title=title;if(validId(map.beatmap_id))link.href='https://osu.ppy.sh/beatmaps/'+map.beatmap_id;else link.removeAttribute('href');
@@ -547,11 +585,12 @@ jQuery(function(){
 (function () {
     'use strict';
     function init() {
-        var labels = ['Standard automatic', 'Standard fixed', 'Mania 7K', 'Mania 4K'];
+        var labels = ['Lobby 1', 'Lobby 2', 'Lobby 3', 'Lobby 4'];
         var phases = { IDLE: 'Waiting', STARTING: 'Starting', PLAYING: 'Playing', SCORING: 'Between maps', OFFLINE: 'Offline', STALE: 'Status unavailable' };
         var sidebar = document.querySelector('[data-status-sidebar]');
         var stats = document.querySelector('[data-statistics]');
         var live = document.querySelector('[data-status-page]');
+        if(live)labels=Array.from({length:4},function(_,i){var h=live.querySelector('[data-history-label="'+(i+1)+'"]');return h?h.textContent.trim():'Lobby '+(i+1);});
         var activity = null;
         var lastRefresh = 0;
         var statsRequest = null;
@@ -776,6 +815,12 @@ jQuery(function(){
         function dashboard(data,valid) {
             var live=document.querySelector('[data-status-page]');if(!live)return;
             var rooms=valid?data.rooms:[],service=valid?data.service||{}:{};
+            function roomForSlot(slot){return rooms.find(function(r){return r.alias==='room'+slot;})||null;}
+            var priorLabels=labels.join('\n');
+            labels=Array.from({length:4},function(_,i){var slot=i+1,room=roomForSlot(slot),info=window.prLiveOwnerRoomInfo?window.prLiveOwnerRoomInfo(room,slot):{history:'Lobby '+slot};return info.history;});
+            var labelsChanged=priorLabels!==labels.join('\n');
+            labels.forEach(function(label,i){var heading=live.querySelector('[data-history-label="'+(i+1)+'"]');if(heading){var icon=heading.querySelector('i');heading.replaceChildren(...(icon?[icon,document.createTextNode(label)]:[document.createTextNode(label)]));}var th=live.querySelector('[data-history-slot="'+(i+1)+'"]');if(th)th.textContent=label;});
+            live.querySelectorAll('.pr-dash-room').forEach(function(article){var slot=Number(article.id.slice(-1)),room=roomForSlot(slot),info=window.prLiveOwnerRoomInfo?window.prLiveOwnerRoomInfo(room,slot):null;if(!info)return;article.dataset.roomType=info.category;text(article,'[data-room-description]',info.description);var guide=article.querySelector('[data-room-guide]');if(guide){var url=new URL(guide.href,location.href);url.searchParams.set('id','lobbies:'+info.guide);guide.href=url.href;}});
             function metric(key,value){text(live,'[data-live-metric="'+key+'"]',value);}
             window.prLiveOccupancyUpdate('owner',valid?data:null);
             var peak=valid?data.peak_players:null;
@@ -800,6 +845,7 @@ jQuery(function(){
                 text(article,'[data-np-stars]',Number.isFinite(map.stars)?map.stars.toFixed(2)+'★':'Difficulty unknown');
                 text(article,'[data-np-length]',Number.isFinite(map.total_length)?clock(map.total_length):'Length unknown');
             });
+            if(labelsChanged)graphs();
         }
         function update(data) {
             var valid=fresh(data); if (valid && last && data.generated_at < last.generated_at) return;
@@ -864,9 +910,12 @@ jQuery(function(){
             var counts=list.map(function(r){return r.players;});
             window.prLiveOccupancyUpdate('owner',valid?data:null);
             home.querySelectorAll('[data-home-room]').forEach(function(card){
-                var room=list.find(function(r){return r.alias===card.dataset.homeRoom;})||{},state=phases[room.state]?room.state:'STALE';
+                var room=list.find(function(r){return r.alias===card.dataset.homeRoom;})||{},state=phases[room.state]?room.state:'STALE',slot=Number(card.dataset.homeRoom.slice(-1)),info=window.prLiveOwnerRoomInfo(room,slot);
+                var mode=card.querySelector('[data-home-mode]');if(mode)mode.replaceChildren(document.createTextNode(info.displayMode+' '),Object.assign(document.createElement('b'),{textContent:info.badge}));
+                var heading=card.querySelector('[data-home-guide]');if(heading){heading.textContent=info.title||info.label;var url=new URL(heading.href,location.href);url.searchParams.set('id','lobbies:'+info.guide);heading.href=url.href;}
+                card.dataset.roomType=info.category;var icon=card.querySelector('.rh-mode-icon');if(icon){icon.className='rh-mode-icon rh-icon-'+info.symbol;icon.replaceChildren(...Array.from({length:info.symbol==='circle'?1:4},function(){return document.createElement('i');}));}
                 put(card,'[data-home-phase]',phases[state]);put(card,'[data-home-count]',Number.isInteger(room.players)&&room.players>=0?room.players+(room.players===1?' person':' people'):'Count unavailable');
-                var join=card.querySelector('.pr-home-join'),browser=card.querySelector('.pr-home-browser');
+                var join=card.querySelector('.pr-home-join'),browser=card.querySelector('.pr-home-browser');if(join)join.setAttribute('aria-label','Join '+info.displayMode+' '+info.badge+' in osu!');var browserLabel=browser&&browser.querySelector('.a11y');if(browserLabel)browserLabel.textContent=' for '+info.displayMode+' '+info.badge+' (opens a new tab)';
                 if(Number.isSafeInteger(room.room_id)&&room.room_id>0&&state!=='OFFLINE'&&state!=='STALE'){
                     join.href='osu://room/'+room.room_id;join.removeAttribute('aria-disabled');browser.href='https://poolrotator-91-107-237-182.nip.io/room/'+room.room_id;browser.hidden=false;
                 }else{join.removeAttribute('href');join.setAttribute('aria-disabled','true');browser.removeAttribute('href');browser.hidden=true;}

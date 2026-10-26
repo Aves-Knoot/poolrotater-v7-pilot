@@ -26,7 +26,27 @@ function prHomeReleases($text = null) {
     return array_values($out);
 }
 
+function prHomeRoomInfo($room,$slot) {
+    $mode=prLiveRoomMode($room);$settings=is_array($room['settings']??null)?$room['settings']:[];
+    $preset=$room['preset']??$settings['preset']??null;$slot=max(1,min(4,(int)$slot));
+    if($mode==='taiko')return ['mode'=>'osu!taiko','title'=>'Taiko native and converted NM','badge'=>'TAIKO','guide'=>'taiko','symbol'=>'circle'];
+    if($mode==='catch')return ['mode'=>'osu!catch','title'=>'Native Catch difficulty','badge'=>'CATCH','guide'=>'catch','symbol'=>'circle'];
+    if($mode==='mania_7k')return ['mode'=>'osu!mania','title'=>'Seven-key sessions','badge'=>'7K','guide'=>'mania_7k','symbol'=>'keys'];
+    if($mode==='mania_4k')return ['mode'=>'osu!mania','title'=>'Four-key sessions','badge'=>'4K','guide'=>'mania_4k','symbol'=>'keys'];
+    if($mode==='mania')return ['mode'=>'osu!mania','title'=>'Mania sessions','badge'=>'MANIA','guide'=>'start','symbol'=>'keys'];
+    if($mode==='standard'){
+        $loved=is_bool($settings['loved_mode']??null)?$settings['loved_mode']:$preset==='standard-loved';
+        $auto=$settings['auto_difficulty']??null;if(!is_bool($auto))$auto=$preset==='standard-auto'?true:($preset==='standard-fixed'?false:null);
+        if($loved)return ['mode'=>'osu!standard','title'=>'Standard Loved','badge'=>'LOVED','guide'=>'standard_loved','symbol'=>'circle'];
+        if($auto===true)return ['mode'=>'osu!standard','title'=>'Automatic difficulty','badge'=>'AUTO','guide'=>'standard_auto','symbol'=>'circle'];
+        if($auto===false)return ['mode'=>'osu!standard','title'=>'Vote on difficulty','badge'=>'FIXED','guide'=>'standard_fixed','symbol'=>'circle'];
+        return ['mode'=>'osu!standard','title'=>'Standard rooms','badge'=>'STD','guide'=>'start','symbol'=>'circle'];
+    }
+    return ['mode'=>'Mode unavailable','title'=>'Lobby '.$slot,'badge'=>'LOBBY '.$slot,'guide'=>'start','symbol'=>'circle'];
+}
+
 function prHomePage($status = null, $statistics = null, $releases = null) {
+    require_once __DIR__.'/presentation.php';
     $status = $status ?? prAnalyticsData('status');
     $summary = prHomeStatsSummary($statistics ?? prAnalyticsData('statistics'));
     $fresh = prAnalyticsFresh($status) && !empty($status['available']);
@@ -38,25 +58,16 @@ function prHomePage($status = null, $statistics = null, $releases = null) {
     $countKnown = count($counts) === 4 && count(array_filter($counts, fn($n)=>is_int($n) && $n >= 0)) === 4;
     $people = $networkPeople===null ? '—' : prAnalyticsNumber($networkPeople);
     echo '<div class="pr-home pr-rhythm" data-home data-server-now="'.time().'"><section class="rh-stage" aria-labelledby="pr-home-title"><div class="rh-intro"><div class="rh-brand">PoolRotater <span>the player wiki</span></div><h1 id="pr-home-title">Just one<br><em>more map.</em></h1><p>Circles, fruit, or keys. Find your next round.<br>Pick a room. We’ll handle the rotation.</p><a class="rh-first" href="'.hsc(wl('guides:first_session')).'">First time here? <span>Start with the basics ↗</span></a><svg class="rh-playfield" viewBox="0 0 320 158" aria-hidden="true" focusable="false"><path d="M50 92Q107 26 162 68T267 65" fill="none" stroke="#ff8ebe" stroke-opacity=".14" stroke-width="27" stroke-linecap="round"/><path d="M50 92Q107 26 162 68T267 65" fill="none" stroke="#ffacd0" stroke-opacity=".38" stroke-width="2" stroke-dasharray="3 7"/><g class="rh-approach"><circle cx="50" cy="92" r="43" fill="none" stroke="#ff8ebe" stroke-width="2"/></g><g fill="#463046" stroke="#ffacd0" stroke-width="3"><circle cx="50" cy="92" r="28"/><circle cx="162" cy="68" r="28"/><circle cx="267" cy="65" r="28"/></g><g fill="white" text-anchor="middle" font-size="22" font-family="sans-serif" font-weight="600"><text x="50" y="100">1</text><text x="162" y="76">2</text><text x="267" y="73">3</text></g><g fill="#ff8ebe"><circle cx="88" cy="46" r="3"/><circle cx="219" cy="113" r="3"/><circle cx="288" cy="120" r="2"/></g></svg></div><div class="rh-selector" id="choose_your_room"><div class="rh-selector-head"><h2>Room select</h2><a href="'.hsc(wl('lobbies:start')).'">Compare rooms ↗</a></div><div class="rh-rooms">';
-    $choices = [
-        ['room1','standard_auto','osu!standard','Automatic difficulty','AUTO','circle'],
-        ['room2','standard_fixed','osu!standard','Vote on difficulty','FIXED','circle'],
-        ['room3','mania_7k','osu!mania','Seven-key sessions','7K','keys'],
-        ['room4','mania_4k','osu!mania','Four-key sessions','4K','keys'],
-    ];
-    foreach ($choices as [$alias,$guide,$mode,$title,$badge,$symbol]) {
+    foreach ([1,2,3,4] as $slot) {
+        $alias='room'.$slot;
         $room = []; foreach ($rooms as $candidate) if (($candidate['alias'] ?? '') === $alias) $room = $candidate;
-        $ruleset=$room['settings']['ruleset_id']??$room['ruleset_id']??null;
-        $type=$room['type']??([0=>'standard',1=>'taiko',2=>'catch',3=>'mania'][$ruleset]??null);
-        if ($type === 'catch') { $guide='catch'; $mode='osu!catch'; $title='Fixed Catch difficulty'; $badge='CATCH'; $symbol='circle'; }
-        elseif ($type === 'taiko') { $guide='taiko'; $mode='osu!taiko'; $title='Taiko native and converted NM'; $badge='TAIKO'; $symbol='circle'; }
+        $info=prHomeRoomInfo($room,$slot);$guide=$info['guide'];$mode=$info['mode'];$title=$info['title'];$badge=$info['badge'];$symbol=$info['symbol'];
         $state = $room['state'] ?? 'STALE'; $id = $room['room_id'] ?? null;
         $joinable = is_int($id) && $id > 0 && !in_array($state,['OFFLINE','STALE'],true);
         $players = is_int($room['players'] ?? null) && $room['players'] >= 0 ? $room['players'].($room['players'] === 1 ? ' person' : ' people') : 'Count unavailable';
-        echo '<article class="pr-home-room rh-room" data-home-room="'.$alias.'"><div class="rh-mode-icon rh-icon-'.$symbol.'" aria-hidden="true">'.($symbol==='circle'?'<i></i>':'<i></i><i></i><i></i><i></i>').'</div><div class="rh-room-info"><span class="rh-mode">'.$mode.' <b>'.$badge.'</b></span><h3><a href="'.hsc(wl('lobbies:'.$guide)).'">'.hsc($title).'</a></h3><div class="rh-room-meta"><span data-home-phase>'.hsc(prAnalyticsPhase($state)).'</span><span data-home-count>'.hsc($players).'</span></div></div><div class="rh-room-actions"><a class="pr-home-join"'.($joinable?' href="osu://room/'.$id.'"':' aria-disabled="true"').' aria-label="Join '.hsc($mode.' '.$badge).' in osu!">Join <span aria-hidden="true">↗</span></a><a class="pr-home-browser"'.($joinable?' href="https://poolrotator-91-107-237-182.nip.io/room/'.$id.'"':' hidden').' target="_blank" rel="noopener noreferrer">Browser<span class="a11y"> for '.hsc($mode.' '.$badge).' (opens a new tab)</span></a></div></article>';
+        echo '<article class="pr-home-room rh-room" data-home-room="'.$alias.'"><div class="rh-mode-icon rh-icon-'.$symbol.'" aria-hidden="true">'.($symbol==='circle'?'<i></i>':'<i></i><i></i><i></i><i></i>').'</div><div class="rh-room-info"><span class="rh-mode" data-home-mode>'.hsc($mode).' <b data-home-badge>'.hsc($badge).'</b></span><h3><a data-home-guide href="'.hsc(wl('lobbies:'.$guide)).'">'.hsc($title).'</a></h3><div class="rh-room-meta"><span data-home-phase>'.hsc(prAnalyticsPhase($state)).'</span><span data-home-count>'.hsc($players).'</span></div></div><div class="rh-room-actions"><a class="pr-home-join"'.($joinable?' href="osu://room/'.$id.'"':' aria-disabled="true"').' aria-label="Join '.hsc($mode.' '.$badge).' in osu!">Join <span aria-hidden="true">↗</span></a><a class="pr-home-browser"'.($joinable?' href="https://poolrotator-91-107-237-182.nip.io/room/'.$id.'"':' hidden').' target="_blank" rel="noopener noreferrer">Browser<span class="a11y"> for '.hsc($mode.' '.$badge).' (opens a new tab)</span></a></div></article>';
     }
     echo '</div></div>';
-    require_once __DIR__.'/presentation.php';
     echo '<div class="pr-home-live-grid" aria-label="Owner live maps">';
     foreach($status['rooms']??[] as $room)echo prLiveCard($room,$fresh,true);
     echo '</div><div class="rh-presence"><span><i aria-hidden="true"></i><strong data-home-people>'.$people.'</strong> people in public rooms</span><a href="'.hsc(wl('status:start')).'">Live maps & queues →</a></div></section><div class="rh-utility"><span>Lobby chat is your remote.</span><a href="'.hsc(wl('commands:start')).'">Command reference</a><a href="'.hsc(wl('troubleshooting:start')).'">Stuck? Find help</a></div>';

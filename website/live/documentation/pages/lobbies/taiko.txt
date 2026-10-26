@@ -1,0 +1,17 @@
+====== Taiko lobbies ======
+
+PoolRotater supports **osu!taiko** with fixed or automatic difficulty. The owner's **Lobby 3** currently runs the automatic Taiko pilot on v7.3.3. Use [[status:start#room3|Live Lobbies]] for the current map, range, settings and Join button; room IDs can change after maintenance.
+
+===== Maps and settings =====
+
+The complete prepared Taiko catalog contains 37,635 Ranked/Approved charts: 37,447 native charts and 188 officially qualified conversions. Selection uses Taiko difficulty, length limits, exclusions, song spacing and recent-map history. The room shows the currently eligible pool; it does not play every catalog row indiscriminately.
+
+This release supports **NoMod at normal speed**. DT and freemod are not enabled for Taiko. Selection is Variety; Standard Farm/Stream/Jump and Mania pattern choices do not select Taiko pools. Automatic rooms adapt using Taiko player information; fixed rooms use the configured range with the controls permitted by the host.
+
+===== Join and play =====
+
+Download the selected map and press Ready. The normal countdown, ready/AFK handling, map progression and skip votes apply. If nobody is ready, a match cannot start. Room settings show the actual countdown, length limit, active range and queue size.
+
+Useful commands: ''.help'', ''.queue'', ''.map'', ''.time'' / ''.t'', ''.skip'', ''.good'' and ''.bad''. ''.stats'' shows personal statistics; Taiko records and feedback remain separate from Standard, Catch and Mania. The [[commands:start|command reference]] describes permissions and voting.
+
+The website shows map artwork, players, settings, queue and match progress when timing is available. The Discord status panel shows the room and map information without map-progress estimates. [[wiki:taiko|Taiko data and qualification details]] explains catalog provenance and supported calculations.

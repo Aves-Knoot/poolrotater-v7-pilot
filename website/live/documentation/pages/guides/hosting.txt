@@ -1,0 +1,76 @@
+====== Host a PoolRotater lobby ======
+
+Want to bring PoolRotater to your own community? Run rooms from your own machine and osu! account, choose the modes and difficulty settings, and have your public lobbies appear on poolrotater.com.
+
+**To get started, [[https://discord.gg/KmNhHbDEbv|join the PoolRotater Discord]] and contact Papapyrus, the bot owner.** Ask for the onboarding files for a new community host.
+
+**v7.3.3 is published on GitHub.** Its two normal installed upgrade paths (v7.3.0 H and v7.3.2 I) passed. A separate extra B pre-admission controller-interruption case failed before incoming code could run and remains unaccepted; this limitation is documented. The signed pilot feed now offers the release to supported existing hosts; safe automatic rollout is underway. The hub, community Discord bridge and website are deployed; the live Discord connection is verified. The owner Lobby 3 Taiko pilot has verified startup, chat, map/queue selection, website and Discord presentation; actual Taiko gameplay remains pending.
+
+===== Setup handoff for your LLM =====
+
+[[https://poolrotater.com/new-host.txt|Download the complete new-host handoff (plain text)]]. Give the entire document to Claude Code or Codex on the machine that will run your rooms. It covers the supported platform, practical resources, account-use limitations, managed participation, pinned installation and OAuth steps, and the exact enrollment details to send back. The reviewed commands target v7.2.9; later releases need matching assets and checksums.
+
+The handoff contains no credentials or reusable invitation. After you send your actual account and installation binding, Papapyrus supplies a private, expiring enrollment package. Do not send OAuth secrets, tokens, SSH credentials or raw state folders. Existing operators must retain their installation and use the supported upgrade path.
+
+===== What you get =====
+
+  * Automatic map rotation using the centrally prepared selection databases. You do not need to run collectors or build the research databases yourself.
+  * The published modes include Standard, Mania 4K, Mania 7K, native Catch and Standard Loved, with your own titles and tuning. v7.3.3 adds fixed and automatic Taiko presets, using normal-speed NoMod charts only. The release is published on GitHub; supported existing hosts receive the signed offer through their saved automatic-update policy.
+  * Website lobby cards with available map art, player counts, settings and estimated song progress.
+  * Shared map feedback and community statistics, with required managed participation and public/private visibility explained during onboarding.
+  * Signed automatic updates as part of managed membership, respecting safe empty-room update windows.
+
+===== What you need =====
+
+Your own osu! account and a compatible Linux machine you can leave online, such as a VPS or home server. The current protected installer targets Ubuntu 24.04 x86_64, system CPython 3.12 and systemd. Qualified Ubuntu LXC installations are also used. ARM and other distributions are not yet qualified release targets.
+
+Not sure whether your machine is suitable? Send its operating system and basic specs when you get in touch.
+
+===== How to get set up =====
+
+  - **Contact Papapyrus on Discord.** Send your hosting account's username, operating system, CPU/RAM, and which modes and how many rooms you would like.
+  - **Get your onboarding files.** Papapyrus provides the appropriate setup instructions and files for catalog downloads, hub enrollment and website integration.
+  - **Authorize locally and open your rooms.** Follow the supplied instructions on your machine. Your account credentials stay local; do not send passwords, OAuth secrets or token files in chat. Papapyrus can then confirm your enrollment and public listing.
+
+You can start the conversation with:
+
+<code>
+Hi Papapyrus! I'd like to host PoolRotater.
+Hosting osu! username:
+Machine / operating system:
+CPU / RAM:
+Modes and number of rooms:
+I'd like my public rooms listed on poolrotater.com.
+</code>
+
+===== Already hosting? =====
+
+Keep your existing installation and settings. v7.3.3 is published on GitHub, and both normal v7.3.0 and v7.3.2 installed upgrade paths passed. A separate extra B pre-admission controller-interruption case failed before incoming code could run and remains unaccepted. The signed pilot feed now offers v7.3.3 to supported community hosts. Supported hosts use the ordinary signed updater without reinstall, new OAuth step or new operator command. For current updates or support, see [[technical:hosting_operations|the existing-host reference]] or contact Papapyrus. The instructions supplied for your installation take priority over old release notes.
+
+[[wiki:distributed_hosting|How community hosting works]] · [[status:start|Current lobbies]] · [[updates:start|Latest updates]]
+
+===== Managed-host policy =====
+
+Published v7.2.9 provides authenticated central administration for managed public and private rooms. Authorized staff use the private fleet-control channel; public lobby channels never accept fleet commands. Requests carry durable IDs, installation/generation bindings and configuration revisions. Only the hosting operator can change the concurrent-room ceiling, default four.
+
+Explicit stopped intent survives updates, recovery and reboot. Live-safe settings apply without recreation; changes requiring recreation affect the target at a safe boundary. This controller release still requires the host-wide safe empty/idle update gate. Keep settings, authorization, catalogs, enrollment and history; do not reinstall or clear ownership to force updates.
+
+Managed participation includes shared ratings/statistics, staff-only diagnostic/chat reporting, automatic updates and central room administration. Older hosts retain their existing configuration when upgraded, and private-room information and credentials remain excluded from public projections. Consult the exact installed release guide for supported sharing controls; R25 does not establish a new sharing policy. Full owner map exclusions are mirrored into compatible signed feeds; only map IDs leave private moderation records.
+
+Discord cards retain artwork, maps, settings and players without map progress; website progress remains. See [[updates:v7_2_9|release notes and qualification limits]], [[status:start|currently running rooms]] and the matching GitHub installer guides for exact protected operator commands.
+
+===== v7.2.10 statistics repair =====
+
+The statistics repair is included in v7.2.12. Affected v7.2.9/v7.2.10 hosts need the one-time queue activation below before their ordinary safe gate can install it; no reinstall, repeated sign-in or ownership clear is needed. Deliberately stopped private or public slots stay stopped. This release fixes guarded local ''.stats'' reads and Catch's statistics download routes. Known private participation now contributes player aggregates without listing private room details. See [[updates:v7_2_10|release notes]].
+
+===== v7.2.12 first-successor activation =====
+
+On affected v7.2.9/v7.2.10 installations, the first successor can hold during root preflight before any native update is submitted. Use the pinned v7.2.12 queue-only activator with the existing instance, following [[https://github.com/Aves-Knoot/poolrotater-v7-pilot/blob/main/docs/UPDATE_QUEUE_ACTIVATION.md|the checked instructions]]. Do not reinstall, repeat OAuth or clear ownership. The older v7.2.11 activator can safely refuse an unnecessary intermediate selection; use v7.2.12 instead. ''waiting_empty'' means queued rather than installed. Keep the normal updater running; no occupied rooms are forced closed. Return any refusal and retain state.
+
+The release includes guarded local ''.stats'' access, Catch statistics downloads and private participation in player totals. See [[updates:v7_2_12|release notes and qualification limits]].
+
+For v7.2.12 use poolrotater-activate-v7.2.12-v4.py and its matching .sha256 file. Revision4 also arms the checked native timer; earlier activators are retained for history. Return the final JSON, including timer_armed, rather than manually restarting rooms.
+
+===== v7.2.13 community reporting and relay repair =====
+
+Existing v7.2.12 hosts receive the signed automatic controller successor at the safe host-wide empty-room boundary. No new activation script, reinstall, sign-in or ownership clear is needed. Older affected installations must first complete the documented v7.2.12 path above. Community panels and the command relay are independent; command relay health is recorded in state/discord-relay.json. The central hub repair does not require restarting lobby controllers. Chat-only HTTP 403 responses no longer close rooms; initial access and authentication checks remain strict. See [[updates:v7_2_13|release notes and validation limits]].

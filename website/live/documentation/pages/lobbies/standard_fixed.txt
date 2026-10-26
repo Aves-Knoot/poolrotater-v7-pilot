@@ -1,0 +1,25 @@
+====== Standard fixed-difficulty lobbies ======
+
+Choose Room 2 for osu!standard with a fixed selection range rather than automatic adaptation. “Fixed” means the baseline does not follow players automatically; successful [[wiki:difficulty|difficulty votes]] can still change future picks.
+
+Use [[commands:pool|.pool]] for the current filters. [[commands:farm|Farm]], [[commands:stream|Stream]], and [[commands:variety|Variety]] are available for future selections. [[commands:queue|.queue]] shows what is already lined up.
+
+===== Sources, DT and map length =====
+[[commands:jump|.jump]] selects snap-aim patterns including slider transitions (v6.7.20+), independently of Farm score. Farm, Stream, Jump and Variety affect later selections, not existing queue entries. Standard Farm uses feedback-weighted picks, not a guarantee of the single highest Farm score.
+
+From v6.7.10, a pool below 50 maps can lower its pass-count requirement progressively to 1,000 without widening stars, hard length or age. NoMod and DT build those tiers separately. See [[commands:pool|.pool]] and [[wiki:map_selection|selection rules]].
+
+From v6.7.11, [[commands:dt|.dt]] allows verified DT alongside NoMod at any range; [[commands:nm|.nm]] opts the room out. Automatic DT eligibility uses an active-window midpoint above 5.5★. It preserves the chosen source and checks actual DT stars. No running match is interrupted; future unplayed DT entries can be replaced safely when DT is disabled. With the October 5 operator settings, preference outside Jump is DT 60–135 versus NoMod 90–135 played seconds, with a 240-second played-time cap and occasional shorter/longer picks. A source chart of 4:30 plays in 3:00 with DT. Check the room version and [[wiki:mixed_dt|DT guide]] during rollout.
+
+Use [[commands:time|.time]] to check a running map's approximate remaining time, and [[commands:lang|.lang]] for optional personal English-first bilingual guidance.
+
+===== Successful-clear preference (v6.7.17+) =====
+Eligible maps receive a gradual 1.0–1.5× boost to existing pick weights using **global osu! pass counts**, not local lobby clears. It preserves the selected source, feedback, DT mixing, difficulty and repeat protection. Existing queue entries stay unchanged. See [[wiki:passcount_preference|the formula and examples]].
+
+===== Starting with AFK players =====
+From **v6.7.18**, rooms with at least **two gameplay players** can start with **one ready player**. Automatic starts and [[commands:start_match|.start]] leave unready/AFK players out; if nobody is ready, the room waits. Spectators and referees do not count toward this two-player rule.
+
+Newly unready players share one extra five seconds once per stay, then later maps proceed without extra grace for them. See [[wiki:unready_start|the readiness guide]] and check the room version during rollout.
+
+Current values are operator settings, not immutable release defaults. Standard Jump retains its under-90-second preference from [[updates:v6_7_20|v6.7.20]]. See [[wiki:duration_policy|duration policy and deployment protection]].
+

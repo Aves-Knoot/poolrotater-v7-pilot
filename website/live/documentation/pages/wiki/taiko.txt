@@ -1,0 +1,21 @@
+====== Taiko rooms ======
+
+v7.3.3 is published on GitHub. Its normal installed upgrade acceptance passed on v7.3.0 H and v7.3.2 I (2 of 2). A separate extra B pre-admission controller-interruption case failed before incoming code could run and remains unaccepted; this limitation is documented. The signed pilot feed now offers v7.3.3 to supported existing hosts; safe automatic rollout is underway.
+
+===== Fixed and automatic rooms =====
+
+The release includes ''taiko-fixed'' and ''taiko-auto''. Fixed rooms use the configured Taiko difficulty range. Automatic rooms use Taiko player-profile PP and Taiko-specific calibration when available; missing profile/calibration information keeps the configured range. The 16-point curve is an exposure heuristic, not a skill or enjoyment guarantee.
+
+===== Chart selection =====
+
+Selection is normal-speed NoMod (NM) only. The verified prepared catalog contains 37,635 Ranked/Approved charts: 37,447 native Taiko charts and 188 conversions with official Taiko difficulty calculated from their original source files. Unsupported modified variants are refused. Player score tables and raw research databases are not installed on hosts.
+
+The selector supports configured difficulty and length limits, map exclusions, song variety, spacing and sparse-pool fallback. Experimental style labels are not presented as established preferences.
+
+===== Ratings and updates =====
+
+Taiko good/bad ratings and personal statistics use a separate ruleset identity from Standard, Mania and Catch. Shared totals appear only after a verified snapshot contains the vote; during an outage, the acknowledgement remains honest and synchronization resumes automatically.
+
+The signed offer is enabled. Supported existing hosts use their ordinary updater; no reinstall, new OAuth authorization or new operator command is required. Occupied rooms continue while empty siblings drain. Controller installation waits until all configured rooms are empty and active bookings are clear; deliberately stopped slots remain stopped. Both normal installed R25 tests verified preservation and post-upgrade health. The separate extra B pre-admission controller-interruption case failed and remains unaccepted; it is not claimed as recovered.
+
+The community Discord bridge and website are deployed; website timing is approximate, and Discord cards do not show map progress. The live Discord connection is verified, but no owner Lobby 3 Taiko pilot or actual Taiko gameplay is claimed.

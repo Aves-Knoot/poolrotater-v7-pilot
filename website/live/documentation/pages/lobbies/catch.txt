@@ -1,0 +1,32 @@
+====== Catch lobbies ======
+
+Owner Lobby 1 runs native **osu!catch** on v7.3.3, with fixed difficulty and player votes. Open [[status:start#room1|Live Lobbies]] for the current range, map, settings and Join button. The range shown there follows current configuration and player votes; room IDs change after maintenance.
+
+===== What it plays =====
+
+  * Native Catch charts, NoMod, Ranked or Approved.
+  * The complete prepared catalog is checked; room difficulty, length limits and recent-map cooldowns determine the current pool.
+  * Loved charts, converted Standard charts, DT, automatic difficulty and Farm/Stream/Jump/pattern selection are outside this pilot.
+
+The current range and timers are visible under Room settings. Difficulty votes can change the active range.
+
+===== Join and play =====
+
+Download the selected map, press Ready, and let the normal countdown run. An unready or AFK player does not get to hold a ready room indefinitely. If nobody is ready, the game cannot start.
+
+Common controls remain familiar:
+
+  * ''.help'' and ''.help <command>'' — quick help and details.
+  * ''.queue'', ''.pool'' and ''.time'' / ''.t'' — upcoming maps, pool information and approximate time remaining.
+  * ''.skip'' / ''.s'', ''.start'', ''.wait'', ''.easier'' and ''.harder'' — the usual shared session controls, subject to their voting and permission rules.
+  * ''.good'' / ''.bad'' — give feedback on the Catch chart. The ''.g'' and ''.b'' aliases still work.
+  * ''.stats'' — tracked Catch playtime and PP gains. Catch statistics remain separate from Standard and Mania.
+  * ''.discord'' — the shared community Discord link.
+
+Catch feedback is recorded and shared for Catch. Style and farm weighting are not enabled in this first pilot. Standard/Mania selection commands do not turn a Catch room into another ruleset.
+
+===== Live information =====
+
+The website and Lobby 1 Discord panel show the room, current chart, players and settings. Artwork comes from public map metadata. Song progress is approximate and appears only when the start time and total duration are known; an unknown duration is left unknown.
+
+See [[commands:start|the command reference]], [[guides:first_session|first-session help]] and [[updates:v7_2_0|v7.2.0 release notes]]. Existing community hosts keep their chosen rooms when upgrading; Catch is an explicit installation or configuration choice.

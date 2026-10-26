@@ -1,0 +1,59 @@
+====== Community hosting and the central hub ======
+
+^ Reference | Published through v7.3.3 · normal installed upgrades accepted 2/2; signed rollout underway |
+^ Installation | [[guides:hosting|Host a PoolRotater lobby]] |
+
+Owner and independently hosted rooms retain the same native gameplay engine, commands and prepared selection catalogs. Each operator keeps their own account credentials, tuning, titles and moderation settings. The central hub distributes prepared databases and coordinates directory observations, shared map feedback, personal statistics and private diagnostics.
+
+===== v7.3.3: Taiko and ratings =====
+
+v7.3.3 adds fixed and automatic Taiko rooms. Taiko selection uses normal-speed NoMod calculations; modified variants are refused rather than evaluated with NM values. Automatic difficulty uses the Taiko profile and a limited exposure heuristic, not a promise of skill or playability. If profile information or calibration is missing, the configured range remains in use. Unsupported experimental style labels are not advertised.
+
+Rating uploads and snapshot reconciliation are independent. Replies show totals only from verified shared data that includes the vote; an outage acknowledgement does not invent a count. Taiko ratings and personal statistics use their own ruleset identity.
+
+The v7.3.3 GitHub release is published. Normal installed upgrades from v7.3.0 H and v7.3.2 I passed with preserved room intent/settings and verified Taiko/latest-Standard catalog references (2 of 2). A separate extra B pre-admission controller-interruption case failed before incoming code could run and remains unaccepted; the limitation is documented. Empty siblings can drain separately, but controller installation waits for every configured room to be empty and bookings clear; intentionally stopped slots stay stopped. The hub, community Discord bridge and website deployments are verified. The Discord connection is live, but there has been no owner Lobby 3 Taiko pilot or actual Taiko gameplay. Website map timing is approximate; Discord cards omit map progress. Signed-feed delivery is active; downloaded or queued does not yet mean installed.
+
+===== Live rooms and activity =====
+Community rooms appear on the homepage, Live Lobbies page and sidebar with the shared map-card formatting: host label, mode, star range, observed players, available room settings, map art and estimated song progress. Timing requires an actual match-start observation bound to that room, map and match; map selection alone is not a playback clock. Progress clears when the match ends, the map changes or observations expire.
+
+The total public-room occupancy and Lobby activity total now include listed community rooms as well as owner rooms. Duplicate room IDs are removed. Occupancy includes spectators and counts room presences, not unique people across rooms. The four owner room history series remain separate. Network history begins with actual network observations; older community occupancy is not invented. For the combined occupancy graph, unavailable or expired community readings contribute zero while valid owner readings remain visible. Valid public rows in a partial listing contribute their observed counts; missing rows contribute zero. Owner-unavailable periods can still leave gaps. This is the graph's display policy, not proof that an unavailable community room had no players.
+
+Private rooms, passwords, credentials, individual room rosters and administrative controls are not published in these cards. Reporting does not give the hub control over an operator’s osu! credentials or staff permissions.
+
+===== Prepared selection databases =====
+The owner performs collection, score research and Farm/Stream/Jump/Mania analysis centrally. Hosts download complete signed prepared catalogs and their analysis companions. These are much smaller than the central research databases because the per-player evidence has already been reduced to selection features. The latest full Standard selection export contains 106,155 beatmaps (content ID ''03928b8f8f5999bd7e0e7517007319abe4f4294e63f821479b547dffc3c04af9''). v7.3.3 adds a compact Taiko catalog of 37,635 Ranked/Approved charts: 37,447 native and 188 conversions with official Taiko difficulty calculated from their source files. Unqualified status rows and player-level research are excluded. The Taiko and latest full Standard catalog references were confirmed on both normal installed paths; the website display index is deployed separately.
+
+Once verified locally, catalogs continue serving selection during a hub outage. No remote catalog or code is trusted solely because a URL downloaded successfully.
+
+===== Sharing defaults =====
+In v7.1.1, missing reporting profiles enable public statistics sharing, shared-statistics consumption, sanitized operational diagnostics and sanitized public-chat diagnostics. Missing enrolled ratings profiles enable contribution and verified network selection; a missing new directory choice defaults to public listing. Existing explicit choices and opt-outs are preserved. New updater configuration also defaults to automatic signed pilot delivery.
+
+The hub still requires enrollment, account binding and central rating contribution permission. Those cannot be granted by changing client defaults. History imports remain separately reviewed; a new default does not upload old private or unknown-room history. [[technical:hosting_operations|The existing-host reference]] points operators to release-specific controls; do not assume a local preference reverses previously accepted contributions.
+
+Personal ''.stats'' uses local confirmed caches, with coverage and privacy rules. Map ''.good''/''.bad'' feedback is a separate canonical stream used through verified snapshots. A received vote does not by itself prove snapshot consumption. Hidden statistics stay out of named public projections; another host cannot undo a hide from the originating host. See [[wiki:stats_privacy|privacy and cache limits]].
+
+===== Updates and reliability =====
+The first v7.1.0 upgrade is a stopped storage migration with retained backups. Once on that baseline, v7.1.1 can arrive through the existing signed updater. Shared controller updates wait for every configured room to be safely empty; compatible worker-only updates can roll separately. Opt-outs, saved settings and healthy occupied matches are retained. Uncertain ownership and interrupted transactions retain their recovery checks. Published recovery and controller improvements are summarized in [[updates:v7_1_14|v7.1.14]], [[updates:v7_1_16|v7.1.16]], [[updates:v7_1_19|v7.1.19]] and [[updates:v7_1_20|v7.1.20]]. Independent recovery requests remain bounded by the operator's grant and local stop/pause choices.
+
+Hub uploads and cache refresh happen in the independent network agent, outside command-handler/provider request paths. Diagnostic queues are bounded, sanitized and private to maintainers; public statistics exclude private-room activity. Diagnostic sharing follows the separate operational/chat choices. Project moderation bans stay operator-local.
+
+[[updates:start|Release history]] · [[guides:hosting|Hosting and onboarding]] · [[technical:operator_commands|Operator actions]]
+
+===== Historical data and update recovery =====
+[[updates:v7_1_10|v7.1.10]] repairs the internal-identity capture boundary and qualifies guarded controller recovery. Reviewed legacy playtime and tracked PP use durable, duplicate-protected events and normal uploads; current privacy still applies. Local capture, hub acceptance, another host's cache and website aggregation are checked separately. Map feedback remains a separate shared system. Publication does not claim that an entire historical backlog has arrived.
+
+A failed automatic update leaving expected rooms down is an outage, not an intentionally disabled room. Operations reports distinguish it from natural empty-room waiting, normal maintenance and stalled reporting. See [[technical:hosting_operations|existing-host support and recovery]].
+
+===== Optional native Catch =====
+
+[[updates:v7_2_1|v7.2.1]] includes the full signed native Catch catalog and compatible mode-scoped feedback, statistics and website reporting. Upgrades retain your existing room topology. A fresh Catch preset or an explicit stopped Catch configuration step is required; no extra room appears automatically. See [[lobbies:catch|Catch scope]] and the release Native Catch operator guide. After Catch state is initialized, configuration rollback retains a compatible controller/hub and data; do not restore a legacy controller over that state.
+
+===== Managed administration =====
+
+Published v7.2.9 provides authenticated central administration for managed public and private rooms. Authorized staff use the private fleet-control channel; public lobby channels never accept fleet commands. Requests carry durable IDs, installation/generation bindings and configuration revisions. Only the hosting operator can change the concurrent-room ceiling, default four.
+
+Explicit stopped intent survives updates, recovery and reboot. Live-safe settings apply without recreation; changes requiring recreation affect the target at a safe boundary. This controller release still requires the host-wide safe empty/idle update gate. Keep settings, authorization, catalogs, enrollment and history; do not reinstall or clear ownership to force updates.
+
+Managed participation includes shared ratings/statistics, staff-only diagnostic/chat reporting, automatic updates and central room administration. Older hosts retain their existing configuration when upgraded, and private-room information and credentials remain excluded from public projections. Consult the exact installed release guide for supported sharing controls; R25 does not establish a new sharing policy. Full owner map exclusions are mirrored into compatible signed feeds; only map IDs leave private moderation records.
+
+The community Discord bridge and website deployments are verified. Discord cards retain artwork, maps, settings and players without map progress; website progress remains. See [[updates:v7_3_3|v7.3.3 release notes]], [[status:start|currently running rooms]] and the matching GitHub installer guides for exact protected operator commands.

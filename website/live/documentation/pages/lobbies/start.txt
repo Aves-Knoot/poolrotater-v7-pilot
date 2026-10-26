@@ -1,0 +1,21 @@
+====== Choose a lobby ======
+
+The owner currently runs **Catch, Taiko automatic difficulty, and Mania 4K** on v7.3.3. Lobby 2 is reserved/private and stays stopped until opened through authorized controls. Community hosts provide additional modes, including Standard, Loved and Mania 7K. Open [[status:start|Live Lobbies]] or the sidebar for current rooms, settings and join links.
+
+^ Owner slot ^ Current use ^ Difficulty ^ Guide ^
+| 1 | osu!catch, native NoMod | Fixed range with player votes | [[lobbies:catch|Catch]] |
+| 2 | Reserved/private allocation; currently stopped | Set when opened | [[wiki:distributed_hosting|Room administration]] |
+| 3 | osu!taiko, NoMod | Automatic difficulty | [[lobbies:taiko|Taiko]] |
+| 4 | osu!mania 4K | Fixed range with player votes | [[lobbies:mania_4k|Mania 4K]] |
+
+Slot numbers do not permanently identify a ruleset. Modes and room IDs can change after configuration or maintenance. Live room cards show the current mode, active range, timers, map, queue and artwork. Availability charts follow the same logical room slot across mode changes.
+
+===== Community lobbies =====
+
+[[status:community|Community lobbies]] use their host's osu! account and appear with the operator label. Use the current live directory to find [[lobbies:standard_auto|Standard automatic]], [[lobbies:standard_fixed|Standard fixed]], [[lobbies:mania_7k|Mania 7K]], Loved or other supported modes. Shared ratings and player statistics retain the correct ruleset identity across hosts.
+
+===== Follow the round =====
+
+The sidebar and [[status:start|Live Lobbies]] show the current map, background art, player count, state, next map and Join button when available. Progress appears when match timing and duration are known. Private-room links and passwords are not published. On small screens, tap Live Lobbies to open the sidebar widget.
+
+Start with ''.help'', ''.queue'', ''.time'' and [[commands:start|the command reference]]. Commands and styles depend on the room's current mode. Taiko and native Catch use normal-speed NoMod selection; Standard DT and Mania patterns have separate mode restrictions.

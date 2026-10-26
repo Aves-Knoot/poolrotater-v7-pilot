@@ -1,0 +1,29 @@
+====== Mania 7K lobbies ======
+
+Mania 7K is available from community hosts. The owner's Lobby 3 now hosts Taiko; use [[status:start|Live Lobbies]] for current 7K room links and settings.
+
+This room plays osu!mania **7K**. It uses a fixed difficulty range, with [[commands:harder|.harder]] and [[commands:easier|.easier]] voting for future picks.
+
+Use [[commands:style|.style]] to inspect the chart and available choices. Choose [[wiki:mania_styles|Jack, Chordjack, Stream, LN, Technical, Rice, Noodle, Farm, or Variety]] using ''.style jack'' or a direct command such as ''.jack''. Use ''.variety'' to return to the full eligible pool.
+
+Farm is experimental and depends on staff enablement and research evidence. Structural styles are heuristic descriptions, not guarantees of PP efficiency. Style selection keeps native key counts separate. Vetted converts can appear in Variety; style-only and farm-only pools currently use native charts.
+
+[[commands:map|.map]] shows map details and a link. See [[wiki:style_fallback|why a style may broaden]] and [[wiki:converts|vetted converts]].
+
+===== Tap/hold choices and Variety =====
+[[commands:rice|.rice]] prefers taps with few holds and streams; tap chords are allowed. [[commands:noodle|.noodle / .noodles]] requires hold-dominant composition and is narrower than [[commands:ln|.ln]]. Both work in combinations such as ''.style rice jack'', but Rice and Noodle cannot be combined. After fresh strict and relaxed Noodle choices run out, native LN is its explicit fallback before recent repeats; Rice stays within its bounded tap-focused limits.
+
+From v6.7.12, ordinary Variety gives LN- or Noodle-classified charts 0.1× their prior relative weight. This is not a fixed 10% share and does not change explicit LN/Noodle/Farm or combined-style selection. Charts already queued remain in place.
+
+Current operator-preferred length is 90–135 played seconds, with shorter maps and occasional longer maps up to the 240-second hard cap. ''.pool'' shows active settings. [[commands:time|.time]] checks remaining time; [[commands:lang|.lang]] selects personal bilingual guidance while English stays visible. Mixed ''.dt'' / ''.nm'' is Standard-only and does not change Mania speed. See [[wiki:map_selection|selection rules]] and [[updates:start|release versions]].
+
+===== Successful-clear preference (v6.7.17+) =====
+Eligible maps gain a gradual 1.0–1.5× draw-weight boost using **global osu! pass counts**, not local lobby clears. Feedback, Farm bonuses and the Variety-only LN penalty still stack with it. Native keys, repeat safeguards and highest-score-first Farm/style priorities remain intact. [[wiki:passcount_preference|Formula and examples]]. Native LN is Noodle's fallback from [[updates:v6_7_15|v6.7.15]].
+
+===== Starting with AFK players =====
+From **v6.7.18**, rooms with at least **two gameplay players** can start with **one ready player**. Automatic starts and [[commands:start_match|.start]] leave unready/AFK players out; if nobody is ready, the room waits. Spectators and referees do not count toward this two-player rule.
+
+Newly unready players share one extra five seconds once per stay, then later maps proceed without extra grace for them. See [[wiki:unready_start|the readiness guide]] and check the room version during rollout.
+
+Current values are operator settings, not immutable release defaults. Standard Jump retains its under-90-second preference from [[updates:v6_7_20|v6.7.20]]. See [[wiki:duration_policy|duration policy and deployment protection]].
+

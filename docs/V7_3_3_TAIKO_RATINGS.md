@@ -1,11 +1,9 @@
 # v7.3.3 R25: Taiko and ruleset-separated ratings
 
-> Live rollout checkpoint: Xikeon automatically installed v7.3.3. Another
-> live host committed the runtime but its Standard archive transfer stopped at
-> roughly 94%; settings are unchanged and disk/cache checks pass. Its remote
-> completion admission still refuses before startup. The owner is draining at
-> empty boundaries; occupied 4K keeps playing. L3 Taiko has not yet launched.
-
+> Live rollout: all three hosts are on v7.3.3. Owner L3 Taiko is running;
+> technical startup, chat, map selection and Discord presentation are verified.
+> Gameplay observation is separate. A permanent catalog/recovery follow-up is
+> in isolated validation and is not part of the published v7.3.3 artifact.
 
 R25 technical acceptance passed both normal installed automatic-upgrade paths:
 H from v7.3.0 and fresh I from v7.3.2 (2 of 2), including native commit and
@@ -28,7 +26,7 @@ Automatic difficulty uses Taiko profile PP and 16 aggregate points derived from 
 
 Taiko ratings and statistics use a separate ruleset identity. Existing Standard, Mania, and Catch records remain in their existing namespaces. Successful rating uploads remain independent of snapshot reconciliation; a player's shared total includes a vote only after the verified shared snapshot contains it. During an outage, acknowledgement remains honest and synchronization can resume later.
 
-The catalog service receipt records six-mode publication, including Standard content `03928b8f8f5999bd7e0e7517007319abe4f4294e63f821479b547dffc3c04af9` and Taiko content `71ececd64c6b8f3a34deed1008e0f80054c2e6de129add8a327ee2f3d3288f49`. Both H and I R25 post-upgrade receipts verify these Taiko and latest full Standard catalog references. This does not prove deployment to production hosts.
+The catalog service receipt records six-mode publication, including Standard content `03928b8f8f5999bd7e0e7517007319abe4f4294e63f821479b547dffc3c04af9` and Taiko content `71ececd64c6b8f3a34deed1008e0f80054c2e6de129add8a327ee2f3d3288f49`. Both H and I R25 post-upgrade receipts verify these Taiko and latest full Standard catalog references. The owner’s six-mode catalog set and Strohm’s completed full Standard transfer now separately verify production adoption.
 
 ## Update staging and recovery
 
@@ -55,23 +53,27 @@ claimed as recovered. The accepted normal paths do not turn that failure into a
 supported automatic recovery.
 
 Matching source/runtime assets are published on GitHub, and signed pilot
-metadata45 offers the exact runtime to v7.3.0/v7.3.1/v7.3.2. The compatible hub,
-website and actual community Discord bridge are deployed; six wiki pages have
-normal verified revisions. Owner rollout is safely queued and occupied rooms
-continue; client installation, the selected owner Lobby3 Taiko pilot and actual
-gameplay remain unverified. H and I used synthetic Discord routing; the
-production bridge connection is separate live evidence, and Taiko room-specific
-presentation still needs the pilot. See
-[`TAIKO_RATINGS_RELEASE_PLAN.md`](TAIKO_RATINGS_RELEASE_PLAN.md) for the
-remaining release gates.
+metadata 45 offers the exact runtime to v7.3.0/v7.3.1/v7.3.2. The compatible hub,
+website and actual community Discord bridge are deployed. Xikeon completed the
+ordinary automatic upgrade. The owner safely drained occupied rooms, upgraded,
+and opened the selected L3 Taiko pilot. Strohm completed the same held native
+transaction after resuming the partial Standard transfer, preserving room intent
+and configuration. All three hosts now run v7.3.3. Technical Taiko chat, catalog,
+selection and Discord checks passed; gameplay observation remains separate.
+H and I used synthetic Discord routing; actual production Discord is separate
+live evidence. See `TAIKO_RATINGS_RELEASE_PLAN.md` for current follow-up work.
 
-## Live rollout under review
+## Catalog interruption and recovery-helper follow-up
 
-On 2026-10-25 one live Loved/Standard host committed registration of the exact
-release but held at configuration preparation before startup. Its config hashes
-are unchanged. A guarded remote completion refused; the local preparation
-records are needed to identify the cause. This is not accepted as successful
-production rollout and is not the earlier pre-admission controller-fault case.
-The owner update is deferred, with the active 4K worker preserved. Keep held
-state intact and return the maintainer's read-only diagnostic output rather
-than reinstalling, clearing ownership or repeating startup.
+Strohm’s Standard archive transfer stopped at 19,890,176 of 21,077,643 bytes.
+Settings, disk reserve and cache custody checks were healthy. Independent remote
+completion was also blocked by a recovery helper pinned to v7.2.6: that older
+manifest reader rejects the newer shared-contract fingerprint before dispatch.
+The already-installed v7.3.3 native completion resumed the same verified partial,
+completed the existing transaction and restored the two intended rooms; no
+reinstall, OAuth setup, ownership clear or separate start was used.
+
+Bounded catalog transport retries, guarded pin refresh and clearer finite
+preparation diagnostics are implemented in an isolated follow-up. They remain
+unpublished until installed qualification passes. These changes do not alter the
+immutable v7.3.3 runtime, original source tag or release checksums.

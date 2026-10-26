@@ -3,6 +3,62 @@
 function prLiveEscape($value) { return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function prLiveNumber($value) { return is_int($value) && $value > 0 && $value <= 9007199254740991; }
 function prLiveClock($seconds) { $seconds=max(0,(int)$seconds); return floor($seconds/60).':'.str_pad((string)($seconds%60),2,'0',STR_PAD_LEFT); }
+function prLiveRoomMode($room) {
+    $room=is_array($room)?$room:[];$settings=is_array($room['settings']??null)?$room['settings']:[];
+    $type=$room['type']??null;
+    if($type==='mania_7k')return 'mania_7k';if($type==='mania_4k')return 'mania_4k';
+    if(in_array($type,['standard','taiko','catch'],true))return $type;
+    $label=strtolower((string)($room['label']??''));
+    $ruleset=$settings['ruleset_id']??$room['ruleset_id']??null;
+    if(is_int($ruleset)&&$ruleset>=0&&$ruleset<=3){
+        if($ruleset===0)return 'standard';if($ruleset===1)return 'taiko';if($ruleset===2)return 'catch';
+        $keys=$settings['keys']??$room['keys']??null;
+        if($keys===7)return 'mania_7k';if($keys===4)return 'mania_4k';
+        if(preg_match('/\b7k\b|seven[ -]?key/',$label))return 'mania_7k';if(preg_match('/\b4k\b|four[ -]?key/',$label))return 'mania_4k';return 'mania';
+    }
+    $preset=$room['preset']??$settings['preset']??null;
+    if(in_array($preset,['standard-auto','standard-fixed','standard-loved'],true))return 'standard';
+    if($preset==='catch-fixed')return 'catch';if(in_array($preset,['taiko-fixed','taiko-auto'],true))return 'taiko';
+    if($preset==='mania-7k')return 'mania_7k';if($preset==='mania-4k')return 'mania_4k';
+    if(in_array($type,['mania','mania_other'],true)){
+        $keys=$settings['keys']??$room['keys']??null;
+        if($keys===7)return 'mania_7k';if($keys===4)return 'mania_4k';
+    }
+    if(preg_match('/\btaiko\b/',$label))return 'taiko';if(preg_match('/\bcatch\b/',$label))return 'catch';
+    if(preg_match('/\b7k\b|seven[ -]?key/',$label))return 'mania_7k';
+    if(preg_match('/\b4k\b|four[ -]?key/',$label))return 'mania_4k';
+    if(preg_match('/\bstandard\b/',$label))return 'standard';
+    if($ruleset===3||in_array($type,['mania','mania_other'],true))return 'mania';
+    return null;
+}
+function prLiveRoomLabel($room,$slot=null) {
+    $room=is_array($room)?$room:[];$settings=is_array($room['settings']??null)?$room['settings']:[];
+    $mode=prLiveRoomMode($room);$preset=$room['preset']??$settings['preset']??null;
+    if($mode==='standard'){
+        $loved=is_bool($settings['loved_mode']??null)?$settings['loved_mode']:$preset==='standard-loved';
+        if($loved)return 'Standard · Loved';
+        $auto=$settings['auto_difficulty']??null;
+        if(!is_bool($auto))$auto=in_array($preset,['standard-auto'],true)?true:(in_array($preset,['standard-fixed'],true)?false:null);
+        if($auto===true)return 'Standard · Auto';if($auto===false)return 'Standard · Fixed';
+        return 'osu!standard';
+    }
+    if($mode==='taiko')return 'osu!taiko';if($mode==='catch')return 'osu!catch';
+    if($mode==='mania_7k')return 'osu!mania · 7K';if($mode==='mania_4k')return 'osu!mania · 4K';
+    if($mode==='mania')return 'osu!mania';
+    if(!is_int($slot)&&preg_match('/^room([1-4])$/',(string)($room['alias']??''),$m))$slot=(int)$m[1];
+    return 'Lobby'.(is_int($slot)&&$slot>=1&&$slot<=4?' '.$slot:'');
+}
+function prLiveRoomGuide($room) {
+    $mode=prLiveRoomMode($room);$settings=is_array($room['settings']??null)?$room['settings']:[];$preset=$room['preset']??$settings['preset']??null;
+    if($mode==='taiko')return 'taiko';if($mode==='catch')return 'catch';
+    if($mode==='mania_7k')return 'mania_7k';if($mode==='mania_4k')return 'mania_4k';
+    if($mode==='standard'){
+        $loved=is_bool($settings['loved_mode']??null)?$settings['loved_mode']:$preset==='standard-loved';
+        $auto=$settings['auto_difficulty']??null;if(!is_bool($auto))$auto=$preset==='standard-auto'?true:($preset==='standard-fixed'?false:null);
+        return $loved?'standard_loved':($auto===true?'standard_auto':($auto===false?'standard_fixed':'start'));
+    }
+    return 'start';
+}
 function prLiveTiming($room,$fresh,$now) {
     $p=$room['playback']??null;
     if (!$fresh || !in_array($room['state']??'', ['PLAYING','playing'],true) || !is_array($p) || !is_numeric($p['started_at']??null) || !is_numeric($p['duration_seconds']??null)) return null;
@@ -32,11 +88,7 @@ function prLiveCard($room,$fresh,$compact=false,$now=null) {
     $map=$fresh&&is_array($room['current_map']??null)?$room['current_map']:[];
     $states=['PLAYING'=>'Playing','STARTING'=>'Starting','SCORING'=>'Between maps','IDLE'=>'Waiting','OFFLINE'=>'Offline','STALE'=>'Status unavailable','playing'=>'Playing','starting'=>'Starting','idle'=>'Waiting','draining'=>'Finishing up','unavailable'=>'Status unavailable'];
     $state=$fresh?($room['state']??'STALE'):'STALE';$state=isset($states[$state])?$state:'STALE';
-    $short=['room1'=>'Standard · Auto','room2'=>'Standard · Fixed','room3'=>'Mania · 7K','room4'=>'Mania · 4K'];
-    $ruleset=$room['settings']['ruleset_id']??$room['ruleset_id']??null;
-    $type=$room['type']??([0=>'standard',1=>'taiko',2=>'catch',3=>'mania'][$ruleset]??null);
-    $typedLabel=['taiko'=>'osu!taiko · NM','catch'=>'osu!catch · NM','mania'=>'osu!mania'][$type]??null;
-    $label=$community?($room['title']??'Community lobby'):($typedLabel??($short[$alias]??($room['label']??'Lobby')));
+    $label=$community?($room['title']??'Community lobby'):prLiveRoomLabel($room);
     $id=$fresh?($room['room_id']??null):null;$join=prLiveNumber($id)&&!in_array($state,['STALE','OFFLINE','unavailable'],true);
     $set=$map['beatmapset_id']??null;$title=$map['title']??$map['label']??($state==='OFFLINE'?'Room is offline':($state==='STALE'?'Status temporarily unavailable':'Waiting for the next map'));
     $subtitle=trim(($map['artist']??'').(!empty($map['version'])?' · '.$map['version']:''));$timing=prLiveTiming($room,$fresh,$now);

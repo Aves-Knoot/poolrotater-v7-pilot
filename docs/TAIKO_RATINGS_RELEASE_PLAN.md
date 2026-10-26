@@ -1,29 +1,27 @@
-## Current checkpoint — Strohm diagnostic received; owner upgrade draining safely
+## Current checkpoint — all three hosts on v7.3.3; owner L3 Taiko running
 
-The user supplied Strohm’s collector JSON and explicitly asked to update the owner rooms and launch Taiko on L3. The former missing-collector blocker is resolved. The full release goal is active and incomplete. Do not mark it achieved from donor/publication receipts alone.
+The owner, Xikeon and Strohm now run the exact published v7.3.3 runtime `45254e8a24bee3b4c86259a31528e3e06a11b54aa201afca54e63981f0e45a41`. The owner upgrade waited for occupied rooms to empty. Catch L1 (4819671), Taiko L3 (4819700), and Mania 4K L4 (4819667) run; L2 remains stopped/reserved. Original boot preferences and timers were restored. L3 was intentionally changed through managed configure/open operations; all other room settings were preserved except version and verified latest Standard catalog bindings. Its active automatic range can change with players; it initially selected qualified Taiko maps at 2–3★. The six-mode catalog set is `e066d55d695c35d40c6ebc4c7a84298223b62714a2ac3ccec8e4e954a884ee8e`.
 
-Strohm’s unchanged configuration, complete profiles/projection steps, and six-mode catalog prewarm narrow the remaining failure to Standard catalog staging. The Standard-refresh journal is staging with no candidate/pending/after reference. The exact refusal remains hidden by the old generic error mapper. A real credential-free public HTTPS/TUF Standard039 download/validation passed in 5.358 seconds. One further same-operation guarded completion (22e64407…) still refused without startup or job changes. Do not repeat blindly. A new optional data request asks for filesystem free bytes and delivery-cache custody/counts; no raw credentials/config requested. All four Strohm slots remain known closed.
+Xikeon completed the ordinary automatic update with three running rooms and its fourth deliberately stopped. Strohm supplied successful completion evidence: the installed v7.3.3 native entry resumed the retained Standard download from 19,890,176 to 21,077,643 bytes, completed the same held transaction, and started Loved (4819713) and Standard fixed (4819715); rooms 3/4 stayed stopped. Configuration/revisions, OAuth, enrollment, timers, ratings and history were preserved. Updater registration/version agree, with no pending error. No human diagnostic input remains missing.
 
-The owner’s explicit empty maintenance request 04c3854b-e5bf-4c91-a339-27f60c7f7795 has closed empty Catch while occupied 4K continues. A reviewed coordinator is waiting for the same request’s complete receipt; it will not close occupied rooms. It uses the exact published stopped installer, quiescent ownership review/backup, a temporary systemd managed-reconciliation condition during catalog import, and pinned CA/bootstrap/all-six catalogs. Runtime/ownership/inventory checks remain intact. L3 will be configured/opened through normal managed operations after the upgrade is healthy. Check the live coordinator before doing overlapping lifecycle work.
+The remote completion refusal was traced separately to Strohm’s independent recovery helper still pinned to v7.2.6: its old manifest reader rejects the newer shared-contract fingerprint before dispatch. Exact public-code offline reproduction confirms that mismatch. The recovery pin and attempt counters were not modified during the successful local completion. A permanent follow-up is implemented in an isolated worktree: bounded catalog transfer retry, guarded recovery-pin refresh, and finite failure/preparation diagnostics. It remains UNPUBLISHED and UNINSTALLED until integrated validation, exact installed qualification and a new immutable release pass. Published v7.3.3 artifacts remain unchanged.
 
-The exact published v7.3.3 runtime includes the diagnostic_logs.common.check_database fix for disappearing optional SQLite sidecars; missing primary databases still fail. Receipt: reports/r25-database-sidecar-fix-artifact-check.json.
+Actual Discord L3 is `🟢・l3-taiko-autodiff`, with a Taiko status embed, artwork, settings and next map, without map progress. L2 was explicitly restored to `⚪・l2-reserved`. Wiki room guides and changelog now describe the current arrangement. Website hardcoded activity/home labels are being corrected separately without restarting game services. Technical startup, catalog loading, chat join, selection and owned-room health are verified; actual player gameplay observation is still pending and is not claimed.
 
-Xikeon’s automatic v7.3.3 upgrade already succeeded, with three running rooms and the reserved fourth stopped. Offline follow-up diagnostic improvements passed the affected checks and review; they are unpublished and are not presented as a fix for Strohm’s still-unidentified local staging refusal.
+The full goal remains active while the justified permanent follow-up and final documentation/presentation audit are completed. Historical B pre-admission interruption remains an explicitly disclosed failed legacy case; accepted H/I normal installed paths are 2/2. No inventory, ownership, authority or booking guard has been weakened.
 
-Historical candidate ZIP revisions (46 files, 1,223,161,652 bytes) were individually SHA256-verified on the storage box before local removal. Location: /mnt/poolrotater-storagebox/development-archives/v733-candidate-revisions-20261025. Manifest and explanation remain under candidate/revisions and reports/candidate-revisions-offload-20261025.json. Current release artifacts remain local.
-
+Historical candidate ZIPs (46; 1,223,161,652 bytes) are SHA256-verified at `/mnt/poolrotater-storagebox/development-archives/v733-candidate-revisions-20261025`; current artifacts remain local. Do not replay terminal owner coordinators, old publication scripts or completed recovery requests.
 
 # PoolRotater v7.3.3 ratings and Taiko release plan
 
-> Live rollout checkpoint: Xikeon automatically installed v7.3.3 and reports
-> three running rooms, one deliberately stopped slot and no failure codes.
-> Strohm registered v7.3.3 but held at configuration preparation before startup;
-> a single guarded completion refused. Local read-only diagnostic output is
-> required. The owner remains on v7.3.2 with healthy Catch/4K rooms, and further
-> update checks temporarily paused. The L3 Taiko pilot is not yet launched.
+> Current live rollout: all three hosts installed v7.3.3; owner L3 Taiko is running.
+> Strohm completed the held transaction with retained partial-download resume.
+> The permanent catalog/recovery follow-up is unpublished; gameplay remains a
+> separate observation. See the current checkpoint above; older rollout notes below
+> describe evidence and intermediate states, not present host status.
 
 
-> R25 v7.3.3 passed normal installed automatic-upgrade acceptance on H (v7.3.0) and I (v7.3.2), 2 of 2. The unchanged validator checked all six evidence references for each path. A separate B pre-admission controller-interruption case failed before candidate code could be installed; it is a known legacy limitation, excluded from acceptance and disclosed for release. Proceed with the proven normal update path while retaining that exception. R25 is published on GitHub and the signed pilot feed; the compatible hub, actual Discord bridge and website are deployed. Safe client rollout and the selected owner L3 pilot remain in progress, so the full release goal is incomplete.
+> R25 v7.3.3 passed normal installed automatic-upgrade acceptance on H (v7.3.0) and I (v7.3.2), 2 of 2. The unchanged validator checked all six evidence references for each path. A separate B pre-admission controller-interruption case failed before candidate code could be installed; it is a known legacy limitation, excluded from acceptance and disclosed for release. Proceed with the proven normal update path while retaining that exception. R25 is published on GitHub and the signed pilot feed; the compatible hub, actual Discord bridge and website are deployed. All three live hosts are now on v7.3.3 and the owner L3 technical pilot runs. The permanent follow-up and final evidence audit remain incomplete.
 
 ## Goal and acceptance rule
 

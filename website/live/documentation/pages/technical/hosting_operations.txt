@@ -1,0 +1,69 @@
+====== Existing hosts: updates and support ======
+
+This reference is for operators who already have an installation. New hosts should [[guides:hosting|contact Papapyrus for onboarding files]] first. Use the current instructions supplied for your installation; old version-pinned repair helpers are not general installers.
+
+**v7.3.3 is published on GitHub.** Normal installed upgrades from v7.3.0 H and v7.3.2 I passed (2 of 2). A separate extra B pre-admission controller-interruption case failed before incoming code could run and remains unaccepted; this limitation is documented. The signed pilot feed now offers v7.3.3 to supported existing hosts; safe automatic rollout is underway.
+
+===== Updates =====
+
+Keep the same installation, authorization, catalogs, titles, tuning, enrollment, ratings and statistics. Healthy opted-in hosts receive signed updates through their saved policy. Compatible worker updates wait for individual rooms to empty; shared-controller updates wait for all configured rooms on that host.
+
+Use the installed release's protected operator entry and its exact instance. An entry from an older release may intentionally refuse after upgrade. The [[technical:operator_commands|operator command reference]] explains the available actions; these are machine-side commands, not player dot commands.
+
+A temporary preparation refusal in a healthy room can defer and retry an update in current releases. A deliberately stopped host, uncertain ownership or a failed cleanup retains its separate checks. Publication does not force a stopped host to start. See [[wiki:room_updates|update windows and maintenance]].
+
+===== If something goes wrong =====
+
+Keep the installation state and reports, and contact Papapyrus. Send room links, times and timezone, the installed version, what players experienced and redacted support output. Include the safe failure code, failed operation and HTTP status when available.
+
+Do not reinstall, delete journals or repeatedly start rooms to bypass an uncertain outcome. Recovery instructions must match the exact failure and release. A failed systemd unit and uncertain room ownership are different facts. The version-pinned packages in old release notes apply only to their documented states.
+
+Never send passwords, OAuth credentials/codes, token files, bound invitations or raw backups. Keep unredacted evidence locally.
+
+===== Sharing and privacy choices =====
+
+Directory listing, ratings, statistics and diagnostics follow the host's saved choices and the enrolled account's authenticated grants. Public projections exclude private rooms and passwords; private maintainer diagnostics are separate from public statistics. Changing local configuration cannot grant server-side contribution authority.
+
+Managed membership requires directory participation, shared ratings and statistics, private diagnostic reporting, automatic updates and central administration. Commands that disable these required features are refused on managed hosts. Older opt-out examples are not instructions for current managed installations. Hub contribution still requires its authenticated grant, and private rooms and credentials remain excluded from public projections.
+
+Historical data remains separately reviewed. Local capture, hub acknowledgment, cache availability and website publication are separate stages.
+
+===== Useful checks =====
+
+  * ''status'' / ''support'' — installation, room and recovery summaries.
+  * ''network-support'' — enrollment and heartbeat.
+  * ''ratings-support'' — locally captured, queued and acknowledged feedback.
+  * ''network-reporting-support'' — activity/diagnostic reporting.
+  * ''update-status'' — discovery, waiting, installation or a held update.
+
+Use ''ownership-review'' only under the stopped-service conditions required by your kit. Ask Papapyrus before attempting unfamiliar recovery operations.
+
+[[guides:hosting|Hosting overview and contact]] · [[technical:operator_commands|Operator commands]] · [[wiki:stats_privacy|Privacy]] · [[updates:start|Release history]]
+
+===== Managed administration and updates =====
+
+Published v7.2.9 provides authenticated central administration for managed public and private rooms. Authorized staff use the private fleet-control channel; public lobby channels never accept fleet commands. Requests carry durable IDs, installation/generation bindings and configuration revisions. Only the hosting operator can change the concurrent-room ceiling, default four.
+
+Explicit stopped intent survives updates, recovery and reboot. Live-safe settings apply without recreation; changes requiring recreation affect the target at a safe boundary. This controller release still requires the host-wide safe empty/idle update gate. Keep settings, authorization, catalogs, enrollment and history; do not reinstall or clear ownership to force updates.
+
+Managed participation includes shared ratings/statistics, staff-only diagnostic/chat reporting, automatic updates and central room administration. Older hosts retain their existing configuration when upgraded, and private-room information and credentials remain excluded from public projections. Consult the exact installed release guide for supported sharing controls; v7.3.3 preserves the managed sharing policy and saved choices. Full owner map exclusions are mirrored into compatible signed feeds; only map IDs leave private moderation records.
+
+The community Discord bridge and website deployments are verified. Discord cards retain artwork, maps, settings and players without map progress; website progress remains. The owner Lobby 3 Taiko pilot has verified startup, chat, map/queue selection, website and Discord presentation; actual Taiko gameplay remains pending. See [[updates:v7_2_9|release notes and qualification limits]], [[status:start|currently running rooms]] and the matching GitHub installer guides for exact protected operator commands.
+
+===== Private fleet controls =====
+
+The private fleet channel is enabled. Administrators can begin with ''.fleet hosts'', ''.fleet status owner'' and ''.fleet settings owner room2''. Hosts on older releases report unsupported capabilities until their safe update completes. Opening, closing, restarting or changing a room remains an explicit staff action; status checks do not mutate rooms.
+
+Compact central service kits must include the native mode validators and default greetings; the v7.2.9 central packaging repair and corrected source builder cover this dependency closure. Client runtime digests and the existing signed update queue are unchanged. If a deployment holds on local process cleanup, retain the exact operation and ownership state for the bounded native recovery path rather than reinstalling or repeating room creation.
+
+===== v7.2.12 first-successor activation =====
+
+On affected v7.2.9/v7.2.10 installations, the first successor can hold during root preflight before any native update is submitted. Use the pinned v7.2.12 queue-only activator with the existing instance, following [[https://github.com/Aves-Knoot/poolrotater-v7-pilot/blob/main/docs/UPDATE_QUEUE_ACTIVATION.md|the checked instructions]]. Do not reinstall, repeat OAuth or clear ownership. The older v7.2.11 activator can safely refuse an unnecessary intermediate selection; use v7.2.12 instead. ''waiting_empty'' means queued rather than installed. Keep the normal updater running; no occupied rooms are forced closed. Return any refusal and retain state.
+
+The release includes guarded local ''.stats'' access, Catch statistics downloads and private participation in player totals. See [[updates:v7_2_12|release notes and qualification limits]].
+
+For v7.2.12 use poolrotater-activate-v7.2.12-v4.py and its matching .sha256 file. Revision4 also arms the checked native timer; earlier activators are retained for history. Return the final JSON, including timer_armed, rather than manually restarting rooms.
+
+===== v7.2.13 community reporting and relay repair =====
+
+Existing v7.2.12 hosts receive the signed automatic controller successor at the safe host-wide empty-room boundary. No new activation script, reinstall, sign-in or ownership clear is needed. Older affected installations must first complete the documented v7.2.12 path above. Community panels and the command relay are independent; command relay health is recorded in state/discord-relay.json. The central hub repair does not require restarting lobby controllers. Chat-only HTTP 403 responses no longer close rooms; initial access and authentication checks remain strict. See [[updates:v7_2_13|release notes and validation limits]].
