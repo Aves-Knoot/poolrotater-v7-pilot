@@ -748,6 +748,14 @@ jQuery(function(){
             if(body)body.replaceChildren.apply(body,rows);
             var stamp=live.querySelector('[data-history-updated]');if(stamp)stamp.textContent=samples.length?'Last observation '+timeText(samples[samples.length-1][0],true):'No observations yet';
         }
+        // Live cards and history charts have separate initializer scopes.
+        // Share validated observations through the existing status event;
+        // chart labels and graph rendering stay owned by this initializer.
+        document.addEventListener('pr:lobby-status',function(event){
+            var data=event.detail;if(!live||!data||!Array.isArray(data.rooms))return;
+            var next=Array.from({length:4},function(_,i){var slot=i+1,room=data.rooms.find(function(r){return r.alias==='room'+slot;})||null;return window.prLiveOwnerRoomInfo?window.prLiveOwnerRoomInfo(room,slot).history:'Lobby '+slot;});
+            if(next.join('\n')!==labels.join('\n')){labels=next;graphs();}
+        });
         if(chartSelect){
             chartSelect.addEventListener('change',graphs);
             live.querySelector('.pr-chart-form').addEventListener('submit',function(e){e.preventDefault();graphs();});
@@ -834,9 +842,7 @@ jQuery(function(){
             var live=document.querySelector('[data-status-page]');if(!live)return;
             var rooms=valid?data.rooms:[],service=valid?data.service||{}:{};
             function roomForSlot(slot){return rooms.find(function(r){return r.alias==='room'+slot;})||null;}
-            var priorLabels=labels.join('\n');
-            labels=Array.from({length:4},function(_,i){var slot=i+1,room=roomForSlot(slot),info=window.prLiveOwnerRoomInfo?window.prLiveOwnerRoomInfo(room,slot):{history:'Lobby '+slot};return info.history;});
-            var labelsChanged=priorLabels!==labels.join('\n');
+            var labels=Array.from({length:4},function(_,i){var slot=i+1,room=roomForSlot(slot),info=window.prLiveOwnerRoomInfo?window.prLiveOwnerRoomInfo(room,slot):{history:'Lobby '+slot};return info.history;});
             labels.forEach(function(label,i){var heading=live.querySelector('[data-history-label="'+(i+1)+'"]');if(heading){var icon=heading.querySelector('i');heading.replaceChildren(...(icon?[icon,document.createTextNode(label)]:[document.createTextNode(label)]));}var th=live.querySelector('[data-history-slot="'+(i+1)+'"]');if(th)th.textContent=label;});
             live.querySelectorAll('.pr-dash-room').forEach(function(article){var slot=Number(article.id.slice(-1)),room=roomForSlot(slot),info=window.prLiveOwnerRoomInfo?window.prLiveOwnerRoomInfo(room,slot):null;if(!info)return;article.dataset.roomType=info.category;text(article,'[data-room-description]',info.description);var guide=article.querySelector('[data-room-guide]');if(guide){var url=new URL(guide.href,location.href);url.searchParams.set('id','lobbies:'+info.guide);guide.href=url.href;}});
             function metric(key,value){text(live,'[data-live-metric="'+key+'"]',value);}
@@ -863,7 +869,6 @@ jQuery(function(){
                 text(article,'[data-np-stars]',Number.isFinite(map.stars)?map.stars.toFixed(2)+'★':'Difficulty unknown');
                 text(article,'[data-np-length]',window.prLivePresentation.mapLength(map));
             });
-            if(labelsChanged)graphs();
         }
         function update(data,failed) {
             var selected=selectFrame(data,failed);if(selected.ignored)return;data=selected.data;var valid=selected.valid;

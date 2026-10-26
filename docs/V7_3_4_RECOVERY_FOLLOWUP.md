@@ -103,3 +103,18 @@ Expired player counts and playback are cleared; newer offline observations
 remain authoritative. Three QuickJS lifecycle cases, malformed-data variants,
 whole-JS syntax, actual public schema and served compiled bundle were checked.
 Bot runtime and release-asset bytes are unchanged by this website-only change.
+
+## Browser startup correction
+
+A real Chromium check reproduced `labels is not defined` during dashboard
+initialization. The dashboard had referenced variables owned by the separate
+history-chart initializer; the exception prevented status polling from
+starting and replaced healthy room cards with unavailable placeholders. The
+earlier timeout/grace change did not fix this distinct startup failure.
+
+The dashboard now owns its local labels, and the existing validated status
+event updates labels/graphs inside the chart initializer. Five focused
+QuickJS cases pass, including direct execution with no global labels/graphs.
+The actual served Chromium page now has no JavaScript errors, makes repeated
+successful status requests, and renders all four slots without false unavailable
+messages. This website-only correction required no lobby or service restart.
