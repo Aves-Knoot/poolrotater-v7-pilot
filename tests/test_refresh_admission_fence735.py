@@ -9,6 +9,9 @@ from unittest.mock import Mock, patch
 import tempfile
 import time
 import unittest
+import subprocess
+import sys
+import threading
 
 from bot.bot import LobbyBot
 from poolrotater_host.layout import LeaseBusy
@@ -68,5 +71,32 @@ class RefreshAdmissionFenceTests(unittest.TestCase):
              patch.object(update_drain, '_request_fenced', side_effect=admission):
             result = update_drain.request({'root': self.root}, {'service_uid': 123}, {}, Mock())
         self.assertEqual(result['phase'], 'requested')
+        self.assertFalse(LobbyBot._maybe_queue_automatic_hard_restart(self.bot))
+        self.bot.hard_restart_room.assert_not_called()
+
+    def test_real_child_refresh_lock_blocks_admission_and_is_released_on_crash(self):
+        # A separate process, not just a mock or a second descriptor in this
+        # process, must fence admission and release automatically on death.
+        source = str(Path(__file__).resolve().parents[1])
+        code = ('import sys,time; sys.path.insert(0,sys.argv[1]); '
+                'from poolrotater_host.refresh_fence import refresh_fence; '
+                'root=sys.argv[2]; '
+                'f=refresh_fence(root); f.__enter__(); '
+                'print("ready",flush=True); time.sleep(60)')
+        child = subprocess.Popen([sys.executable, '-B', '-c', code, source, str(self.root)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: child.poll() is None and child.kill())
+        received = []
+        reader = threading.Thread(target=lambda: received.append(child.stdout.readline()), daemon=True)
+        reader.start(); reader.join(5)
+        self.assertFalse(reader.is_alive(), 'child did not acquire the refresh lease')
+        self.assertEqual(received, ['ready\n'])
+        with patch('poolrotater_host.ratings.operations._identity', return_value=nullcontext()):
+            with self.assertRaises(LeaseBusy):
+                with update_fence(self.root, 123):
+                    self.fail('update admitted during child refresh')
+            child.kill(); child.wait(timeout=5)
+            with update_fence(self.root, 123):
+                (self.root / GATE).write_text('{}')
         self.assertFalse(LobbyBot._maybe_queue_automatic_hard_restart(self.bot))
         self.bot.hard_restart_room.assert_not_called()
