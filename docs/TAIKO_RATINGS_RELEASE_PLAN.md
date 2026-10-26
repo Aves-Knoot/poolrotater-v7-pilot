@@ -253,13 +253,35 @@ requirement-by-requirement audit remain separate completion checks.
 
 ## Follow-up rollout observation — October 26 UTC
 
-Strohm automatically installed v7.3.4: its heartbeat and updater agree, its
-two intended rooms run, and reserved slots3/4 remain stopped. No new operator
-command or rescue was issued for this transition. The owner has downloaded
-and queued v7.3.4 through the native updater; empty L1/L3 drained while the
-occupied L4 continues. L2 remains deliberately stopped. Xikeon has also downloaded v7.3.4 and entered the native waiting-empty queue
-while its v7.3.3 rooms continue; no error is reported.
-Do not treat publication, download or a stale updater report as installed.
-The current authoritative local rollout record is
-`recovery734/reports/rollout734-latest.json`. The temporary L3 drain is not
-new Taiko gameplay evidence; reverify its restored room after native commit.
+The owner and Strohm automatically installed v7.3.4. Owner registration,
+runtime and updater agree; all three intended rooms are healthy/owned and L2
+remains stopped. All six catalog bindings are unchanged. The 20 queued owner
+configuration files are preserved: 16 are byte-identical and four differ only
+by replacing version literals. The restored L3 Taiko room is 4821447; its actual
+website/Discord map, artwork, settings, queue, length and player count are now
+verified. The initial Discord artwork needed its next scheduled refresh.
+
+Xikeon's update is held with `update_maintenance_outcome_requires_review` at
+pre-admission, before incoming installation. Its occupied Standard room still
+runs on v7.3.3; empty Mania siblings drained and remain stopped. This is not
+safely queued or completed adoption. The existing independent recovery channel
+refused an inspect-only request with `rescue_update_requires_review`; it does
+not expose the uncertain worker's local guard details. A read-only standalone
+collector was prepared, hash/HTTP verified and requested from the operator.
+No root journal was cleared, admission bypassed, or occupied room force-closed.
+The goal remains incomplete while that genuine deployment hold is unresolved.
+
+An independent website-only patch gives owner status requests 15 seconds and
+keeps validated last-known room identity/map/settings for up to 180 seconds
+after producer expiry, clearly labelled delayed. Expired live occupancy and
+playback are removed; newer OFFLINE observations win, malformed/older frames
+cannot replace the validated cache. QuickJS lifecycle tests plus the actual
+public four-room frame and compiled served bundle passed. No game service
+restart was required. The immutable v7.3.4 runtime/tag are unchanged.
+
+Current proof: `recovery734/reports/owner734-final-installed-acceptance.json`,
+`owner734-post-upgrade-preservation.json`, `owner734-live-taiko-presentation.json`,
+`website-owner-freshness-deployment.json`, `website-owner-freshness-public-verification.json`,
+and `rollout734-latest.json`. Current complete eight-section audit still has
+`goal_complete:false`; its historical successful donor upgrade is not used to
+hide the live Xikeon hold.

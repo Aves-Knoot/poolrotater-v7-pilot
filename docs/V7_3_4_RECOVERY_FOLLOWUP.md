@@ -85,3 +85,21 @@ mirrors that deployed presentation change separately from frozen runtime8fe7.
 Owner L3 is Taiko automatic, L2 is reserved, L1 Catch and L4 Mania4. Three real
 scored Taiko matches and one earlier abort are recorded; each completed match
 had one participant. Multiplayer and every-command acceptance remain unproven.
+
+## Current live rollout exception
+
+The owner and Strohm installed v7.3.4 automatically with healthy intended rooms.
+The owner rechecked all six catalog bindings, retained configuration, and the
+actual restored Taiko website/Discord panel. Xikeon's outgoing v7.3.3 update
+entered a pre-admission maintenance-outcome review hold; Standard remains
+running and already-drained Mania siblings remain stopped. This is a real
+unresolved deployment issue, not successful queued delivery. The independent
+channel refused inspection, so a read-only local guard report is requested.
+No uncertain state is being cleared merely to finish the release.
+
+The owner website's independent short-outage improvement is deployed: a
+15-second request deadline and a bounded, labelled last-known details view.
+Expired player counts and playback are cleared; newer offline observations
+remain authoritative. Three QuickJS lifecycle cases, malformed-data variants,
+whole-JS syntax, actual public schema and served compiled bundle were checked.
+Bot runtime and release-asset bytes are unchanged by this website-only change.
