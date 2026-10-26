@@ -7,7 +7,7 @@ Production v7.3.4 adoption is observed separately from publication.
 
 ## Current status
 
-- Owner, Xikeon and Strohm are on the published v7.3.3 runtime
+- Before the v7.3.4 follow-up, owner, Xikeon and Strohm installed the published v7.3.3 runtime
   `45254e8a24bee3b4c86259a31528e3e06a11b54aa201afca54e63981f0e45a41`.
   R25 normal installed automatic-upgrade paths passed on H (v7.3.0) and I
   (v7.3.2), 2/2. The separate B pre-admission controller-interruption case
@@ -220,8 +220,8 @@ and the separate teardown uncertainty remain explicitly retained.
 ## 7. Publish and deploy safely
 
 R25 source, checksummed assets, signed feed, compatible hub, catalog service,
-website, and public wiki documentation are already deployed. All three
-production hosts now run v7.3.3. Preserve the explicit B failure disclosure.
+website, and public wiki documentation are already deployed. All three hosts installed v7.3.3 before this follow-up.
+The current adoption state is recorded separately below. Preserve the explicit B failure disclosure.
 v7.3.4 source, checksummed assets and signed feed are now published after exact
 installed acceptance. Catalog metadata remains current and unchanged by this
 patch. Observe adoption through supported mechanisms at safe empty-room boundaries. Respect occupied rooms and bookings;
@@ -250,3 +250,16 @@ website/Discord observation is
 `reports/r25-post-gameplay-live-taiko-presentation.json`; the website length correction is verified by
 `reports/r25-length-fallback-website-deployment.json`. v7.3.4 is accepted and published. Follow-up production adoption and the final
 requirement-by-requirement audit remain separate completion checks.
+
+## Follow-up rollout observation — October 26 UTC
+
+Strohm automatically installed v7.3.4: its heartbeat and updater agree, its
+two intended rooms run, and reserved slots3/4 remain stopped. No new operator
+command or rescue was issued for this transition. The owner has downloaded
+and queued v7.3.4 through the native updater; empty L1/L3 drained while the
+occupied L4 continues. L2 remains deliberately stopped. Xikeon has also downloaded v7.3.4 and entered the native waiting-empty queue
+while its v7.3.3 rooms continue; no error is reported.
+Do not treat publication, download or a stale updater report as installed.
+The current authoritative local rollout record is
+`recovery734/reports/rollout734-latest.json`. The temporary L3 drain is not
+new Taiko gameplay evidence; reverify its restored room after native commit.
