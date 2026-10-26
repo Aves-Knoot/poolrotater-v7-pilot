@@ -2376,6 +2376,11 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         moderator restart, it must not distract active players with countdowns
         or restart notices.
         """
+        if getattr(self, "_operator_maintenance_pending", False):
+            # A pending drain owns this lifecycle boundary. Recreating even an
+            # empty room here invalidates its pinned identity and can strand
+            # already-drained siblings. Leave the timer armed for cancellation.
+            return False
         if getattr(self, "_pending_hard_restart_maps", None) is not None:
             # Explicit map-counted restarts always take precedence over the
             # scheduled empty-room refresh.

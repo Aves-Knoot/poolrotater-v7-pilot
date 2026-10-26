@@ -39,7 +39,16 @@ class WorkerDrain:
                 **self.failure}
 
     def tick(self, bot):
-        if not self.job or self.phase in ('idle','cancelled','notice_uncertain','notice_failed'):
+        # Keep the discovery refresh from replacing the room identity pinned by
+        # the parent's empty-drain proof. This is transient main-thread state,
+        # never a change to the operator's configured refresh interval. Even a
+        # held/uncertain maintenance attempt retains this inhibition until an
+        # explicit cancellation or expiry; ordinary gameplay can continue.
+        bot._operator_maintenance_pending = bool(
+            self.job and self.phase != 'cancelled'
+            and self.job['phase'] == 'requested'
+            and time.time() < self.job['expires_at'])
+        if not self.job or self.phase in ('idle','cancelled','notice_uncertain','notice_failed','room_changed'):
             return True
         if time.time() >= self.job['expires_at']:
             self.phase = 'cancelled'; return True
@@ -55,6 +64,10 @@ class WorkerDrain:
                     bot.handle_event(name, payload)
             except queue.Empty:
                 pass
+        # A referee event handled above can replace the room. Do not publish
+        # readiness for a different identity using the old drain's consent.
+        if bot.room_id != self.room_id:
+            self.phase = 'room_changed'; return True
         safe = (bot.running and bot._room_ready and not bot._hub_rejoin_pending
                 and bot.hub.is_connected() and bot.events.empty())
         if not safe: return True
