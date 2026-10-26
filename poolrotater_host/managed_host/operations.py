@@ -90,6 +90,26 @@ def settle_closed(root,journal):
                          'revision':store.room(value['alias'])['revision']})
 
 
+def _refresh_recovery_pin(instance, record):
+    """Refresh legacy independent code only after native work has settled.
+
+    Normal already-current ticks read one protected control file; inventory and
+    ancestry checks run only when a real pin change is needed. This maintenance
+    outcome cannot grant lifecycle authority or interrupt healthy workers.
+    """
+    from ..provisioning import _control, protected
+    from ..rescue.operations import refresh_pin
+    path=Path(record['prefix'])/'recovery/configuration.json'
+    if not os.path.lexists(path):return {'status':'absent','pin_refreshed':False}
+    try:
+        config=_control(protected(path),private=True,maximum=512*1024)
+        if type(config)is dict and config.get('record')==record:
+            return {'status':'current','pin_refreshed':False}
+        return refresh_pin(instance,record)
+    except Exception:
+        return {'status':'refused','reason':'recovery_policy_unavailable','pin_refreshed':False}
+
+
 def tick(instance):
     """Only native guarded start is privileged. Provider mutations stay native.
 
@@ -130,12 +150,19 @@ def tick(instance):
         if job is not None and job.get('phase') not in ('complete','cancelled'):
             return {'ok':True,'phase':'update-in-progress','rooms_started':False,
                     'administration_agent_checked':True}
+        # A terminal native update can leave a much older independently pinned
+        # reader behind. Refresh through the registered successor after the old
+        # callback releases its policy lock; never repin during a commit.
+        recovery_pin=_refresh_recovery_pin(instance,record)
+        if recovery_pin.get('status')=='refused':
+            import logging
+            logging.getLogger(__name__).warning('independent recovery pin refresh requires review')
         from .catalog_rollout import prepare_pending
         _,catalog_requests,_=_desired(target['root'],uid)
         prepare_pending(target,record,catalog_requests)
         service=pilot._service_state(instance)
         if service['MainPID'] or service['ActiveState'] in ('active','activating','deactivating'):
-            return {'ok':True,'phase':'controller-running','rooms_started':False}
+            return {'ok':True,'phase':'controller-running','rooms_started':False,'recovery_pin':recovery_pin}
         from ..ratings.operations import _identity
         with _stopped(target['root'],uid):
             journal=_control(target['root']/'state/rolling/ownership.json',uid,private=True,optional=True)
@@ -145,7 +172,7 @@ def tick(instance):
         intent=any(r['desired']=='running' for r in caps['rooms']) and min(caps['max_concurrent_rooms'],caps['provider_room_limit'])>0
         from ..bookings.policy import startup_leases
         with _identity(uid):bookings=startup_leases(target['root'])
-        if not pending and not intent and not bookings:return {'ok':True,'phase':'intentionally-stopped','rooms_started':False}
+        if not pending and not intent and not bookings:return {'ok':True,'phase':'intentionally-stopped','rooms_started':False,'recovery_pin':recovery_pin}
         if pilot._unit(instance,optional=True) is None:
             return {'ok':False,'phase':'unit-preparation-required','rooms_started':False}
         recovery=_control(target['root']/'state/ownership-recovery.json',uid,private=True,optional=True)

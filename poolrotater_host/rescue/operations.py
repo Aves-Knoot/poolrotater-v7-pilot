@@ -2,6 +2,9 @@
 import os
 import json
 from pathlib import Path
+import re
+import shutil
+import stat
 import time
 
 from ..layout import atomic_json, file_lease
@@ -10,6 +13,56 @@ from ..provisioning import _control, protected
 from .contracts import observation
 
 NAME = 'recovery/configuration.json'
+_CONFIG_PATH = re.compile(r'config/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\Z')
+_CATALOG_MODES = frozenset(('standard','taiko','catch','loved','mania4','mania7'))
+_CATALOG_CACHE_ENTRY = re.compile(r'[a-f0-9]{64}\.(?:data|part|json)\Z')
+_DIAGNOSTIC_CONFIG_PATHS = frozenset((
+    'config/host.json','config/gameplay.json','config/integrations.json',
+    'config/managed-rooms.json','config/network.json','config/ratings.json',
+    'config/ratings-reader.json','config/reporting.json','config/discord-relay.json',
+    'config/rooms/universal.json',
+    *(f'config/rooms/room{number}.json' for number in range(1,5)),
+    *(f'config/rooms/room{number}.json.lock' for number in range(1,5)),
+))
+
+
+def _configuration_diagnostic(job,current):
+    """Return changed config path names only; never serialize config values/hashes."""
+    baseline=job.get('configuration') if type(job)is dict else None
+    if type(baseline)is not dict or len(baseline)>128:return {'status':'unavailable'}
+    if any(type(path)is not str or not _CONFIG_PATH.fullmatch(path)
+            or any(part in ('','.','..')for part in path.split('/'))
+            for path in baseline):return {'status':'invalid_baseline'}
+    paths=sorted(path for path in set(baseline)|set(current)
+                 if baseline.get(path)!=current.get(path))
+    known=[path for path in paths if path in _DIAGNOSTIC_CONFIG_PATHS]
+    return {'status':'same'if not paths else'changed','baseline_file_count':len(baseline),
+            'current_file_count':len(current),
+            'differing_paths':known[:32],
+            'unreported_difference_count':len(paths)-min(len(known),32)}
+
+
+def _catalog_ref_diagnostic(value):
+    if value is None:return {'status':'absent'}
+    modes=value.get('modes')if type(value)is dict else None
+    if (type(value)is not dict or type(value.get('serial'))is not int
+            or type(modes)is not dict or set(modes)-_CATALOG_MODES
+            or any(type(digest)is not str or re.fullmatch('[a-f0-9]{64}',digest)is None
+                   for digest in modes.values())):
+        return {'status':'invalid'}
+    return {'status':'present','serial':value['serial'],
+            'modes':{name:modes[name]for name in sorted(modes)}}
+
+
+def _catalog_journal_diagnostic(value,*,phase=False):
+    if value is None:return {'status':'absent'}
+    if type(value)is not dict:return {'status':'invalid'}
+    result={'status':'present'}
+    if phase:
+        result['phase']=value.get('phase')if value.get('phase')in('staging','ready','complete')else'unknown'
+    for name in('before','after'):
+        if name in value:result[name]=_catalog_ref_diagnostic(value.get(name))
+    return result
 
 
 def target_for(instance, pinned):
@@ -124,6 +177,115 @@ class Backend:
                                                        body=chunk, token=credential['credential']))
                 return {'phase': 'synchronized'}
 
+    def _managed_preparation_diagnostic(self,job):
+        """Summarize only bound migration progress and inventory comparisons."""
+        try:
+            from ..managed_host.upgrade import _path as prep_path,_binding as prep_binding
+            from ..managed_host.upgrade import _validate as validate_prep
+            from ..managed_host.upgrade import _inventory as current_inventory
+            from ..managed_host.upgrade import _current_matches as current_matches
+            path=prep_path(self.target,job)
+            value=_control(path,private=True,optional=True,maximum=64*1024*1024)
+            if value is None:return {'status':'absent','operation_bound':False}
+            binding=prep_binding(self.target,job)
+            if type(value)is not dict or value.get('binding')!=binding:
+                return {'status':'wrong_binding','operation_bound':False}
+            try:
+                value=validate_prep(value,binding)
+            except Exception:
+                return {'status':'invalid','operation_bound':False}
+            actual=current_inventory(self.target,job['after']['service_uid'])
+            steps=[]
+            for step in value['steps']:
+                steps.append({'name':step['name'],'complete':step['complete'],
+                              'current_inventory_matches_after':actual==step['after']})
+            return {'status':'valid','operation_bound':True,'complete':value['complete'],
+                    'step_names':[row['name']for row in steps],'steps':steps,
+                    'current_inventory_matches_recorded_state':current_matches(value,actual)}
+        except Exception:
+            return {'status':'unavailable','operation_bound':False}
+
+    def _catalog_diagnostic(self,job):
+        """Read fixed catalog reference/journal records for this installation only."""
+        try:
+            from ..catalog_store import POINTER
+            from ..provisioning import _control
+            record=job['after'];root=self.target['root'];prefix=self.target['prefix']
+            install_id=record['installation_id'];generation=record['generation']
+            store=prefix/'catalog-stores'/install_id
+            pointer=_control(root/POINTER,record['service_uid'],private=True,optional=True)
+            if pointer is None:return {'status':'pointer_absent'}
+            expected={'installation_id':install_id,'generation':generation,
+                'host_root':str(root),'service_uid':record['service_uid'],'store':str(store),'fixture':False}
+            if type(record.get('execution'))is str:expected['execution']=record['execution']
+            if any(pointer.get(key)!=value for key,value in expected.items()):
+                return {'status':'pointer_binding_mismatch'}
+            current=_control(store/'current.json',optional=True,maximum=65536)
+            pending=_control(store/'pending.json',optional=True,maximum=65536)
+            candidate=_control(store/'candidate.json',optional=True,maximum=65536)
+            prewarm=_control(store/'.staging/managed-prewarm.json',optional=True,maximum=65536)
+            standard=_control(store/'.staging/managed-standard-refresh.json',optional=True,maximum=65536)
+            return {'status':'bound','current':_catalog_ref_diagnostic(current),
+                    'pending':_catalog_journal_diagnostic(pending),
+                    'candidate':_catalog_journal_diagnostic(candidate),
+                    'prewarm':_catalog_journal_diagnostic(prewarm,phase=True),
+                    'standard_refresh':_catalog_journal_diagnostic(standard,phase=True)}
+        except Exception:
+            return {'status':'unavailable'}
+
+    def _catalog_storage_diagnostic(self):
+        """Read only fixed catalog cache metadata; never follow or reveal entries."""
+        try:
+            from ..catalog_store import RESERVE
+            prefix=protected(Path(self.target['prefix']))
+            free_bytes=shutil.disk_usage(prefix).free
+            cache=prefix/'managed-catalog-delivery'
+            try:cache_stat=cache.lstat()
+            except FileNotFoundError:
+                return {'status':'absent','filesystem_free_bytes':free_bytes,
+                        'reserve_bytes':RESERVE,'reserve_satisfied':free_bytes>=RESERVE,
+                        'cache_entry_count':0,'entry_count_capped':False,
+                        'symlink_count':0,'special_entry_count':0,'custody_fault_count':0}
+            # HttpsOrigin creates this fixed delivery cache in the administrative
+            # process context; it is not owned by the managed service UID.
+            uid=os.geteuid()
+            symlinks=0;special=0;custody=0;count=0;capped=False
+            if stat.S_ISLNK(cache_stat.st_mode):
+                symlinks=1;custody=1
+            elif not stat.S_ISDIR(cache_stat.st_mode):
+                special=1;custody=1
+            else:
+                fd=os.open(cache,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+                try:
+                    opened=os.fstat(fd)
+                    if (not stat.S_ISDIR(opened.st_mode) or opened.st_dev!=cache_stat.st_dev
+                            or opened.st_ino!=cache_stat.st_ino):
+                        return {'status':'unavailable','failure_code':'catalog_storage_diagnostic_unavailable'}
+                    if opened.st_uid!=uid or opened.st_mode&0o077:custody+=1
+                    with os.scandir(fd) as entries:
+                        for entry in entries:
+                            if count==257:
+                                capped=True;break
+                            count+=1
+                            item=entry.stat(follow_symlinks=False)
+                            if stat.S_ISLNK(item.st_mode):
+                                symlinks+=1;custody+=1;continue
+                            if not stat.S_ISREG(item.st_mode):
+                                special+=1;custody+=1;continue
+                            expected_name=(entry.name in ('.lease','origin.json')
+                                           or _CATALOG_CACHE_ENTRY.fullmatch(entry.name)is not None)
+                            if (not expected_name or item.st_uid!=uid or item.st_nlink!=1
+                                    or item.st_mode&0o077):custody+=1
+                finally:
+                    os.close(fd)
+            return {'status':'unsafe'if custody else'available',
+                    'filesystem_free_bytes':free_bytes,'reserve_bytes':RESERVE,
+                    'reserve_satisfied':free_bytes>=RESERVE,'cache_entry_count':count,
+                    'entry_count_capped':capped,'symlink_count':symlinks,
+                    'special_entry_count':special,'custody_fault_count':custody}
+        except Exception:
+            return {'status':'unavailable','failure_code':'catalog_storage_diagnostic_unavailable'}
+
     def inspect(self):
         """Report useful transition evidence without exposing config contents."""
         frame = {'observation':self.observe(),'registration':'unavailable',
@@ -133,13 +295,19 @@ class Backend:
             if job is None:
                 frame.update(registration='current',upgrade='absent',configuration='not-applicable')
                 return frame
+            restoration_code=job.get('drain_restoration_failure_code')
+            if type(restoration_code)is str:
+                from ..update_drain import RESTORATION_FAILURE_CODES
+                if restoration_code in RESTORATION_FAILURE_CODES or restoration_code=='update_guard_requires_review':
+                    frame['drain_restoration_failure_code']=restoration_code
             # Fixed diagnostic vocabulary only, not raw root job/config data.
             if job.get('reason') in (
                     'configuration_changed_since_queue',
                     'revalidating_current_configuration',
                     'waiting_for_valid_current_configuration',
                     'waiting_for_stable_current_configuration',
-                    'configuration_refreshed_waiting_for_fresh_empty_window'):
+                    'configuration_refreshed_waiting_for_fresh_empty_window',
+                    'commit_requires_review_retain_all_state'):
                 frame['update_reason'] = job['reason']
             for record in (job['before'],job['after']):
                 require(all(record.get(k)==self.pinned[k] for k in (
@@ -153,7 +321,8 @@ class Backend:
                 upgrade['phase'] if upgrade.get('before')==job['before'] and upgrade.get('after')==job['after']
                 and upgrade.get('phase') in ('prepared','committed','aborted') else 'other')
             from ..controller_update import _config_hashes
-            if _config_hashes(self.target['root']) == job['configuration']:
+            current_configuration=_config_hashes(self.target['root'])
+            if current_configuration == job['configuration']:
                 frame['configuration']='unchanged'
             else:
                 from ..updates.recovery import _configuration_matches
@@ -161,6 +330,10 @@ class Backend:
                 after = _control(protected(Path(job['after']['release'])/'release.json'))['version']
                 frame['configuration'] = ('version-stamp-only' if
                     _configuration_matches(self.target,job,before_version=before,after_version=after) else 'changed')
+            frame['configuration_detail']=_configuration_diagnostic(job,current_configuration)
+            frame['managed_preparation']=self._managed_preparation_diagnostic(job)
+            frame['catalogs']=self._catalog_diagnostic(job)
+            frame['catalog_storage']=self._catalog_storage_diagnostic()
         except Exception:
             pass
         return frame
@@ -465,3 +638,9 @@ def ensure(instance, record):
             and choices.get('controller_updates') is True and choices.get('paused') is False):
         return {'recovery_installed': False}
     return install(instance, record)
+
+
+def refresh_pin(instance, record):
+    """Expose the separate, exact-lineage recovery-pin refresh to root ticks."""
+    from .pin_refresh import refresh_pin as refresh
+    return refresh(instance, record)

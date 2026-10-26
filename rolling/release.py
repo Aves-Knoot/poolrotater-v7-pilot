@@ -67,6 +67,8 @@ SHARED += (
 )
 # Automatic drain and commit admission must always move with the controller.
 SHARED += ('poolrotater_host/controller_update.py', 'poolrotater_host/update_drain.py')
+# Independent recovery authority must move with the registered controller.
+SHARED += ('poolrotater_host/rescue/operations.py', 'poolrotater_host/rescue/pin_refresh.py')
 
 STORES = ("bot/ratings.py", "bot/ppstats.py", "bot/player_preferences.py",
           "bot/process_control.py", "bot/config_lock.py")

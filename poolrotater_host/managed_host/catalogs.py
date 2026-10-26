@@ -5,18 +5,139 @@ the same published bundles through existing TLS/TUF delivery, publishes sealed
 versions, then switches the desired reference only while workers are stopped.
 """
 import hashlib
+import http.client
 import os
 from pathlib import Path
+import ssl
+import stat
+import time
 
 from ..config import ConfigError
 from ..catalog_export import MODES
 
 
 STANDARD_REFRESH = '.staging/managed-standard-refresh.json'
+_STAGE_ATTEMPTS = 3
+_STAGE_RETRY_BACKOFF = (0.2, 0.4)
 
 
 def _require(value):
     if not value:raise ConfigError('managed_catalog_preparation_requires_review')
+
+
+def _transient_stage_failure(exc):
+    """Accept only the known resumable delivery interruption envelope."""
+    if type(exc) is not ConfigError or exc.args != ('catalog trust/validation failed: DownloadError',):
+        return False
+    from ..catalog_trust import dependencies
+    try:
+        _, _, _, errors = dependencies()
+        download_error = errors.DownloadError
+    except Exception:
+        return False
+    cause = exc.__cause__
+    if type(cause) is not download_error:
+        return False
+    # This is the one deliberately raised response-truncation marker in the
+    # authenticated fixture transport. No other DownloadError text is trusted.
+    if cause.__cause__ is None and cause.__context__ is None:
+        return cause.args == ('truncated fixture response',)
+    transient = (TimeoutError, ConnectionResetError, ConnectionAbortedError,
+                 BrokenPipeError, http.client.IncompleteRead,
+                 http.client.RemoteDisconnected)
+    seen = set()
+    retryable = False
+    chain = cause.__cause__
+    while chain is not None and id(chain) not in seen and len(seen) < 16:
+        seen.add(id(chain))
+        if isinstance(chain, ssl.SSLCertVerificationError):
+            return False
+        if type(chain) in transient:
+            retryable = True
+        chain = chain.__cause__ or chain.__context__
+    return retryable and chain is None
+
+
+def _stage_binding(store):
+    """Snapshot the refs and ownership inputs that a retry must preserve."""
+    return (str(store.root), str(store.path), bool(store.fixture), dict(store.binding),
+            store.trust.identity, store.trust.fixture,
+            store.current(allow_pending=True),
+            store._read('candidate.json', optional=True),
+            store._read('pending.json', optional=True))
+
+
+def _metadata_snapshot(store):
+    """Custody-check and hash TUF metadata before resuming a partial target."""
+    from ..catalog_trust import _cache_check
+    cache = store.path / 'cache'
+    _cache_check(cache)
+    metadata = cache / 'metadata'
+    result = []
+    if not metadata.exists():
+        return ()
+    for path in sorted(metadata.rglob('*')):
+        st = path.lstat()
+        rel = path.relative_to(cache).as_posix()
+        common = (rel, st.st_uid, stat.S_IMODE(st.st_mode), st.st_nlink,
+                  st.st_size, st.st_mtime_ns)
+        if stat.S_ISLNK(st.st_mode):
+            result.append(common + ('link', os.readlink(path)))
+        elif stat.S_ISDIR(st.st_mode):
+            result.append(common + ('dir',))
+        elif stat.S_ISREG(st.st_mode) and st.st_nlink == 1:
+            digest = hashlib.sha256()
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                opened = os.fstat(fd)
+                if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                        or (opened.st_dev, opened.st_ino, opened.st_uid,
+                            opened.st_size, opened.st_mtime_ns) !=
+                           (st.st_dev, st.st_ino, st.st_uid, st.st_size, st.st_mtime_ns)):
+                    raise ConfigError('catalog metadata custody changed')
+                with os.fdopen(fd, 'rb', closefd=False) as stream:
+                    for block in iter(lambda: stream.read(65536), b''):
+                        digest.update(block)
+                after = os.fstat(fd)
+                if (after.st_size, after.st_mtime_ns) != (opened.st_size, opened.st_mtime_ns):
+                    raise ConfigError('catalog metadata changed during retry check')
+            finally:
+                os.close(fd)
+            result.append(common + ('file', digest.hexdigest()))
+        else:
+            raise ConfigError('catalog metadata custody changed')
+    return tuple(result)
+
+
+def _stage_with_transient_retry(store, repository, modes, *, sleep=time.sleep):
+    """Resume an authenticated partial delivery without changing its authority."""
+    initial = _stage_binding(store)
+    metadata = None
+    for attempt in range(_STAGE_ATTEMPTS):
+        if attempt:
+            if _stage_binding(store) != initial:
+                raise ConfigError('managed_catalog_retry_state_changed')
+            if _metadata_snapshot(store) != metadata:
+                raise ConfigError('managed_catalog_retry_metadata_changed')
+        try:
+            return store.stage(repository, modes)
+        except ConfigError as exc:
+            if not _transient_stage_failure(exc) or attempt + 1 == _STAGE_ATTEMPTS:
+                raise
+            if _stage_binding(store) != initial:
+                raise ConfigError('managed_catalog_retry_state_changed') from None
+            # A metadata refresh may be part of the first interrupted attempt.
+            # Pin its authenticated result, then require it to stay byte-for-byte
+            # stable across every subsequent retry boundary.
+            current_metadata = _metadata_snapshot(store)
+            if metadata is not None and current_metadata != metadata:
+                raise ConfigError('managed_catalog_retry_metadata_changed') from None
+            metadata = current_metadata
+            sleep(_STAGE_RETRY_BACKOFF[attempt])
+            if _stage_binding(store) != initial:
+                raise ConfigError('managed_catalog_retry_state_changed') from None
+            if _metadata_snapshot(store) != metadata:
+                raise ConfigError('managed_catalog_retry_metadata_changed') from None
 
 
 def prepare_store(store,repository,*,owner_lease_held=False):
@@ -67,7 +188,7 @@ def prepare_store(store,repository,*,owner_lease_held=False):
         candidate=None
     if value['phase']=='staging':
         if candidate is None:
-            store.stage(repository,sorted(set(MODES)-set(before['modes'])))
+            _stage_with_transient_retry(store,repository,sorted(set(MODES)-set(before['modes'])))
             candidate=store._read('candidate.json')
         store._journal(candidate)
         after=candidate['after']
@@ -185,7 +306,7 @@ def _refresh_standard_store_locked(store, repository, *, owner_lease_held=False)
             (store.path / 'candidate.json').unlink()
             proposal = None
         if proposal is None:
-            staged = store.stage(repository, ['standard'])
+            staged = _stage_with_transient_retry(store, repository, ['standard'])
             if staged == current:
                 # CatalogStore removes candidate.json on identical content.
                 value.update(after=current, phase='complete');write(value)
@@ -212,7 +333,7 @@ def _refresh_standard_store_locked(store, repository, *, owner_lease_held=False)
              'bootstrap_sha256': store.trust.identity,
              'before': current, 'after': None, 'phase': 'staging'}
     write(value)
-    staged = store.stage(repository, ['standard'])
+    staged = _stage_with_transient_retry(store, repository, ['standard'])
     if staged == current:
         value.update(after=current, phase='complete');write(value)
         return {'ok': True, 'reference': current, 'standard_refreshed': False}

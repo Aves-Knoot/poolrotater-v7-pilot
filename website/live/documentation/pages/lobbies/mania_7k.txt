@@ -26,4 +26,3 @@ From **v6.7.18**, rooms with at least **two gameplay players** can start with **
 Newly unready players share one extra five seconds once per stay, then later maps proceed without extra grace for them. See [[wiki:unready_start|the readiness guide]] and check the room version during rollout.
 
 Current values are operator settings, not immutable release defaults. Standard Jump retains its under-90-second preference from [[updates:v6_7_20|v6.7.20]]. See [[wiki:duration_policy|duration policy and deployment protection]].
-

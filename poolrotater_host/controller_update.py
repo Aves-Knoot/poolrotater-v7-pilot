@@ -1068,23 +1068,28 @@ def _drain_restoration_needed(job):
 
 def _restore_canceled_drain(instance, target, current, job, save):
     """Keep the owned candidate timer alive until native restoration settles."""
-    from .update_drain import cancel as cancel_drain, restore
+    from .update_drain import (cancel as cancel_drain, restore,
+                               restoration_failure_code, RESTORATION_FAILURE_CODES)
     from .network.contracts import NetworkError
     if not _drain_restoration_needed(job):
         return False
     if current != job['before']:
-        save(drain_restoration_phase='requires_review')
+        save(drain_restoration_phase='requires_review',
+             drain_restoration_failure_code='update_recovery_registration_changed')
         return True
     try:
         canceled = cancel_drain(target, current, job)
         if canceled['phase'] in ('waiting', 'requires_review'):
             save(drain_restoration_phase=canceled['phase'],
+                 drain_restoration_failure_code=('update_drain_cancellation_requires_review'
+                     if canceled['phase']=='requires_review' else None),
                  drain_restoration_updated_at=time.time())
             return True
         if canceled.get('rooms') == []:
             # Admission failed before the mailbox was written; there are no
             # native closures to restore and the exact gate was released.
             save(drain_restoration_phase='complete',
+                 drain_restoration_failure_code=None,
                  drain_restoration_updated_at=time.time())
             return True
         # Valid settings saved by still-playing siblings must remain current.
@@ -1094,14 +1099,20 @@ def _restore_canceled_drain(instance, target, current, job, save):
         if _config_hashes(target['root']) != job['configuration']:
             snapshot = _configuration_snapshot(target, current)
             if snapshot is None:
-                save(drain_restoration_phase='restoring')
+                save(drain_restoration_phase='restoring',drain_restoration_failure_code=None)
                 return True
             _adopt_configuration(job, snapshot, save)
-        result = restore(target, current, job)
+        failures=[]
+        result = restore(target, current, job,diagnostic=failures.append)
+        detail=failures[-1] if failures else None
+        if type(detail)is not str or detail not in RESTORATION_FAILURE_CODES:
+            detail='update_guard_requires_review'
         save(drain_restoration_phase=result['phase'],
+             drain_restoration_failure_code=detail if result['phase']=='requires_review' else None,
              drain_restoration_updated_at=time.time())
-    except (ConfigError, NetworkError, OSError, ValueError):
+    except (ConfigError, NetworkError, OSError, ValueError) as error:
         save(drain_restoration_phase='requires_review',
+             drain_restoration_failure_code=restoration_failure_code(error),
              drain_restoration_updated_at=time.time())
     return True
 

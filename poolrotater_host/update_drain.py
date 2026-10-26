@@ -34,6 +34,53 @@ TERMINAL_MAINTENANCE=('complete','cancelled','expired','requires_review')
 REQUEST_TTL=86400
 OBSERVATION_TTL=8
 
+# Diagnostics only: these values never grant retry or restoration authority.
+# Unknown exceptions must not copy credentials, paths or provider text into
+# the root job or the independently collected operational log.
+RESTORATION_FAILURE_CODES=frozenset((
+    'update_drain_restore_requires_review',
+    'update_drain_configuration_not_refreshed',
+    'update_drain_unrelated_maintenance_pending',
+    'update_drain_restore_requires_terminal_receipt',
+    'update_drain_restore_binding_changed',
+    'update_drain_booking_active',
+    'update_drain_restore_closure_requires_review',
+    'update_drain_restore_managed_intent_changed',
+    'update_drain_restore_running_identity_changed',
+    'update_drain_restore_operation_requires_review',
+    'update_drain_restore_open_authority_requires_review',
+    'update_drain_restore_open_evidence_requires_review',
+    'update_drain_restore_projection_changed',
+    'update_drain_foreign_gate_pending',
+    'update_drain_restore_commit_already_started',
+    'update_drain_restore_reservation_changed',
+    'update_drain_request_binding_changed',
+    'update_drain_receipt_requires_review',
+    'update_drain_cancellation_requires_review',
+    'update_recovery_configuration_changed',
+    'update_configuration_binding_changed',
+    'update_recovery_registration_changed',
+))
+
+
+def restoration_failure_code(error):
+    if isinstance(error,NetworkError):
+        code=error.code
+    elif isinstance(error,ConfigError) and len(error.args)==1:
+        code=error.args[0]
+    else:
+        code=None
+    return (code if type(code)is str and code in RESTORATION_FAILURE_CODES
+            else 'update_guard_requires_review')
+
+
+def _report_restoration_failure(diagnostic,error):
+    if diagnostic is None:return
+    try:diagnostic(restoration_failure_code(error))
+    except Exception:
+        # A failed diagnostic sink cannot alter a refusal or issue a mutation.
+        pass
+
 
 def _uuid(value):
     try:return type(value) is str and str(uuid.UUID(value))==value
@@ -1262,7 +1309,7 @@ def _restore_operation(store,drain,alias,uid):
     return operation_id,value,row['phase']
 
 
-def restore(target,parent,job,*,now=None):
+def restore(target,parent,job,*,now=None,diagnostic=None):
     """Resume only exact native OPEN operations after a terminal drain outcome.
 
     This never starts a service or calls a provider. The installed controller's
@@ -1551,8 +1598,10 @@ def restore(target,parent,job,*,now=None):
         if error.code in ('update_drain_status_stale_or_incomplete','update_drain_pause_status_stale',
                           'update_drain_receipt_stale'):
             return {'phase':'waiting','request_id':drain.get('request_id'),'rooms':{}}
+        _report_restoration_failure(diagnostic,error)
         return {'phase':'requires_review','request_id':drain.get('request_id'),'rooms':{}}
-    except (ConfigError,OSError,ValueError,TypeError,KeyError,AttributeError,IndexError):
+    except (ConfigError,OSError,ValueError,TypeError,KeyError,AttributeError,IndexError) as error:
+        _report_restoration_failure(diagnostic,error)
         return {'phase':'requires_review','request_id':drain.get('request_id') if type(drain)is dict else None,
                 'rooms':{}}
 
