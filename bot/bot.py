@@ -2413,15 +2413,20 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         root = getattr(self, 'cfg', {}).get('_host_root')
         if not root:
             return restart()
+        from contextlib import ExitStack
         from poolrotater_host.config import ConfigError
         from poolrotater_host.refresh_fence import refresh_fence
+        stack = ExitStack()
         try:
-            with refresh_fence(root) as admitted:
-                return restart() if admitted else False
+            admitted = stack.enter_context(refresh_fence(root))
         except (ConfigError, OSError):
             # A busy or unavailable fence cannot justify a room recreation.
             # Leave the timer due and let the ordinary loop retry later.
             return False
+        # Provider errors after admission may indicate a partially completed
+        # recreation. Preserve the existing failure/recovery path for them.
+        with stack:
+            return restart() if admitted else False
 
     def _difficulty_vote_max_offset(self) -> float:
         """Return the temporary AutoDiff ceiling for community votes."""

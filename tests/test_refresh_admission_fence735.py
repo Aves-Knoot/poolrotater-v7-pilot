@@ -62,6 +62,17 @@ class RefreshAdmissionFenceTests(unittest.TestCase):
         self.assertFalse(LobbyBot._maybe_queue_automatic_hard_restart(self.bot))
         self.bot.hard_restart_room.assert_not_called()
 
+    def test_restart_exception_is_not_misclassified_as_fence_contention(self):
+        from poolrotater_host.config import ConfigError
+        for error in (ConfigError('restart failure'), OSError('restart failure')):
+            with self.subTest(error=type(error).__name__):
+                self.bot.hard_restart_room.side_effect = error
+                with self.assertRaises(type(error)):
+                    LobbyBot._maybe_queue_automatic_hard_restart(self.bot)
+                # The lease must be released even for an uncertain restart.
+                with refresh_fence(self.root) as admitted:
+                    self.assertTrue(admitted)
+
     def test_real_request_holds_lease_until_mailbox_gate_is_published(self):
         def admission(*args, **kwargs):
             self.assertFalse(LobbyBot._maybe_queue_automatic_hard_restart(self.bot))
