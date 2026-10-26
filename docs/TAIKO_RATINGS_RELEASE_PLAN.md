@@ -1,3 +1,15 @@
+## Latest follow-up qualification checkpoint
+
+v7.3.4 revision 1 did not pass installed acceptance: native maintenance
+admission held before commit. Its disposable services are now gracefully
+stopped, with the original job and failed receipts retained. A finite typed
+no-dispatch maintenance deferral fix passed 223 integration tests and a final
+overlapping 45-test focused milestone. The exact donor cause remains unproven.
+Prepare a new immutable candidate and a fresh primary with QA-only bounded
+tracing; do not publish or queue revision 1. See V7_3_4_RECOVERY_FOLLOWUP.md.
+Owner L2 remains Reserved. Native wiki revisions and GitHub release notes now
+include three completed Taiko matches, while public artifacts remain v7.3.3.
+
 ## Current checkpoint — all three hosts on v7.3.3; owner L3 Taiko running
 
 The owner, Xikeon and Strohm now run the exact published v7.3.3 runtime `45254e8a24bee3b4c86259a31528e3e06a11b54aa201afca54e63981f0e45a41`. The owner upgrade waited for occupied rooms to empty. Catch L1 (4819671), Taiko L3 (4819700), and Mania 4K L4 (4819667) run; L2 remains stopped/reserved. Original boot preferences and timers were restored. L3 was intentionally changed through managed configure/open operations; all other room settings were preserved except version and verified latest Standard catalog bindings. Its active automatic range can change with players; it initially selected qualified Taiko maps at 2–3★. The six-mode catalog set is `e066d55d695c35d40c6ebc4c7a84298223b62714a2ac3ccec8e4e954a884ee8e`.
@@ -6,7 +18,7 @@ Xikeon completed the ordinary automatic update with three running rooms and its 
 
 The remote completion refusal was traced separately to Strohm’s independent recovery helper still pinned to v7.2.6: its old manifest reader rejects the newer shared-contract fingerprint before dispatch. Exact public-code offline reproduction confirms that mismatch. The recovery pin and attempt counters were not modified during the successful local completion. A permanent follow-up is implemented in an isolated worktree: bounded catalog transfer retry, guarded recovery-pin refresh, and finite failure/preparation diagnostics. It remains UNPUBLISHED and UNINSTALLED until integrated validation, exact installed qualification and a new immutable release pass. Published v7.3.3 artifacts remain unchanged.
 
-Actual Discord L3 is `🟢・l3-taiko-autodiff`, with a Taiko status embed, artwork, settings and next map, without map progress. L2 was explicitly restored to `⚪・l2-reserved`. Wiki room guides and changelog now describe the current arrangement. Website hardcoded activity/home labels are being corrected separately without restarting game services. Technical startup, catalog loading, chat join, selection and owned-room health are verified; actual player gameplay observation is still pending and is not claimed.
+Actual Discord L3 is `🟢・l3-taiko-autodiff`, with a Taiko status embed, artwork, settings and next map, without map progress. L2 was explicitly restored to `⚪・l2-reserved`. Wiki room guides and changelog now describe the current arrangement. Website mode-aware home/live/activity labels are hot-deployed and HTTP-verified without restarting game services. Actual owner Taiko gameplay is verified: three completed scored matches and one earlier abort. This does not claim all commands or edge cases passed.
 
 The full goal remains active while the justified permanent follow-up and final documentation/presentation audit are completed. Historical B pre-admission interruption remains an explicitly disclosed failed legacy case; accepted H/I normal installed paths are 2/2. No inventory, ownership, authority or booking guard has been weakened.
 

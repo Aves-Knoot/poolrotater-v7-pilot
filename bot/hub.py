@@ -42,6 +42,7 @@ class HubOperationDeferred(HubDisconnected):
         "shared referee operation lock timed out": "shared_referee_operation_busy",
         "shared referee transport is disconnected": "referee_not_connected",
         "room roster requires a fresh authoritative JoinRoom": "roster_snapshot_pending",
+        "room must rejoin the new referee connection before mutation": "referee_membership_stale",
         "room is quiesced": "room_quiesced",
     }
 

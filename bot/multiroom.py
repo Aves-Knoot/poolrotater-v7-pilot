@@ -371,7 +371,7 @@ class RoomHub:
             else:
                 cached = self.joined.get(rid)
                 if not cached or cached[0] != self._generation():
-                    raise HubDisconnected("room must rejoin the new referee connection before mutation")
+                    raise HubOperationDeferred("room must rejoin the new referee connection before mutation")
             generation = self._generation()
             result = self.shared.hub.invoke(method, args, **kwargs)
             if method == "JoinRoom":
