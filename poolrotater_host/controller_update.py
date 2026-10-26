@@ -13,7 +13,7 @@ import time
 import uuid
 
 from .config import ConfigError
-from .layout import file_lease, atomic_json
+from .layout import LeaseBusy, file_lease, atomic_json
 from .provisioning import _control, _write, _provision, protected
 from .pilot_installation import RESERVE
 from .pilot_upgrade import _binding, require_repair_compatible
@@ -1004,6 +1004,11 @@ def _step_independent_drain(instance, target, parent, job, save, *, now):
             return True
     try:
         result = request(target, parent, job, save, now=lambda: now)
+    except LeaseBusy:
+        # A scheduled refresh owns the admission lease. Retry from a fresh
+        # snapshot rather than falling through to the legacy all-room gate.
+        save(empty_since=None, reason='waiting_for_scheduled_room_refresh')
+        return True
     except (ConfigError, NetworkError, OSError, ValueError):
         # A fresh request has not authorized any closure if admission failed.
         # Once a request exists, retain its operation and keep retrying fresh

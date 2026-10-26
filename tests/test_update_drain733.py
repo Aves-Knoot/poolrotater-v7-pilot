@@ -43,6 +43,7 @@ class UpdateDrainRequestTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name)/'host';setup(self.root)
+        (self.root/'state/rolling').mkdir(mode=0o700,parents=True,exist_ok=True)
         self.prefix=Path(self.tmp.name)/'prefix';self.prefix.mkdir(mode=0o700)
         self.marker,self.parent,self.job=binding(self.root,self.prefix)
         self.initial={'room1':initial_alias()}

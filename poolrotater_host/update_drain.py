@@ -966,6 +966,15 @@ def _rebase_configuration(target,parent,job,drain,progress,*,now):
 
 
 def request(target,parent,job,save,*,now=time.time):
+    # Workers hold this same lease throughout scheduled recreation. Once the
+    # gate is published they see it under the lease and defer until it clears.
+    # Busy is a pre-admission retry, never authority to close any room.
+    from .refresh_fence import update_fence
+    with update_fence(target['root'],parent['service_uid']):
+        return _request_fenced(target,parent,job,save,now=now)
+
+
+def _request_fenced(target,parent,job,save,*,now=time.time):
     """Create/replay the exact empty-room mailbox request; caller holds deployment admission.
 
     This helper never closes rooms. Existing controllers execute the mailbox.

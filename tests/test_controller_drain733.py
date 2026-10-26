@@ -83,6 +83,20 @@ class ControllerDrainIntegrationTests(unittest.TestCase):
         self.assertEqual(self.job['phase'],'waiting_empty')
         self.assertEqual(self.job['reason'],'draining_each_room_when_empty')
 
+    def test_busy_refresh_retries_without_legacy_all_empty_admission(self):
+        from poolrotater_host.layout import LeaseBusy
+        def save(**values): self.job.update(values)
+        with patch('poolrotater_host.update_drain._pending_configuration_work',return_value=[]), \
+             patch('poolrotater_host.update_drain.request',side_effect=LeaseBusy('busy')), \
+             patch.object(update,'_gate') as gate, patch.object(update,'_commit') as commit:
+            accepted=update._step_independent_drain('invented',self.target,self.parent,
+                                                   self.job,save,now=100.)
+        self.assertTrue(accepted)
+        self.assertEqual(self.job['phase'],'waiting_empty')
+        self.assertEqual(self.job['reason'],'waiting_for_scheduled_room_refresh')
+        self.assertIsNone(self.job['empty_since'])
+        gate.assert_not_called();commit.assert_not_called()
+
     def test_commit_revalidates_after_hashing_and_after_gate(self):
         result=self.step(phase='complete',rows=self.rows)
         self.assertTrue(result[0]);result[-1].assert_called_once()

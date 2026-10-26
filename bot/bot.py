@@ -2401,13 +2401,27 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 )
             return False
 
-        self._automatic_hard_restart_waiting_for_empty = False
-        log.info("automatic hard restart proceeding for empty room %s", self.room_id)
-        return self.hard_restart_room(
-            announce=False,
-            close_delay_seconds=self._hard_restart_close_delay_seconds(),
-            close_reason="automatic_hard_restart",
-        )
+        def restart():
+            self._automatic_hard_restart_waiting_for_empty = False
+            log.info("automatic hard restart proceeding for empty room %s", self.room_id)
+            return self.hard_restart_room(
+                announce=False,
+                close_delay_seconds=self._hard_restart_close_delay_seconds(),
+                close_reason="automatic_hard_restart",
+            )
+
+        root = getattr(self, 'cfg', {}).get('_host_root')
+        if not root:
+            return restart()
+        from poolrotater_host.config import ConfigError
+        from poolrotater_host.refresh_fence import refresh_fence
+        try:
+            with refresh_fence(root) as admitted:
+                return restart() if admitted else False
+        except (ConfigError, OSError):
+            # A busy or unavailable fence cannot justify a room recreation.
+            # Leave the timer due and let the ordinary loop retry later.
+            return False
 
     def _difficulty_vote_max_offset(self) -> float:
         """Return the temporary AutoDiff ceiling for community votes."""
