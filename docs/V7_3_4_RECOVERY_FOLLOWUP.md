@@ -1,89 +1,87 @@
-# v7.3.4: catalog transfer and independent recovery follow-up
+# v7.3.4: catalog, maintenance and independent recovery
 
-Status: revision 1 is unaccepted and retired from donor execution. Its retained runtime SHA-256 is
-`3048267e3f0cb5228604507167463b823ba069b4ad2d4fcfb6af3434c5572960`.
-A revised candidate is being prepared; nothing from v7.3.4 is published or queued.
-Only the exact published v7.3.3 predecessor is newly admitted. The v7.3.2
-qualification peer is retained for isolation checks and is not an advertised
-v7.3.4 predecessor. The v7.2.6 archive is a historical recovery-reader fixture,
-not evidence of a tested direct upgrade.
-
-The live v7.3.3 rollout completed on the owner, Xikeon and Strohm. Strohm's
-retained Standard download resumed successfully using the installed native
-completion. Its independent helper was still pinned to v7.2.6, whose older
-manifest reader refused the newer contract before dispatch. This follow-up
-addresses that demonstrated future recovery gap without changing room settings.
+Published on GitHub and the signed pilot feed on October 26 UTC. Runtime:
+`1392bb5226526228c6f5d02803f1cfaac5dc438ee7be403c0dd570469d1006ce`;
+matching source: `8fe7dd8837f700d11ea5cd75ff56e9f5fcf3ca3f`.
+The sole direct predecessor is the exact published v7.3.3 runtime
+`45254e8a24bee3b4c86259a31528e3e06a11b54aa201afca54e63981f0e45a41`.
+The v7.3.2 cold peer and historical v7.2.6 reader are not direct predecessors.
 
 ## Changes
 
-- Managed catalog staging retries known transient transport failures at most
-  three times, reusing the same verified cache and partial download. Hash,
-  schema, certificate, identity, custody and policy failures stay refused.
-- After a verified completed upgrade, managed reconciliation can refresh only
-  the independent helper's registered-runtime pin. Exact installation identity,
-  complete committed lineage, current inventories, unchanged launcher bytes,
-  settled transactions and root-owned policy are required. Existing disabled
-  and recovery-permission choices are preserved.
-- Pin refresh serializes with both the direct installer and the recovery policy
-  lock. Contention defers without changing config; no room start, update grant
-  or room mutation is added by the refresh.
-- Restoration and preparation diagnostics report finite known reasons, bounded
-  public catalog/storage state and allowlisted config path names. They preserve
-  primary failures and expose no arbitrary exception contents or secrets.
+- Managed catalog staging retries known temporary transport failures at most
+  three times, preserving verified partial data/cache. Certificate, hash,
+  schema, identity, custody and policy failures remain refused.
+- After a settled verified upgrade, managed reconciliation refreshes only the
+  independent helper's registered-runtime pin. Exact identity, committed
+  lineage, matching inventories, unchanged launcher and root-owned policy are
+  required. Installer and recovery-policy locks serialize the operation.
+  Existing disabled/recovery-permission choices remain preserved; the refresh
+  does not start or restart a room or grant an update.
+- Known local pre-dispatch maintenance deferrals retain the gate and retry.
+  The same error after dispatch remains uncertain and fenced. Unknown outcomes
+  are never treated as permission to repeat a mutation.
+- Preparation/restoration diagnostics use finite reasons and bounded public
+  storage/catalog metadata. Primary failures are retained; arbitrary exception
+  contents and credentials are excluded.
 
 ## Validation
 
-The affected integration matrix passed 298 tests in 76.641 seconds. The final
-pin/managed subset passed 9 tests after the unsafe-directory and installer-lock
-review fixes; these overlapping counts are not added together. A separate real
-signed TUF/HTTPS full-catalog fixture passed with a truncated Standard response,
-verified HTTP range resume, one staged candidate and an unchanged current
-reference. This is transport-component evidence, not installed-update evidence.
+298 affected tests and 223 maintenance integration tests passed, followed by
+45 overlapping focused checks. These counts are not additive. Four finalizer
+contract checks, five promotion metadata tests, and real local artifact
+promotion also passed. The frozen runtime remained unchanged throughout
+packaging-tool corrections.
 
-The retained revision-1 artifact is reproducible, classifies as a controller upgrade, and
-keeps storage and environment fingerprints unchanged. All 322 nongenerated
-payload files match the reviewed source. Exact installed automatic upgrade
-qualification is pending; publication and safe empty-room rollout require its
-positive native commit and post-health evidence. The previous failed legacy
-pre-admission controller-fault case remains disclosed, not counted as recovered.
+The exact installed v7.3.3-to-v7.3.4 donor run used all six full catalogs and
+invented providers/test credentials. Genuine native queue/commit receipts prove
+booking/occupied-match protection, independently drained siblings, deliberately
+stopped slots, preserved waiting configuration edits, resumed runtime download,
+interrupted-helper recovery, and unchanged credentials/history/settings.
+Registration, runtime and updater agreed after commit. The second read-only
+post-health observation verified reporting, ratings, statistics and synthetic
+Discord routing after they caught up naturally. Scheduled managed reconciliation
+refreshed the recovery pin for that same completed operation without changing
+controller PID, room IDs or MakeRoom count.
 
-## Remaining work
+Acceptance receipt SHA-256:
+`b776c53c9b2cd0508ba3c243a213529538834844675abdf13a1acb8c9d2d43a2`.
+The separate signed HTTPS full-Standard fixture also proved interrupted catalog
+range resume; this is component evidence, not installed catalog-fault evidence.
 
-1. Qualify the exact v7.3.3 to v7.3.4 installed automatic path with full catalogs
-   and invented providers. Preserve room intent, valid waiting config changes,
-   occupied rooms/bookings, helper retry, native commit and health checks.
-2. Verify the stale recovery pin advances through guarded installed code and
-   that independent recovery still operates afterward.
-3. Publish matching immutable source/artifacts and the signed update only after
-   acceptance; queue safe room draining and observe actual client adoption.
-4. Keep owner L2 reserved; the selected Taiko pilot is owner L3. Actual Taiko
-   gameplay is verified: three completed scored matches and one earlier abort;
-   this does not claim every command or gameplay edge case has been exercised.
+Initial observations are retained, including the first not-yet-current health
+sample and a pin observer that refused before mutation because the recovery
+helper was not quiescent. A later bounded observer paused/restored only the test
+recovery timer and produced the positive pin receipt. The subsequent explicit
+donor teardown encountered an uncertain fake-room close. Its journal was
+retained unchanged; the synthetic namespace was retired with no service-UID
+processes remaining. That teardown is not claimed as clean shutdown acceptance.
 
-## Maintenance qualification finding and revised candidate
+Earlier R1 and R25 failure trials remain historical unaccepted evidence. In
+particular, the old pre-admission controller fault is not silently relabeled as
+recovered. No zero-failure guarantee is made.
 
-The first installed donor run did not pass. After a separate observer timed
-out during SCORING, its native job entered an admission hold because a room
-reported an uncertain maintenance lock. No commit or registration change
-occurred. The original referee reply was not retained, so its precise cause
-is unproven. HTTP pacing counters do not establish a referee mutation outcome.
-All failed-run receipts and the held native job were retained. Only this
-disposable run's units were gracefully stopped; production was unaffected.
+## Publication and adoption
 
-A reproduced latent problem is now fixed in the revised source: finite local
-referee refusals that occur before dispatch have a typed no-dispatch result.
-Maintenance may defer and retry these known refusals while retaining the
-room's fence; a genuinely unknown mutation still requires reconciliation and
-is never blindly replayed. Wrong-room authority and malformed remote error
-payloads remain refused. Lock, roster, connection, membership and quiescence
-guards are covered. Existing wire messages and the four maintenance status
-fields remain compatible.
+Matching source/tag and eight checksummed assets are published at
+https://github.com/Aves-Knoot/poolrotater-v7-pilot/releases/tag/v7.3.4 .
+Signed metadata sequence 46 / release sequence 35 offers this controller update
+from v7.3.3, preserving prior descriptors and the existing trust root. Compatible
+hub wire components are unchanged, so no hub restart was needed.
 
-The maintenance integration milestone passed 223 tests in 413.76 seconds.
-After adding the stale-membership guard, 45 relevant focused tests passed in
-299.87 seconds; these overlapping counts must not be added together.
-A fresh installed qualification will use a new v7.3.3 primary, the existing
-v7.3.2 cold preservation peer, full catalogs and bounded QA-only call tracing.
-The cold peer is not evidence of live mixed-version wire operation. Publication
-requires the revised exact artifact's native commit, post-health and scheduled
-recovery-pin refresh receipts; revision 1 supplies none of those.
+Existing hosts use their saved automatic-update policy at safe empty-room
+boundaries. Occupied rooms and bookings remain protected, and intentionally
+stopped slots stay off. Publication and a completed download are not evidence
+that a host installed the release. Consult current host reports and live room
+versions for rollout status; no new operator command is required for the
+qualified path.
+
+## Website-only follow-up
+
+The deployed website prefers bounded total length and falls back to labelled
+Play length when only hit length is known. Six PHP/QuickJS/mode fixtures and a
+fresh public website/Discord observation passed. This documentation commit
+mirrors that deployed presentation change separately from frozen runtime8fe7.
+Owner L3 is Taiko automatic, L2 is reserved, L1 Catch and L4 Mania4. Three real
+scored Taiko matches and one earlier abort are recorded; each completed match
+had one participant. Multiplayer and every-command acceptance remain unproven.

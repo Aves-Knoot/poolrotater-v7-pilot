@@ -3,6 +3,14 @@
 function prLiveEscape($value) { return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function prLiveNumber($value) { return is_int($value) && $value > 0 && $value <= 9007199254740991; }
 function prLiveClock($seconds) { $seconds=max(0,(int)$seconds); return floor($seconds/60).':'.str_pad((string)($seconds%60),2,'0',STR_PAD_LEFT); }
+function prLiveMapLength($map) {
+    $map=is_array($map)?$map:[];
+    $total=$map['total_length']??null;
+    if((is_int($total)||is_float($total))&&is_finite((float)$total)&&$total>0&&$total<=86400)return prLiveClock($total);
+    $play=$map['hit_length']??null;
+    if((is_int($play)||is_float($play))&&is_finite((float)$play)&&$play>0&&$play<=86400)return 'Play length '.prLiveClock($play);
+    return 'Length unknown';
+}
 function prLiveRoomMode($room) {
     $room=is_array($room)?$room:[];$settings=is_array($room['settings']??null)?$room['settings']:[];
     $type=$room['type']??null;
@@ -98,7 +106,7 @@ function prLiveCard($room,$fresh,$compact=false,$now=null) {
     $out.='<div class="'.($compact?'pr-np-main':'pr-np-map').'"><div class="pr-np-copy"><a class="pr-np-title"'.(prLiveNumber($map['beatmap_id']??null)?' href="https://osu.ppy.sh/beatmaps/'.$map['beatmap_id'].'" target="_blank" rel="noopener noreferrer"':'').' title="'.prLiveEscape($title).'">'.prLiveEscape($title).'</a><p class="pr-np-artist">'.prLiveEscape($subtitle?:'Automatic multiplayer').'</p><div class="pr-np-status"><span class="pr-np-phase" data-phase="'.prLiveEscape($state).'"><i aria-hidden="true"></i><span>'.prLiveEscape($states[$state]).'</span></span><span class="pr-np-clock">'.($timing?'Estimated '.prLiveClock($timing['elapsed']).' / '.prLiveClock($timing['duration']):'').'</span></div></div>';
     if($compact)$out.='<a class="pr-np-join"'.($join?' href="osu://room/'.$id.'"':' aria-disabled="true"').' aria-label="Join '.prLiveEscape($label).' in osu!">Join ↗</a>';
     $out.='</div>';
-    if(!$compact){$out.='<div class="pr-map-facts"><span data-np-stars>'.(is_numeric($map['stars']??null)?number_format((float)$map['stars'],2).'★':'Difficulty unknown').'</span><span data-np-length>'.(is_numeric($map['total_length']??null)?prLiveClock($map['total_length']):'Length unknown').'</span></div>';if($fresh&&is_int($room['playing_players']??null)&&$room['playing_players']>=0&&$room['playing_players']<=128)$out.='<p class="pr-live-participants">'.$room['playing_players'].' playing now</p>';if($fresh&&is_int($room['match_participants']??null)&&$room['match_participants']>=0&&$room['match_participants']<=128)$out.='<p class="pr-live-participants">'.$room['match_participants'].' players at match start</p>';}
+    if(!$compact){$out.='<div class="pr-map-facts"><span data-np-stars>'.(is_numeric($map['stars']??null)?number_format((float)$map['stars'],2).'★':'Difficulty unknown').'</span><span data-np-length>'.prLiveMapLength($map).'</span></div>';if($fresh&&is_int($room['playing_players']??null)&&$room['playing_players']>=0&&$room['playing_players']<=128)$out.='<p class="pr-live-participants">'.$room['playing_players'].' playing now</p>';if($fresh&&is_int($room['match_participants']??null)&&$room['match_participants']>=0&&$room['match_participants']<=128)$out.='<p class="pr-live-participants">'.$room['match_participants'].' players at match start</p>';}
     $out.='<div class="pr-np-progress"'.(!$timing?' hidden':'').' role="progressbar" aria-label="Estimated song progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'.($timing?round($timing['ratio']*100):0).'"><span style="transform:scaleX('.($timing?round($timing['ratio'],4):0).')"></span></div>';
     if(!$compact)$out.='<div class="pr-np-bottom"><a class="pr-np-join"'.($join?' href="osu://room/'.$id.'"':' aria-disabled="true"').' aria-label="Join '.prLiveEscape($label).' in osu!">Join lobby ↗</a>'.($join&&$community?'<a class="pr-community-view" href="https://osu.ppy.sh/multiplayer/rooms/'.$id.'" target="_blank" rel="noopener noreferrer">View room ↗</a>':'').'</div>';
     return $out.'</div></div>';

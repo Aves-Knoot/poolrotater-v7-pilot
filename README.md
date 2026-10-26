@@ -1,9 +1,12 @@
 # PoolRotater distributed host
 
-R25 v7.3.3 has passed the two normal installed automatic-upgrade paths from
-v7.3.0 and v7.3.2. One additional pre-admission controller-interruption case
-failed before the candidate could be installed; it remains an explicit legacy
-limitation and is not claimed as recovered. Install only matching GitHub release assets or the signed automatic update. See [release details and qualification](docs/V7_3_3_TAIKO_RATINGS.md).
+v7.3.4 is published on GitHub and the signed pilot update feed. Its exact
+installed automatic-upgrade path from v7.3.3 passed with all six full catalogs,
+occupied-room/booking protection and preserved configuration. See
+[recovery follow-up and validation limits](docs/V7_3_4_RECOVERY_FOLLOWUP.md).
+Taiko fixed/automatic rooms, shared feedback and ruleset-separated statistics
+remain as introduced in [v7.3.3](docs/V7_3_3_TAIKO_RATINGS.md). Publication is
+separate from actual host installation; the existing updater drains safely.
 Use the installer ZIP asset of an accepted GitHub release; source archives do
 not install a protected runtime.
 

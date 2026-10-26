@@ -1,331 +1,252 @@
-## Latest follow-up qualification checkpoint
+# PoolRotater ratings and Taiko release plan
 
-v7.3.4 revision 1 did not pass installed acceptance: native maintenance
-admission held before commit. Its disposable services are now gracefully
-stopped, with the original job and failed receipts retained. A finite typed
-no-dispatch maintenance deferral fix passed 223 integration tests and a final
-overlapping 45-test focused milestone. The exact donor cause remains unproven.
-Prepare a new immutable candidate and a fresh primary with QA-only bounded
-tracing; do not publish or queue revision 1. See V7_3_4_RECOVERY_FOLLOWUP.md.
-Owner L2 remains Reserved. Native wiki revisions and GitHub release notes now
-include three completed Taiko matches, while public artifacts remain v7.3.3.
+This plan preserves the eight original work areas and records current evidence
+without treating old queued/held snapshots as current state. It is internal
+planning material. R25 v7.3.3 and the accepted v7.3.4 follow-up are published.
+Production v7.3.4 adoption is observed separately from publication.
 
-## Current checkpoint — all three hosts on v7.3.3; owner L3 Taiko running
+## Current status
 
-The owner, Xikeon and Strohm now run the exact published v7.3.3 runtime `45254e8a24bee3b4c86259a31528e3e06a11b54aa201afca54e63981f0e45a41`. The owner upgrade waited for occupied rooms to empty. Catch L1 (4819671), Taiko L3 (4819700), and Mania 4K L4 (4819667) run; L2 remains stopped/reserved. Original boot preferences and timers were restored. L3 was intentionally changed through managed configure/open operations; all other room settings were preserved except version and verified latest Standard catalog bindings. Its active automatic range can change with players; it initially selected qualified Taiko maps at 2–3★. The six-mode catalog set is `e066d55d695c35d40c6ebc4c7a84298223b62714a2ac3ccec8e4e954a884ee8e`.
+- Owner, Xikeon and Strohm are on the published v7.3.3 runtime
+  `45254e8a24bee3b4c86259a31528e3e06a11b54aa201afca54e63981f0e45a41`.
+  R25 normal installed automatic-upgrade paths passed on H (v7.3.0) and I
+  (v7.3.2), 2/2. The separate B pre-admission controller-interruption case
+  failed closed before candidate code ran; it remains a disclosed legacy
+  failure, not accepted recovery. See
+  `reports/r25-final-acceptance-manifest.json` and
+  `reports/r25-final-installed-acceptance.json`.
+- Current owner rooms are Catch L1, Taiko L3, and Mania 4K L4; L2 remains
+  reserved/stopped. The latest presentation capture identifies Taiko room 4821188 and map
+  84910. Empty-room refresh can replace room IDs; use the live site for the
+  current join link. Gameplay evidence records three
+  completed scored matches and one abort across successive L3 room IDs; each
+  completed match had one participant. This proves observed gameplay, not
+  multiplayer or broader player acceptance. See
+  `reports/r25-owner-taiko-actual-gameplay.json` and
+  `reports/r25-post-gameplay-live-taiko-presentation.json`.
+- Wiki/public documentation revision `0e860c2` and the five-page verification
+  are retained in `reports/r25-taiko-gameplay-wiki-verification.json`.
+  Website and Discord presentation were checked against the current L3. The
+  capture exposed a website-length display bug when `hit_length` is present
+  without `total_length`. A reviewed PHP/JS correction is deployed: valid total
+  length is preferred, otherwise the site labels the value as Play length.
+  Six offline PHP/QuickJS/mode fixtures passed. A fresh HTTP/Discord capture
+  verifies map, range/settings, zero-player idle state, artwork, queue and length;
+  idle playback is correctly null and does not establish a current playing timer.
+- v7.3.4 is published with exact installed acceptance from v7.3.3. Runtime
+  `1392bb5226526228c6f5d02803f1cfaac5dc438ee7be403c0dd570469d1006ce`, source
+  `8fe7dd8837f700d11ea5cd75ff56e9f5fcf3ca3f`. Acceptance receipt
+  `R734_INSTALLED_ACCEPTANCE.json` SHA
+  `b776c53c9b2cd0508ba3c243a213529538834844675abdf13a1acb8c9d2d43a2`
+  binds genuine native queue/commit, positive post-health and scheduled pin
+  refresh. Signed metadata46/release35 is active. Do not replay terminal run
+  phases. See `V7_3_4_RECOVERY_FOLLOWUP.md` for limits and retained failures.
+- Strohm's R25 held transaction ultimately completed through the installed
+  v7.3.3 native entry, resuming the same verified partial Standard download
+  from 19,890,176 to 21,077,643 bytes. The recovery helper's v7.2.6 pin
+  mismatch and R2 bounded retry/pin-refresh follow-up remain separately
+  documented. The follow-up is published separately as v7.3.4; it does not
+  change the v7.3.3 artifact.
 
-Xikeon completed the ordinary automatic update with three running rooms and its fourth deliberately stopped. Strohm supplied successful completion evidence: the installed v7.3.3 native entry resumed the retained Standard download from 19,890,176 to 21,077,643 bytes, completed the same held transaction, and started Loved (4819713) and Standard fixed (4819715); rooms 3/4 stayed stopped. Configuration/revisions, OAuth, enrollment, timers, ratings and history were preserved. Updater registration/version agree, with no pending error. No human diagnostic input remains missing.
-
-The remote completion refusal was traced separately to Strohm’s independent recovery helper still pinned to v7.2.6: its old manifest reader rejects the newer shared-contract fingerprint before dispatch. Exact public-code offline reproduction confirms that mismatch. The recovery pin and attempt counters were not modified during the successful local completion. A permanent follow-up is implemented in an isolated worktree: bounded catalog transfer retry, guarded recovery-pin refresh, and finite failure/preparation diagnostics. It remains UNPUBLISHED and UNINSTALLED until integrated validation, exact installed qualification and a new immutable release pass. Published v7.3.3 artifacts remain unchanged.
-
-Actual Discord L3 is `🟢・l3-taiko-autodiff`, with a Taiko status embed, artwork, settings and next map, without map progress. L2 was explicitly restored to `⚪・l2-reserved`. Wiki room guides and changelog now describe the current arrangement. Website mode-aware home/live/activity labels are hot-deployed and HTTP-verified without restarting game services. Actual owner Taiko gameplay is verified: three completed scored matches and one earlier abort. This does not claim all commands or edge cases passed.
-
-The full goal remains active while the justified permanent follow-up and final documentation/presentation audit are completed. Historical B pre-admission interruption remains an explicitly disclosed failed legacy case; accepted H/I normal installed paths are 2/2. No inventory, ownership, authority or booking guard has been weakened.
-
-Historical candidate ZIPs (46; 1,223,161,652 bytes) are SHA256-verified at `/mnt/poolrotater-storagebox/development-archives/v733-candidate-revisions-20261025`; current artifacts remain local. Do not replay terminal owner coordinators, old publication scripts or completed recovery requests.
-
-# PoolRotater v7.3.3 ratings and Taiko release plan
-
-> Current live rollout: all three hosts installed v7.3.3; owner L3 Taiko is running.
-> Strohm completed the held transaction with retained partial-download resume.
-> The permanent catalog/recovery follow-up is unpublished; gameplay remains a
-> separate observation. See the current checkpoint above; older rollout notes below
-> describe evidence and intermediate states, not present host status.
-
-
-> R25 v7.3.3 passed normal installed automatic-upgrade acceptance on H (v7.3.0) and I (v7.3.2), 2 of 2. The unchanged validator checked all six evidence references for each path. A separate B pre-admission controller-interruption case failed before candidate code could be installed; it is a known legacy limitation, excluded from acceptance and disclosed for release. Proceed with the proven normal update path while retaining that exception. R25 is published on GitHub and the signed pilot feed; the compatible hub, actual Discord bridge and website are deployed. All three live hosts are now on v7.3.3 and the owner L3 technical pilot runs. The permanent follow-up and final evidence audit remain incomplete.
+Earlier pre-pilot plans, queue reports, live holds, and interim host snapshots
+are historical evidence only. In particular, the R25 pre-pilot audit and older
+sections of the source plan that say clients are queued, the owner pilot is
+pending, or no Taiko gameplay occurred have been superseded by the receipts
+above. The failed B trial remains a real exception and must not be relabeled as
+success.
 
 ## Goal and acceptance rule
 
-Complete the next PoolRotater release by fixing ratings synchronization delays,
-integrating the retained Taiko research into a working Taiko lobby, and
-releasing it through the existing automatic update system. Use the latest
-verified source and installed registrations; check concurrent work before
-assigning the tentative v7.3.3 version. Reuse the existing engine, catalog,
-fleet, and deployment mechanisms.
-
-This remains a tested release requirement: preserve existing host configuration
-and require no new installation commands, OAuth authorization, enrollment,
-manual migration, rescue script, or operator credential setup. A download or
-queued update is not acceptance. Preserve passwords, administrators, visibility,
-room ceilings, catalogs, enrollment, OAuth, ratings, and history; do not weaken
-inventory, identity, booking, or ownership checks to force an update through.
-
-## Current state
-
-- R25 is frozen at runtime `45254e8a24bee3b4c86259a31528e3e06a11b54aa201afca54e63981f0e45a41` with 324 payload files and 27 wheels;
-  storage and environment are unchanged. The source preflight confirms that
-  the source files match the candidate.
-- H's exact v7.3.0 automatic-upgrade path is accepted using the six retained
-  receipts in `donor-tools/reports/accepted-H-r25/references.json`. They verify
-  automatic queueing, occupied-match and booking protection, a valid waiting
-  configuration change, interrupted-download resume, automatic helper retry,
-  native commit, and post-upgrade health. The preserved room3 countdown edit,
-  intended running/stopped rooms, ratings, and catalog references were checked.
-  The extra controller-fault hook was not exercised; it is not claimed as a
-  completed scenario.
-- The normal v7.3.2 path passed on fresh I under `taiko733-d7d658189a`, with the
-  required updater-helper interruption enabled. Its native update completed
-  automatically and post-upgrade health passed; six sealed references are in
-  `donor-tools/reports/accepted-I-r25/references.json`. The unchanged validator
-  accepts both normal predecessor paths (2 of 2). A separate B pre-admission
-  controller interruption failed before the incoming candidate could run; that
-  extra case is not accepted as recovery and remains a documented legacy limit.
-  The release proceeds on the two validated normal paths with this exception
-  disclosed. GitHub/source/artifacts, compatible hub and actual Discord bridge,
-  website, signed feed and six wiki pages are published. Client adoption, the
-  owner pilot and final completion audit remain incomplete.
-- Catalog service publication 17 is complete and must not be replayed. Matching
-  R25 hub and website deployments are verified. Signed metadata sequence 45
-  offers the exact controller to v7.3.0/v7.3.1/v7.3.2. Owner operation
-  `83e0096d-6791-4a19-880f-549c72e71673` downloaded the full artifact and is
-  draining empty siblings while the occupied 4K room continues. Queued is not
-  installed. Both Xikeon and Strohm subsequently discovered, fully downloaded and queued
-  v7.3.3 through ordinary polling with no updater error or operator command.
-  Their installation is still pending safe boundaries; the selected owner L3
-  pilot remains pending the owner upgrade.
-- Historical broad and feature results are reused only for unchanged code.
-  The loopback ratings component proof records verified replies in 5.078s and
-  5.074s, plus same-event recovery after HTTP 503. It is not installed TLS,
-  actual Discord, or live gameplay proof. Retained acceptance receipts and
-  requirement evidence reports separate evidence categories from remaining
-  release gates.
-- Supplemental Taiko-configured difficulty voting, AFK/countdown, in-place
-  transport recovery, missed-start recovery, and Discord label/card checks now
-  cover 55 effective passing cases with the existing related tests. The initial
-  batch had 54 passes and one incorrect new test assertion about retained
-  one-time AFK grace history; that assertion was corrected and its test passed.
-  Unchanged passing tests were not repeated. Both XML outcomes are retained in
-  `reports/r25-taiko-parity-supplement.json`. All 324 source payloads still match
-  frozen R25; test files are outside its runtime payload.
+Fix ratings synchronization delays, integrate the verified Taiko research into
+a working Taiko lobby, and deliver updates through the existing automatic
+system. Preserve installed configurations and require no new install command,
+OAuth authorization, enrollment, manual migration, rescue script, or new
+operator credential setup. A download or queued update alone is not acceptance.
+Preserve passwords, administrators, visibility, room limits, catalog state,
+enrollment, OAuth, ratings, history, and intended room state. Do not weaken
+inventory, ownership, authority, or booking checks to force progress.
 
 ## 1. Baseline and implementation control
 
-Inspect current source, feeds, host versions, pending transactions, room intent,
-and booking reservations before changes. Use isolated worktrees/checkouts and
-avoid modifying another development thread. Keep version selection coordinated
-with concurrent work. Use GPT-6 Luna workers for bounded tasks with explicit file ownership and
-acceptance criteria; review/integrate each contribution before publication.
-Keep shared contracts, signing credentials, integration review, and production
-deployment under the coordinator's control with no overlapping file ownership.
+Use verified source, release-feed and installed-host registrations as the
+baseline. Check concurrent development, pending transactions, room intent, and
+booking reservations before changing a host. Work in isolated checkouts without
+modifying another development thread's workspace. Use bounded Luna-agent tasks
+with explicit file ownership and acceptance criteria. Keep shared contracts,
+signing, integration review, and deployment under coordinator control. Review
+and integrate each contribution before publication.
+
+Current baseline evidence: `reports/r25-current-source-recheck.json`,
+`reports/r25-final-installed-acceptance.json`, the R25 owner/fleet read-only
+receipts, and the exact R2 freeze and run artifacts. The final installed-path
+and publication qualification for R2 passed; production adoption remains a
+separate current-state observation.
 
 ## 2. Ratings synchronization and shared snapshots
 
-Use the reproductions in `work/validation/controller-resilience732/reports/`.
-Fix both scheduler bugs and snapshot contention while preserving strict
-authorization, identity, epoch, corruption, and policy checks:
+Preserve strict authorization, identity, epoch, corruption, and sharing policy
+while addressing both scheduler bugs and shared-snapshot contention:
 
 - Retry temporary `LeaseBusy` contention briefly and boundedly; it must not
-  become a 30–33 minute “local state requires review” hold.
-- Separate successful uploads from failed readback/reconciliation. A transient
-  follow-up query failure must not block new votes from the fast upload path.
-- Give shared snapshot lock contention its own short retry; accepted uploads
-  should be able to wake due shared-count refreshes without waiting half an hour.
-- Preserve durable events, retry idempotency, changed-opinion handling,
-  cross-host deduplication, ignored-user policy, and independent provider/gameplay
-  pacing. Never block commands on network transfers.
-- Show familiar good/bad counts only from verified shared data containing the
-  vote. Never add a local opinion blindly to an older snapshot. During outages,
-  acknowledge the saved vote honestly and synchronize it automatically without
-  requiring another command.
-- Emit safe diagnostics for scheduler reason, contention, retry deadline,
-  pending-event age, and snapshot progress; do not expose credentials or
-  arbitrary exception text.
-- Demonstrate prompt upload and a verified-count reply within the existing
-  reply window under controlled healthy conditions; show bounded retry and
-  automatic recovery under failure. Include contention, failed query, concurrent
-  votes, duplicates, changed opinions, authority failures, and mixed-version
-  cases. The supplemental loopback result is not installed TLS/systemd proof.
+  become a 30–33 minute review hold.
+- Separate successful uploads from failed readback/reconciliation so a
+  temporary follow-up query failure cannot block new votes on the fast path.
+- Retry temporary snapshot-lock contention promptly, especially after an
+  accepted upload.
+- Preserve durable events, retry idempotency, changed-opinion behavior,
+  cross-host deduplication, ignored-user policy, and independent gameplay and
+  provider pacing. Network transfers must not block command handling.
+- Show good/bad totals only from a verified shared snapshot containing the
+  vote. Never add a local opinion to an older snapshot. Acknowledge saved votes
+  truthfully during outages and sync later without another command.
+- Emit safe scheduler reason, contention, retry deadline, pending-event age,
+  and snapshot-progress diagnostics without credentials or arbitrary exception
+  text.
+
+Source/scheduler and historical regression evidence covers lock contention,
+failed readback, concurrent votes, duplicates, changed opinions, authority
+failures, mixed-version snapshots, and outage recovery. The real-time loopback
+HTTP component probe used canonical background scheduling and recorded
+verified `.good`/`.bad` replies in 5.078s and 5.074s against a 12-second
+deadline, plus same-event HTTP 503 recovery without a second command:
+`reports/ratings-http-r21-supplemental-run12/ratings-http-report.json`.
+This is controlled component evidence, not installed TLS/systemd or a
+production multiplayer command test. R25 owner/Xikeon ratings observations
+verify accepted synchronization and watermarks, not player-command latency.
 
 ## 3. Complete distributable Taiko catalog
 
-Verify the research repository, calculations, selection artifacts, and final
-receipts before export. Ship a compact production catalog with qualified
-Taiko difficulty/features and useful map metadata, never raw research databases,
-score pages, profile records, or player-level calibration rows.
+Verify research receipts and calculations before export. Distribute compact
+production metadata with qualified Taiko difficulty/features, not raw research
+databases, score pages, player records, or calibration rows.
 
-Retain native-versus-converted provenance. Admit conversions only with official
-Taiko NM calculations; never substitute Standard stars. Explicitly exclude
-unsupported/unresolved charts and do not present experimental style labels as
-established preferences. Publish via existing authenticated, verified catalog
-distribution. Keep discovery backward compatible so old clients still import
-all modes they know; new/upgraded clients obtain required catalogs automatically.
+Preserve native-versus-converted provenance. Admit a conversion only with its
+official Taiko NM calculation and exact source identity; never substitute
+Standard stars. Exclude unsupported/unresolved charts and experimental style
+claims. Use authenticated verified distribution and preserve older-client
+discovery for the modes they know.
 
-Current export receipts describe 37,635 Ranked/Approved NM charts (37,447 native,
-188 qualified converted) and aggregate calibration only. Publication 17's six
-  content IDs are retained in its publication receipt. H's and I's R25 post-upgrade
-  receipts verify Taiko and latest full Standard catalog references on both
-  isolated installed hosts.
+The validated export contains 37,635 Ranked/Approved NM charts (37,447 native,
+188 qualified conversions), 16 aggregate calibration points, and no private
+research tables. The shipped Taiko catalog has `taiko_maps` and the aggregate
+calibration table/indexes only. Evidence: `catalog/taiko-export-validation.json`,
+`catalog/taiko-export-run-receipt.json`,
+`reports/catalog-service-publication-r4.json`, and old-reader compatibility in
+`source/tests/test_taiko_upgrade733.py`. Catalog publication 17 is complete;
+do not replay it.
 
 ## 4. Integrate Taiko through the existing product
 
-Add supported `taiko-fixed` and `taiko-auto` presets and ruleset-aware selection
-on the retained engine. Qualify and test:
+Keep Taiko in the existing engine with supported `taiko-fixed` and `taiko-auto`
+presets. Qualify and preserve these behaviors:
 
-- Taiko-player-driven fixed/automatic difficulty, Taiko SR and length windows,
-  exclusions, song spacing, and sparse-pool fallback.
-- Playlist/queue progression, countdown, ready/AFK handling, difficulty and
-  skip voting, and recovery after interruption.
-- Shared good/bad ratings and personal statistics in a disjoint Taiko ruleset
-  namespace, including old-client snapshot compatibility.
+- Taiko-player-driven fixed and automatic difficulty, Taiko SR and length
+  filters, exclusions, song spacing, and sparse-pool fallback.
+- Queue progression, countdown, ready/AFK, difficulty and skip votes, and
+  interruption recovery.
+- Ruleset-separated good/bad ratings and personal statistics, including old
+  client snapshot compatibility.
 - Greetings, help, supported commands, and safe refusal of unsupported filters,
-  styles, mods, or commands without mutating the pool.
-- Fleet configuration, capability/version gates, room creation, booking-aware
-  admission, graceful closure, managed restart, and catalog prewarm.
-- Website and Discord titles/settings/player counts, qualified map artwork,
-  and Taiko presentation. Website map timing remains approximate; Discord
-  status cards omit map progress.
+  mods, styles, and commands without pool mutation.
+- Fleet configuration, capability gates, booking-aware admission, room
+  creation/closure, managed restart, and catalog prewarm.
+- Website and Discord title/settings/player presentation, qualified artwork,
+  and timing. Website timing remains approximate; Discord must not expose map
+  progress.
 
-Qualify mods and clock rates explicitly. Current selection is verified NM at
-rate 1.0; do not apply NM calculations to unqualified variants. Optional PP
-calculator failure must not crash a room; Taiko uses qualified catalog NM
-reference PP and must remain independent of the Standard PP projection. Add
-Taiko without changing existing room ruleset, title, settings, or desired state.
+The published qualifier is Taiko NM at rate 1.0 with no mods. Do not apply those
+stars to unsupported modified variants. Optional PP-calculator failures must
+degrade gracefully, using only qualified catalog NM reference information.
+Do not change an existing room's ruleset, title, settings, or desired state to
+add Taiko.
 
-Code-level evidence includes the Taiko catalog/engine/scope/activity/fleet/
-directory/website/owner-feed tests and `test_taiko_wiring733.py`. Generic lobby
-ready/AFK/vote/recovery tests are useful shared-engine evidence, but do not by
-themselves prove a Taiko-configured end-to-end match. The new wiring test covers
-Taiko song-spacing/sparse fallback, profile-to-auto-range, shared countdown/skip,
-greeting/map output, and a failing optional calculator. A live pilot remains
-required.
+Source evidence includes `test_taiko_catalog733.py`, `test_taiko_engine733.py`,
+`test_taiko_scope733.py`, `test_taiko_rating_snapshot733.py`,
+`test_taiko_activity733.py`, `test_taiko_directory733.py`,
+`test_taiko_website733.py`, `test_taiko_owner_feed733.py`,
+`test_taiko_service_assets733.py`, and
+`test_taiko_wiring733.py`. The wiring test uses the retained live-lobby fixture
+for Taiko spacing/fallback, profile-to-auto-range, ready/countdown/AFK/skip,
+greeting/map output, and optional PP failure. Generic shared-engine tests are
+not a substitute for the owner gameplay receipt. Three scored matches were
+observed; all had one participant, so multiplayer player acceptance remains
+unproven.
+
+The website length fallback is deployed and verified: bounded total length is
+preferred, otherwise hit length is labelled Play length. The current Taiko
+website/Discord receipt binds map, artwork, settings, queue and player count;
+idle playback is correctly null. This does not establish a current playing
+clock or multiplayer acceptance.
 
 ## 5. Prove exact automatic upgrades before promotion
 
-The real installed automatic-upgrade paths have passed for both exact predecessor
-versions, v7.3.0 and v7.3.2, with the exact R25 artifacts and full production-sized
-catalogs using invented providers and test credentials. The failed R21 D730
-registration remains held and is not acceptance. H and fresh I are the accepted
-normal cases. A separate B pre-admission controller interruption failed before
-the candidate was installed; the incoming recovery code cannot execute in that
-older controller. Do not claim that extra case recovered. Proceed with the normal
-supported path and disclose this specific limitation. The accepted paths include
-occupied rooms playing
-while empty siblings drain, active-booking protection, deliberately stopped
-rooms, valid configuration edits while waiting, interrupted-download resumption,
-and updater-helper interruption recovered only through supported
-transactions without duplicate room creation or repeated `MakeRoom` attempts.
+Use exact frozen artifacts and production-sized catalogs with invented
+providers/test credentials. Verify the native update path, not just download or
+queue. Required scenarios include occupied rooms playing while empty siblings
+drain; active-booking protection; deliberately stopped rooms; valid config
+edits during a wait; interrupted-download resume; and helper/controller
+interruption recovery without duplicate rooms or repeated creation attempts.
+After commit, registration, runtime, updater status, and actual version must
+agree. Verify network reporting, ratings, statistics, and Discord routing
+recover automatically. Preserve mixed-version compatibility and every
+credential, setting, history, and room intent.
 
-After each commit, verify registration, runtime, updater status, and actual
-running version agree. Verify network reporting, ratings, and statistics
-recover automatically; retain mixed-host-version compatibility throughout
-rollout. H and I health receipts verify synthetic Discord routing; actual
-Discord was not configured on either test host. The deployed production community bridge has a verified live Discord
-connection. Room-specific Taiko presentation remains to be checked in the pilot. Preserve all
-credentials/settings/history and room intent.
-Fix any reproduced path defect that would otherwise need operator rescue before
-release. Failed trials are not acceptance; retain their authority and do not replay
-transactions. Both normal H730 and fresh I732 paths are accepted at R25. A
-separate B pre-admission controller interruption remains failed and is not
-reused as normal-path evidence. Proceed with the proven normal path and document
-that this older updater cannot run the incoming recovery code before installation.
-No claim is made that the separate failed case recovered.
+R25 accepted normal installed paths H v7.3.0 and I v7.3.2 (2/2). Separate B
+pre-admission controller interruption failed before candidate code could run;
+it is retained and explicitly not accepted. The exact v7.3.4 R2 run passed native completion, post-health and scheduled
+recovery-pin refresh. Registration/runtime/updater agreed; preserved settings,
+intent, history, OAuth, enrollment and all six catalogs were verified. The first
+health sample needed convergence, and the initial pin observer refused before
+mutation until its own helper precondition was satisfied. Both remain retained.
+A later explicit donor teardown encountered an uncertain fake-room close;
+synthetic services were retired with the ownership journal unchanged. It is not
+clean-shutdown acceptance. No acceptance is inferred from that teardown.
 
 ## 6. Coherent validation
 
-Implement related changes in substantial milestones. Run targeted integration
-batches and appropriate comprehensive validation before publication; reuse
-unchanged passing results rather than repeatedly rerunning broad suites. Run
-expensive work at nice 19 and parallelize within memory limits. Clean task-created
-disposable outputs while retaining raw evidence and custody records.
+Implement related changes in substantial milestones. Reuse unchanged passing
+suites only where payload identity proves reuse; avoid repeated unchanged
+broad runs. Run expensive work at nice 19 and within memory limits. Clean
+task-created temporary output while retaining essential evidence.
 
-Deterministically test ratings lock contention, failed post-upload queries,
-snapshot recovery, concurrent votes, duplicates, changed opinions, authority
-failures, and mixed-version operation. Validate Taiko selection and provenance
-against the full exported catalog. Record which evidence is source/unit,
-component HTTP, catalog service, installed upgrade, or live gameplay; do not
-promote one category to another by inference.
+Retain deterministic coverage for ratings lock contention, failed post-upload
+queries, snapshot recovery, concurrent votes, duplicates, changed opinions,
+authority failures, and mixed-version operation. Validate Taiko selection and
+provenance against the full exported catalog. Label evidence as source/unit,
+component HTTP, catalog service, installed upgrade, or live gameplay; never
+promote one category by inference. R2 exact installed acceptance passed and is hash-bound; earlier failed trials
+and the separate teardown uncertainty remain explicitly retained.
 
 ## 7. Publish and deploy safely
 
-After acceptance, publish matching source, checksummed install artifacts,
-catalog metadata, and a signed automatic-update release. Deploy a compatible
-hub before offering the signed client. Queue owner/community hosts through
-supported mechanisms and apply at safe empty-room boundaries; respect occupied
-rooms and bookings and preserve every intended room state. Use controller
-restart only when technically necessary.
+R25 source, checksummed assets, signed feed, compatible hub, catalog service,
+website, and public wiki documentation are already deployed. All three
+production hosts now run v7.3.3. Preserve the explicit B failure disclosure.
+v7.3.4 source, checksummed assets and signed feed are now published after exact
+installed acceptance. Catalog metadata remains current and unchanged by this
+patch. Observe adoption through supported mechanisms at safe empty-room boundaries. Respect occupied rooms and bookings;
+preserve all intended room states. Use a controller restart only where
+technically necessary.
 
-Use only genuinely unused, unreserved owner capacity for the selected Lobby 3
-Taiko pilot. Never silently replace an existing public room or allocate a
-booked/private slot. Verify real startup, catalog load, chat, map selection,
-website/Discord presentation, and clean ownership. Observe actual gameplay when
-players are available and label that acceptance separately from technical setup.
+The owner selected L3 for the Taiko pilot; L2 remains reserved. Verify
+capacity/booking/ownership before any future change. The current owner L3 room
+is shown by the latest live observation; do not silently replace a public room or consume a booked/private
+allocation. Recheck real startup, catalog load, chat, selection, ownership,
+website, and Discord after any relevant deployment.
 
-## 8. Evidence, documentation, and completion report
+## 8. Evidence and completion report
 
-Update this plan, both handoffs, GitHub release information, and wiki
-changelog/documentation after verified rollout. Report which hosts installed,
-which remain safely queued, pilot-room link, validation results, and all
-outstanding acceptance. Preserve evidence of exact versions, receipts, hashes,
-room/booking state, and failure recovery. Do not promise zero failures or conceal
-unresolved deployment issues.
+Update this plan, both handoffs, GitHub release information, wiki/changelog,
+and final audit from authoritative current receipts. Report installed versus
+safely queued hosts, pilot link and status, test evidence, legacy failure, and
+remaining acceptance. Keep public documentation honest about gameplay and
+presentation evidence.
 
-The release is complete only after both exact automatic-upgrade paths pass,
-compatible hub/source/artifact/feed rollout is verified, intended host state is
-preserved, the pilot and presentation are verified, and required public
-documentation and final audit are updated. Continue autonomously until then;
-stop only for genuinely required human input or an unsafe unresolved condition.
-
-## Production checkpoint — 2026-10-25
-
-- Matching GitHub source/tag `75e694e781357942d3fc76a4d8650f5493368db8`
-  and eight remotely verified release assets are published as v7.3.3.
-- Compatible hub, activity publisher, booking portal and community Discord
-  bridge are deployed with protected before-images. The bridge dependency
-  closure was corrected centrally and actual connection verified; no client
-  runtime changed. Website deployment refreshed all four exporters and both
-  full 184,711-row display indexes.
-- Signed pilot metadata45/release34 preserves the trust root and prior release
-  descriptors. A first signing attempt refused before custody access because
-  historical SDK bytecode violated inventory; exact source was verified,
-  bytecode quarantined, no authority mutation proved, then publication succeeded.
-- Six wiki pages were committed through normal DokuWiki locks/revisions;
-  release, hosting and Taiko pages return HTTP200 without PHP errors.
-- Owner L3 is the explicitly selected pilot slot and is outside the enabled
-  booking allocation (room2). Recheck live capacity, ownership and leases before
-  opening it after the owner controller upgrade. Existing rooms/settings stay
-  preserved. No actual Taiko room or gameplay has yet been claimed.
-- Operational receipts are under `work/validation/taiko733/reports/`, including
-  `signed-feed-publication.json`, `r25-hub-cutover.json`,
-  `r25-website-deployment.json`, `r25-wiki-publication.json` and the original
-  requirement audit. The released source archive/tag remain immutable; this
-  documentation checkpoint does not modify the runtime artifact.
-
-## Live rollout hold — 2026-10-25
-
-Strohm's ordinary update registered the exact v7.3.3 runtime and committed its
-native upgrade, then held at configuration preparation before any startup.
-Independent diagnostics report unchanged configuration hashes; the specific
-preparation guard is not exposed by the old remote protocol. One guarded native
-completion request refused without changing the job or attempting startup.
-This is a new live acceptance failure, distinct from the disclosed pre-admission
-controller-interruption case; its cause is not yet established.
-
-The maintainer requested a tested stdlib-only read-only collector's JSON output
-from Strohm. No reinstall, OAuth, ownership clear, journal edits or repeated
-startup is authorized as a workaround. The collector excludes secret values
-and does not import the installed application, call services/network/DBs or
-write instance state. Its six focused safety tests passed, and it handled the
-owner's real 29-file configuration inventory without changes.
-
-The owner's never-admitted update was canceled through the exact staged
-protected native entry. Its occupied 4K identity stayed unchanged; Catch's
-canceled-drain restoration is being completed through that same native code.
-The owner's update polls remain temporarily paused pending diagnosis. Xikeon's
-last report still shows a safe queued update, not installation. The publisher
-forbids channel sequence rollback and changing a channel would not cancel
-already pinned operations; no authority or transaction shortcut is used.
-
-The full goal remains incomplete: diagnose this new hold, validate its repair,
-complete safe owner/community deployment and the selected L3 Taiko pilot, then
-finish the requirement audit. Requested local read-only evidence is currently
-required before a justified fix or another completion attempt.
-
-Owner cancellation follow-up: Catch reopened through the native deterministic
-restore operation; the active 4K worker was not stopped and later performed its
-logged ordinary 7200-second refresh only after the room emptied. Both rooms
-are healthy, unlocked and positively owned; slots2/3 remain off. The native
-cancellation-restoration audit flag nevertheless requires review and was not
-modified. Preserve its receipts for the next hardening fix. Managed and
-recovery timers are restored; only ordinary update polling remains temporarily
-paused, with its original enablement recorded for restoration.
+Current wiki verification: `reports/r25-taiko-gameplay-wiki-verification.json`
+records five pages with HTTP 200 and gameplay text. Current actual gameplay is
+recorded in `reports/r25-owner-taiko-actual-gameplay.json` (three completed
+scored matches, one abort, one participant per completed match). The newest
+website/Discord observation is
+`reports/r25-post-gameplay-live-taiko-presentation.json`; the website length correction is verified by
+`reports/r25-length-fallback-website-deployment.json`. v7.3.4 is accepted and published. Follow-up production adoption and the final
+requirement-by-requirement audit remain separate completion checks.

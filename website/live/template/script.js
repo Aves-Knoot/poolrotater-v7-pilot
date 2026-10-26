@@ -80,6 +80,7 @@
   const states={PLAYING:'Playing',STARTING:'Starting',SCORING:'Between maps',IDLE:'Waiting',OFFLINE:'Offline',STALE:'Status unavailable',playing:'Playing',starting:'Starting',idle:'Waiting',draining:'Finishing up',unavailable:'Status unavailable'};
   const validId=n=>Number.isSafeInteger(n)&&n>0;
   const clock=n=>Math.floor(Math.max(0,n)/60)+':'+String(Math.floor(Math.max(0,n)%60)).padStart(2,'0');
+  function mapLength(map){map=map&&typeof map==='object'?map:{};const valid=v=>typeof v==='number'&&Number.isFinite(v)&&v>0&&v<=86400;if(valid(map.total_length))return clock(map.total_length);if(valid(map.hit_length))return'Play length '+clock(map.hit_length);return'Length unknown';}
   const node=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;};
   function timing(room,fresh,now){
     const p=room.playback;if(!fresh||!['PLAYING','playing'].includes(room.state)||!p||!Number.isFinite(p.started_at)||!Number.isFinite(p.duration_seconds)||p.started_at<=0||p.started_at>now+5||p.duration_seconds<=0||p.duration_seconds>86400)return null;
@@ -102,7 +103,7 @@
     const title=String(map.title||map.label||(state==='OFFLINE'?'Room is offline':state==='STALE'?'Status temporarily unavailable':'Waiting for the next map')).slice(0,160),link=card.querySelector('.pr-np-title');
     link.textContent=title;link.title=title;if(validId(map.beatmap_id))link.href='https://osu.ppy.sh/beatmaps/'+map.beatmap_id;else link.removeAttribute('href');
     put(card,'.pr-np-artist',[map.artist,map.version].filter(v=>typeof v==='string').join(' · ').slice(0,240)||'Automatic multiplayer');
-    put(card,'[data-np-stars]',Number.isFinite(map.stars)?map.stars.toFixed(2)+'★':'Difficulty unknown');put(card,'[data-np-length]',Number.isFinite(map.total_length)?clock(map.total_length):'Length unknown');
+    put(card,'[data-np-stars]',Number.isFinite(map.stars)?map.stars.toFixed(2)+'★':'Difficulty unknown');put(card,'[data-np-length]',mapLength(map));
     const img=card.querySelector('.pr-np-cover');if(img){if(!img.dataset.watched){img.dataset.watched='1';img.addEventListener('error',()=>{img.hidden=true;});img.addEventListener('load',()=>{img.hidden=false;});}const src=validId(map.beatmapset_id)?'https://assets.ppy.sh/beatmaps/'+map.beatmapset_id+'/covers/cover.jpg':null;if(src&&img.getAttribute('src')!==src){img.hidden=false;img.src=src;}else if(!src){img.hidden=true;img.removeAttribute('src');}}
     const phase=card.querySelector('.pr-np-phase');if(phase){phase.dataset.phase=state;phase.lastElementChild.textContent=states[state];}
     const join=card.querySelector('.pr-np-join');if(fresh&&validId(room.room_id)&&!['OFFLINE','STALE','unavailable'].includes(state)){join.href='osu://room/'+room.room_id;join.removeAttribute('aria-disabled');}else{join.removeAttribute('href');join.setAttribute('aria-disabled','true');}
@@ -124,7 +125,7 @@
   }
   const labels={ruleset_id:'Ruleset',keys:'Keys',auto_difficulty:'Automatic difficulty',selection_style:'Selection style',freestyle:'Freemod',countdown_seconds:'Countdown · seconds',required_mods:'Required mods',allowed_mods:'Allowed mods'};
   function settings(value,fresh){if(!fresh||!value||typeof value!=='object')return null;const details=node('details',undefined,'pr-room-settings'),summary=node('summary','Room settings ⌄'),dl=node('dl');for(const [key,label]of Object.entries(labels)){let v=value[key];if(v==null)continue;if(key==='ruleset_id')v=({0:'osu!standard',1:'osu!taiko',2:'osu!catch',3:'osu!mania'})[v]||'Unknown';else if(typeof v==='boolean')v=v?'Enabled':'Disabled';else if(Array.isArray(v))v=v.filter(n=>typeof n==='string'&&n.length<=16).slice(0,32).join(', ')||'None';else if(!['string','number'].includes(typeof v))continue;dl.append(node('dt',label),node('dd',String(v).slice(0,160)));}if(!dl.children.length)return null;details.append(summary,dl,node('p','Public settings reported by this host. Other controls remain local to the host.','pr-settings-note'));return details;}
-  global.prLivePresentation={card,update,tick,timing,settings,clock};
+  global.prLivePresentation={card,update,tick,timing,settings,clock,mapLength};
 }(typeof window!=='undefined'?window:globalThis));
 
 
@@ -843,7 +844,7 @@ jQuery(function(){
                 text(article,'[data-room-range]',Array.isArray(range)&&range.length===2?range.map(function(n){return Number(n).toFixed(2);}).join('–')+'★':'Unknown');
                 text(article,'[data-room-limit]',Number.isFinite(settings.max_length)?clock(settings.max_length):'Unknown');
                 text(article,'[data-np-stars]',Number.isFinite(map.stars)?map.stars.toFixed(2)+'★':'Difficulty unknown');
-                text(article,'[data-np-length]',Number.isFinite(map.total_length)?clock(map.total_length):'Length unknown');
+                text(article,'[data-np-length]',window.prLivePresentation.mapLength(map));
             });
             if(labelsChanged)graphs();
         }
