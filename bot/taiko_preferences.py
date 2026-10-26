@@ -1,8 +1,8 @@
-"""Taiko-specific recall scope over the unchanged legacy preference storage.
+"""Ruleset-specific recall scopes over the unchanged preference storage.
 
-Existing installed update guards pin the storage module. Standard/Mania/Catch
-retain that exact implementation; Taiko adds a distinct scope through a small
-adapter using the same preference function and lifecycle conditions.
+Existing installed update guards pin the storage module. Standard and Mania
+retain that exact implementation; Taiko and Catch use distinct scopes through
+the same preference function and lifecycle conditions.
 """
 import logging
 import math
@@ -14,7 +14,11 @@ log=logging.getLogger('bot')
 
 
 def preference_scope(cfg,pool):
-    return 'taiko:ranked' if cfg.get('ruleset_id',0)==1 else legacy_scope(cfg,pool)
+    if cfg.get('ruleset_id',0)==1:
+        return 'taiko:ranked'
+    if cfg.get('ruleset_id',0)==2:
+        return 'catch:loved' if getattr(pool, 'catch_include_loved', False) else 'catch:ranked'
+    return legacy_scope(cfg,pool)
 
 
 def map_type_label(item):
@@ -25,7 +29,7 @@ def map_type_label(item):
 
 class ModeDifficultyRecall(DifficultyRecall):
     def _save_departing_preference(self, uid, kicked=False):
-        if self.cfg.get('ruleset_id',0)!=1:
+        if self.cfg.get('ruleset_id',0) not in (1,2):
             return super()._save_departing_preference(uid,kicked=kicked)
         if uid not in self.players:
             return
@@ -44,7 +48,7 @@ class ModeDifficultyRecall(DifficultyRecall):
         self._release_recalled_difficulty()
 
     def _restore_solo_difficulty(self, uid):
-        if self.cfg.get('ruleset_id',0)!=1:
+        if self.cfg.get('ruleset_id',0) not in (1,2):
             return super()._restore_solo_difficulty(uid)
         if getattr(self, "state", None) != "IDLE" or self._occupants() != {uid}:
             return None
