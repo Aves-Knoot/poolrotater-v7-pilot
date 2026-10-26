@@ -1122,12 +1122,41 @@ def _restore_canceled_drain(instance, target, current, job, save):
     return True
 
 
+def _ensure_automatic_recovery_timer(instance, job):
+    """Keep the signed staged updater independently scheduled until completion.
+
+    Older update agents stop dispatching after an identity-change hold. A
+    timer owned by the same approved job can retry its existing proof-gated
+    step; it neither grants room ownership nor admits a transaction itself.
+    """
+    if (job.get('release_approval_required') is not True
+            or job.get('phase') not in ('waiting_empty', 'locking')):
+        return False
+    recorded = job.get('timer_sha256')
+    if type(recorded) is str:
+        from .pilot_operations import UNIT_BASE, _systemctl
+        timer = UNIT_BASE / ('poolrotater-v7-controller-update-' + instance + '.timer')
+        try:
+            if (hashlib.sha256(protected(timer).read_bytes()).hexdigest() == recorded
+                    and _systemctl('show', timer.name, '--property=ActiveState').decode().strip()
+                    == 'ActiveState=active'):
+                return True
+        except (OSError, ConfigError):
+            pass
+    arm(instance)
+    return True
+
+
 def step(instance):
     """Fresh empty admission, or evidence-bound continuation of this exact job."""
     from .pilot_operations import _service_state, _systemctl
     target, marker, _, current = _binding(instance)
     # Recovery owns both native locks itself. Never recursively acquire them.
     observed=_control(target['prefix']/NAME)
+    # This runs in the staged successor even when an older installed agent
+    # dispatched it. Arm before admission so its proof-gated recovery remains
+    # callable if that older agent later treats a hold as terminal.
+    _ensure_automatic_recovery_timer(instance, observed)
     if observed.get('phase') in ('committing','recovering','retrying'):
         from .update_lifecycle import automatic_eligible
         if automatic_eligible(observed):
