@@ -4,11 +4,31 @@ No API polling, kicks, or closures. Missing/expired requests release the gate.
 Only the worker main loop may change settings; unknown outcomes stay paused.
 """
 import json
+import logging
 import math
 from pathlib import Path
 import re
 import secrets
 import time
+
+from bot.hub import HubDisconnected, HubInvocationUncertain, HubOperationDeferred
+
+log = logging.getLogger(__name__)
+
+_DEFERRED_REASONS = frozenset(HubOperationDeferred.REASONS.values())
+
+
+def _deferred_reason(error):
+    reason = getattr(error, 'reason', None)
+    return reason if type(reason) is str and reason in _DEFERRED_REASONS else 'local_guard'
+
+
+def _failure_code(error):
+    if isinstance(error, HubInvocationUncertain):
+        return 'referee_invocation_uncertain'
+    if isinstance(error, HubDisconnected):
+        return 'referee_transport_unknown'
+    return 'maintenance_operation_unknown'
 
 
 class MaintenanceGate:
@@ -52,9 +72,16 @@ class MaintenanceGate:
                     raise RuntimeError('maintenance room identity/connection changed')
                 bot.hub.change_room_settings(self.room_id, password='')
                 self.locked = False
-            except Exception:
+                self.error = None
+            except HubOperationDeferred as error:
+                self.error = 'maintenance unlock waiting for referee operation'
+                log.info('maintenance unlock deferred before dispatch: reason=%s',
+                         _deferred_reason(error))
+            except Exception as error:
                 self.uncertain = True
                 self.error = 'maintenance unlock outcome requires reconciliation'
+                log.warning('maintenance unlock outcome requires reconciliation: failure_code=%s',
+                            _failure_code(error))
 
     def tick(self, bot):
         # Paused workers still drain referee events; a late join must be visible.
@@ -73,6 +100,7 @@ class MaintenanceGate:
         if self.uncertain:
             return True
         if not request and not self.locked:
+            self.error = None
             return False
         safe = (bot._room_ready and bot.running and bot.state == 'IDLE'
                 and not bot.players and not bot._hub_rejoin_pending
@@ -82,16 +110,39 @@ class MaintenanceGate:
                     or bot.room_id != self.room_id):
                 self.blocked_nonce = self.nonce
                 self.release_gate(bot)
+            elif self.error == 'maintenance unlock waiting for referee operation':
+                # The same still-live request reconfirms the existing lock;
+                # a previously deferred cancellation is no longer pending.
+                self.error = None
             return self.locked or self.uncertain
         if not request or request['nonce'] == self.blocked_nonce or not safe:
+            if not self.locked:
+                self.error = None
             return False
         self.nonce = request['nonce']
         self.room_id = bot.room_id
         try:
             bot.hub.change_room_settings(self.room_id, password=secrets.token_urlsafe(24))
-            self.locked = True
-            bot._flush_all_lobby_time()
-        except Exception:
+        except HubOperationDeferred as error:
+            self.error = 'maintenance lock waiting for referee operation'
+            log.info('maintenance lock deferred before dispatch: reason=%s',
+                     _deferred_reason(error))
+            return True
+        except Exception as error:
             self.uncertain = True
             self.error = 'maintenance lock outcome requires reconciliation'
+            log.warning('maintenance lock outcome requires reconciliation: failure_code=%s',
+                        _failure_code(error))
+            return True
+        self.locked = True
+        self.error = None
+        try:
+            bot._flush_all_lobby_time()
+        except Exception as error:
+            # A post-confirmation bookkeeping failure is not a no-dispatch
+            # deferral; preserve the old fail-closed behavior.
+            self.uncertain = True
+            self.error = 'maintenance lock outcome requires reconciliation'
+            log.warning('maintenance lock outcome requires reconciliation: failure_code=%s',
+                        _failure_code(error))
         return True

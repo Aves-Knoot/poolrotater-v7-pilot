@@ -30,6 +30,28 @@ class HubDisconnected(HubTransportError):
     """The SignalR transport is not currently connected."""
 
 
+class HubOperationDeferred(HubDisconnected):
+    """A finite local guard refused an operation before downstream invocation.
+
+    Only guards outside the transport may raise this type. It must never wrap
+    a send failure, lost reply, server error, or arbitrary disconnected error.
+    Keep the existing messages for callers that also check their meaning.
+    """
+
+    REASONS = {
+        "shared referee operation lock timed out": "shared_referee_operation_busy",
+        "shared referee transport is disconnected": "referee_not_connected",
+        "room roster requires a fresh authoritative JoinRoom": "roster_snapshot_pending",
+        "room is quiesced": "room_quiesced",
+    }
+
+    def __init__(self, message):
+        if type(message) is not str or message not in self.REASONS:
+            raise ValueError("invalid local referee deferral")
+        self.reason = self.REASONS[message]
+        super().__init__(message)
+
+
 class HubInvocationUncertain(HubTransportError):
     """A hub command may or may not have reached the server. Never blind-retry."""
 

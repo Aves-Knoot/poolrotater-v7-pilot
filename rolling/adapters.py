@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from bot.chat_websocket import ChatSocketEvent
 from bot.discord_control import DiscordControl, DiscordCommand
 from bot.discord_modlog import DiscordModLog
-from bot.hub import RefereeHub, HubDisconnected, HubInvocationUncertain
+from bot.hub import RefereeHub, HubDisconnected, HubInvocationUncertain, HubOperationDeferred
 from .protocol import RemoteError, PeerClosed, UncertainResult
 
 
@@ -16,6 +16,10 @@ def call(peer, method, *args, **kwargs):
     try:
         return peer.call(method, *args, **kwargs)
     except RemoteError as exc:
+        if exc.kind == "HubOperationDeferred":
+            # Only the finite local-guard messages cross as a known deferral.
+            # Unknown payloads must not acquire a no-dispatch guarantee.
+            raise HubOperationDeferred(str(exc)) from exc
         if exc.kind in ("HubDisconnected", "HubTransportError", "InfrastructureCloseDeferred"):
             raise HubDisconnected(str(exc)) from exc
         if exc.kind == "HubInvocationUncertain":

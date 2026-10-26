@@ -16,7 +16,7 @@ import time
 
 from .api import OsuApi
 from .discord_control import DiscordControl
-from .hub import HubDisconnected, HubTransportError, HubInvocationUncertain
+from .hub import HubDisconnected, HubTransportError, HubInvocationUncertain, HubOperationDeferred
 
 log = logging.getLogger("multiroom")
 
@@ -334,7 +334,7 @@ class RoomHub:
         # Never sit forever behind a room operation during shutdown.
         limit = self.shared.remaining_shutdown() if self.shared.stopping.is_set() else 15.0
         if not self.shared.lock.acquire(timeout=limit):
-            raise HubDisconnected("shared referee operation lock timed out")
+            raise HubOperationDeferred("shared referee operation lock timed out")
         try:
             if not args or int(args[0]) not in self.owned:
                 raise ValueError(f"{self.alias} cannot invoke {method} on another room")
@@ -347,10 +347,10 @@ class RoomHub:
                     raise HubDisconnected("shutdown deadline expired")
                 kwargs["timeout"] = min(float(kwargs.get("timeout", 5)), remaining)
             if not self.shared.hub.is_connected():
-                raise HubDisconnected("shared referee transport is disconnected")
+                raise HubOperationDeferred("shared referee transport is disconnected")
             progress = self.roster_progress()
             if method != "JoinRoom" and (self.roster_fenced or (progress is not None and progress[2])):
-                raise HubDisconnected("room roster requires a fresh authoritative JoinRoom")
+                raise HubOperationDeferred("room roster requires a fresh authoritative JoinRoom")
             if method == "JoinRoom":
                 cached = self.joined.get(rid)
                 # Stale queued lifecycle events must not invoke JoinRoom twice

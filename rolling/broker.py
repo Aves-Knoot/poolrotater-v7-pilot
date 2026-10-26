@@ -7,7 +7,7 @@ import queue
 import threading
 import time
 
-from bot.hub import HubDisconnected, HubInvocationUncertain
+from bot.hub import HubDisconnected, HubInvocationUncertain, HubOperationDeferred
 from .adapters import Api
 
 log=logging.getLogger(__name__)
@@ -308,7 +308,7 @@ class Broker:
                 return self.hub.refresh_ready()
             if name == "make_room":
                 if self.quiesced:
-                    raise HubDisconnected("room is quiesced")
+                    raise HubOperationDeferred("room is quiesced")
                 return self.create(*args, **kwargs)
             if name in ("invalidate_membership", "forget_missing_room"):
                 if int(args[0]) not in self.hub.owned:
@@ -330,7 +330,7 @@ class Broker:
                 if not values or int(values[0]) not in self.hub.owned:
                     raise ValueError("room ownership mismatch")
                 if self.quiesced:
-                    raise HubDisconnected("room is quiesced")
+                    raise HubOperationDeferred("room is quiesced")
                 if operation == "CloseRoom":
                     # Explicit room commands retain their existing authority.
                     # Infrastructure/deployment callers use the guarded default.
