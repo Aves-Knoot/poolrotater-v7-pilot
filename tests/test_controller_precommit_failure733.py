@@ -15,6 +15,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from poolrotater_host import controller_update as update
+# Import before patching layout.load so dependent modules never capture a mock.
+from poolrotater_host.managed_host import policy, projection  # noqa: F401
 from poolrotater_host.network.contracts import fingerprint
 
 
