@@ -189,6 +189,35 @@ def test_updater_observes_only_qualified_successors_as_configuration_retryable(h
     assert backend.observe(operation)['phase'] == 'held'
 
 
+def test_updater_retries_only_proven_closed_precommit_failure(host, monkeypatch):
+    from poolrotater_host.updates import native
+    target, parent, job, save = host
+    save(phase='held', reason='controller_identity_changed', before=parent,
+         after={'release': str(target['prefix'] / 'new'), 'bundle_sha256': 'b' * 64},
+         automatic_recovery={'format': 1, 'attempts': 0},
+         commit_started_at=None, commit_admitted_at=None, services_stopped_at=None,
+         upgrade_transition=None, startup_attempted_at=None, admission_kind=None,
+         failure_stage=None, failure_code=None)
+    backend = native.Backend('invented', None)
+    monkeypatch.setattr(backend, 'binding', lambda: (target, {}, parent))
+    monkeypatch.setattr(native, 'protected', lambda path: path)
+    def control(path, *args, **kwargs):
+        if Path(path).name == update.NAME:return job
+        return {}
+    monkeypatch.setattr(native, '_control', control)
+    proof = [None]
+    monkeypatch.setattr(update, '_closed_failed_controller_proof', lambda *args: proof[0])
+    operation = {'id': job['id'], 'release': {'kind': 'controller', 'artifact': {'sha256': 'b' * 64}}}
+    assert backend.observe(operation)['phase'] == 'held'
+    proof[0] = {'closed': True}
+    assert backend.observe(operation)['phase'] == 'waiting_empty'
+    job['commit_admitted_at'] = 100
+    assert backend.observe(operation)['phase'] == 'held'
+    job['commit_admitted_at'] = None
+    job['before'] = {'bundle_sha256': 'c' * 64}
+    assert backend.observe(operation)['phase'] == 'held'
+
+
 class AgentProgressTests(unittest.TestCase):
     from tests import test_update_agent as fixture
     setUp = fixture.UpdateAgentTests.setUp

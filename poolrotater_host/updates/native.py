@@ -322,6 +322,16 @@ class Backend:
                     and version_tuple(_control(protected(Path(job['after']['release'])/'release.json'))['version'])
                     >= version_tuple('v7.3.1')):
                 result['phase'] = 'waiting_empty'
+            # A crashed predecessor can resume only when the native, read-only
+            # proof establishes that its exact invocation and every room have
+            # settled. The bounded advance repeats the proof and all approval
+            # checks; unproven identity changes remain explicit review holds.
+            from ..controller_update import (_precommit_controller_failure_candidate,
+                                             _closed_failed_controller_proof)
+            if (result['phase'] == 'held' and parent == job.get('before')
+                    and _precommit_controller_failure_candidate(job)
+                    and _closed_failed_controller_proof(self.instance, target, parent, job) is not None):
+                result['phase'] = 'waiting_empty'
         else:
             from ..worker_deployment import read_job,result_path
             job=read_job(parent)
