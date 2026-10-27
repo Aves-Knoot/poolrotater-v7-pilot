@@ -105,6 +105,33 @@ def _upgrade_lineage(prefix, current, old):
     return rows, nodes, found
 
 
+def lineage_diagnostic(prefix, current, old):
+    """Read-only finite diagnosis; never substitute digest equality for lineage.
+
+    Call under the same protected installation/policy admission as pin refresh.
+    Registration paths, inventories and environment details stay local. A
+    matching bundle with different registration fields is diagnostic only.
+    """
+    from ..ownership_recovery import digest
+    _need(type(current) is dict and type(old) is dict, 'recovery_policy_invalid')
+    _need(all(old.get(key)==current.get(key) for key in _IDENTITY_FIELDS),
+          'recovery_pin_identity_changed')
+    rows,nodes,ancestor=_upgrade_lineage(prefix,current,old)
+    matches=[]
+    for node in nodes:
+        if node.get('bundle_sha256')!=old.get('bundle_sha256'):continue
+        matches.append({'exact_record':node==old,
+                        'differing_fields':sorted(key for key in set(node)|set(old)
+                                                  if node.get(key)!=old.get(key))})
+    return {'read_only':True,'pin_refreshed':False,
+            'status':'current' if old==current else 'ancestor' if ancestor else 'not-ancestor',
+            'pinned_bundle_sha256':old.get('bundle_sha256'),
+            'current_bundle_sha256':current.get('bundle_sha256'),
+            'pinned_record_sha256':digest(old),'current_record_sha256':digest(current),
+            'verified_history_count':len(rows),'matching_bundle_records':matches,
+            'lineage_qualified':ancestor}
+
+
 def _terminal_controller_job(prefix, current, nodes):
     job = _control(prefix / 'controller-update.json', optional=True, maximum=_RECORD_LIMIT)
     if job is None:

@@ -116,7 +116,7 @@ def main():
     mode.add_argument('--ratings-action',choices=('configure','sync','fetch','status','support'))
     parser.add_argument('--ratings-input',action='store_true',help='explicit bounded ratings JSON on stdin')
     parser.add_argument('--network-input',action='store_true',help='explicit bounded network JSON on stdin')
-    mode.add_argument('--ownership-recovery', choices=('review', 'clear', 'resume'),
+    mode.add_argument('--ownership-recovery', choices=('review', 'inventory', 'clear', 'resume'),
                       help='explicit stopped room ownership recovery; no room mutations')
     mode.add_argument('--ownership-local-status', action='store_true',
                       help='read local journal and recovery receipt without provider requests')

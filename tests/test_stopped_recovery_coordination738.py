@@ -77,3 +77,28 @@ class Coordination(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError,'dedicated processes'):pilot.ownership('invented','review')
             service.assert_not_called()
         self.free()
+
+    def test_inventory_uses_same_stopped_admission_with_bounded_longer_timeout(self):
+        state={'MainPID':0,'ActiveState':'failed','UnitFileState':'disabled'}
+        with patch.object(pilot,'_unit',return_value=object()), \
+             patch.object(pilot,'_service_state',return_value=state), \
+             patch('poolrotater_host.pilot_installation.require_no_service_processes'), \
+             patch.object(pilot,'_service_command',return_value={'history_complete':True}) as service:
+            self.assertEqual(pilot.ownership('invented','inventory'),{'history_complete':True})
+            service.assert_called_once_with(self.binding[0],self.binding[2],
+                ['--ownership-recovery','inventory'],timeout=360)
+        self.free()
+
+    def test_inventory_cli_has_no_mutation_or_candidate_arguments(self):
+        import io
+        from poolrotater_host import cli
+        with patch.object(pilot,'ownership',return_value={'history_complete':True}) as operation, \
+             patch('sys.stdout',new_callable=io.StringIO):
+            self.assertEqual(cli.main(['pilot-ownership-inventory','--instance','first']),0)
+        operation.assert_called_once_with('first','inventory',journal_sha256=None,
+            alias=None,room_id=None,confirm_lost_creation=False,transaction_id=None,decision=None)
+        with patch.object(pilot,'ownership') as operation, \
+             patch('sys.stderr',new_callable=io.StringIO):
+            with self.assertRaises(SystemExit):
+                cli.main(['pilot-ownership-inventory','--instance','first','--created-room-id','101'])
+        operation.assert_not_called()

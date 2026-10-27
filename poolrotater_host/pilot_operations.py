@@ -209,7 +209,7 @@ def code_proof(instance):
 
 def ownership(instance, action, *, journal_sha256=None, alias=None, room_id=None,
               confirm_lost_creation=False, transaction_id=None, decision=None):
-    if action not in ('review', 'clear', 'resume'):
+    if action not in ('review', 'inventory', 'clear', 'resume'):
         raise ConfigError('invalid stopped ownership action')
     from .stopped_recovery import admission
     with admission(instance) as (target,record):
@@ -222,7 +222,7 @@ def _ownership_stopped(instance,action,target,record,*,journal_sha256,alias,room
                        confirm_lost_creation,transaction_id,decision):
     if record['execution'] != 'pilot-live':
         raise ConfigError('ownership operator commands require reviewed live pilot')
-    unit = _unit(instance, optional=action == 'review')
+    unit = _unit(instance, optional=action in ('review','inventory'))
     state = _service_state(instance)
     uninstalled = (unit is None and state.get('LoadState') == 'not-found'
                    and state['UnitFileState'] in ('', 'not-found'))
@@ -238,7 +238,7 @@ def _ownership_stopped(instance,action,target,record,*,journal_sha256,alias,room
     if confirm_lost_creation: arguments += ['--confirm-lost-creation']
     # The service helper holds verified_owner itself; no root-held owner lock
     # may cross this spawn and deadlock its fresh account/evidence checks.
-    return _service_command(target, record, arguments, timeout=120)
+    return _service_command(target, record, arguments, timeout=360 if action=='inventory' else 120)
 
 
 def operator(instance, action, *, credentials_stream=None, expected_user_id=None,

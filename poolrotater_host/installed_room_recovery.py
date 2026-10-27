@@ -42,7 +42,7 @@ def local_status(root):
 
 def execute(auth, action, *, journal_sha256=None, alias=None, room_id=None,
             confirm_lost_creation=False, transaction_id=None, decision=None):
-    if action not in ('review', 'clear', 'resume'):
+    if action not in ('review', 'inventory', 'clear', 'resume'):
         raise AuthError('ownership_recovery_action_required')
     candidate = alias is not None or room_id is not None or confirm_lost_creation
     if (type(confirm_lost_creation) is not bool
@@ -53,6 +53,7 @@ def execute(auth, action, *, journal_sha256=None, alias=None, room_id=None,
             or (action != 'resume' and (transaction_id is not None or decision is not None))):
         raise AuthError('ownership_recovery_explicit_choices_required')
     if action == 'review': return ProviderOwnershipReview(auth).inspect()
+    if action == 'inventory': return ProviderOwnershipReview(auth).inventory()
     recovery = ProviderOwnershipRecovery(auth)
     if action == 'resume':
         return recovery.recover(transaction_id=transaction_id, action=decision)
@@ -66,7 +67,7 @@ def run(root, release, action, **choices):
     stage = 'authority'
     try:
         auth = installed_provider_authentication(root, release, TrustSnapshot.system(prepared=True))
-        stage = 'review' if action == 'review' else 'recovery'
+        stage = 'review' if action in ('review','inventory') else 'recovery'
         return execute(auth, action, **choices)
     except AuthError as error:
         from .service_diagnostics import failure_code

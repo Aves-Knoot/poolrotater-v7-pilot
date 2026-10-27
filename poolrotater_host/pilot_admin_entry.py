@@ -78,7 +78,7 @@ def main():
         'catalog-trust-replace', 'catalog-trust-recover', 'start', 'stop', 'remove',
         'owner-import', 'owner-status', 'owner-rollback', 'owner-budget-prepare',
         'private-test-configure', 'private-test-clear', 'private-test-status',
-        'ownership-review', 'ownership-clear', 'ownership-resume',
+        'ownership-review', 'ownership-inventory', 'ownership-clear', 'ownership-resume',
         'network-configure','network-enroll','network-resume','network-rotate','network-leave','network-reset',
         'network-reporting-configure','network-reporting-support','network-reporting-sync',
         'network-status','network-support','network-unit','network-start','network-stop','network-remove',
