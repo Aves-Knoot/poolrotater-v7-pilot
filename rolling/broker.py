@@ -180,10 +180,16 @@ class Broker:
         # The referee mutation/candidate write still run under RoomHub's lock.
         # Its independent HTTP confirmation must not hold the account-wide
         # routing lock through a persistent admission cooldown.
+        beatmap = args[1] if len(args) > 1 else kwargs.get('beatmap_id')
+        ruleset = kwargs.get('ruleset_id', 0)
+        if type(beatmap) is int and 0 < beatmap < 10**19:
+            log.info('room creation attempt: alias=%s beatmap_id=%d ruleset_id=%s',
+                     self.alias, beatmap,
+                     ruleset if type(ruleset) is int and 0 <= ruleset <= 3 else None)
         try:result = self.hub.make_room(*args, **kwargs)
         except Exception as error:
             with self.owner.shared.lock:
-                if self._creation_candidate is not None:
+                if self.uncertain or self._creation_candidate is not None:
                     from poolrotater_host.service_diagnostics import failure_details
                     self.journal(creation_verification_failure=failure_details(error))
             raise

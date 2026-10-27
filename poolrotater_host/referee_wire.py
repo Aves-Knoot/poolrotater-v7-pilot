@@ -212,7 +212,9 @@ def _worker(pipe, port, trust, bearer, parent_pid, execution=None):
                     send_packet(pipe.fileno(), {'kind':'ready'}, time.monotonic()+5)
                     continue
                 kind = message(value)
-                if kind == 3 and 'error' in value: value['error'] = 'referee_command_rejected'
+                if kind == 3 and 'error' in value:
+                    from .referee_errors import safe_completion
+                    value = safe_completion(value)
                 if kind == 7 and 'error' in value: value['error'] = 'referee_closed'
                 send_packet(pipe.fileno(), {'kind':'message','value':value}, time.monotonic()+5)
                 if kind == 7: return

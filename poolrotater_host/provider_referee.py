@@ -343,10 +343,14 @@ class ProviderRefereeClient:
                 self._retire()
                 raise HubInvocationUncertain('referee_invocation_uncertain') from None
             if 'error' in value:
+                from .referee_errors import RefereeCommandRejected
+                rejected = RefereeCommandRejected(value.get('rejection_code'))
+                log.warning('referee completion rejected: method=%s generation=%d invocation=%s code=%s mutation_outcome=unknown',
+                            method, generation, identity, rejected.rejection_code)
                 # A refused membership refresh must reach the native bounded
                 # recovery path, including across worker RPC. It grants no
                 # roster authority and never replays the interrupted mutation.
                 if method == 'JoinRoom':
                     raise HubDisconnected('referee_join_rejected')
-                raise RuntimeError('referee_command_rejected')
+                raise rejected
             return value.get('result')

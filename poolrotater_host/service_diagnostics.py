@@ -245,6 +245,10 @@ def failure_details(error):
         item=pending.pop()
         if id(item) in seen:continue
         seen.add(id(item))
+        from .referee_errors import rejection_details
+        rejected = rejection_details(item)
+        if rejected is not None:
+            return rejected
         from .oauth import AuthError
         # AuthError.args carries a prose prefix; its stable code is separate.
         # Reading only args hid stopped-review errors as service_failed.
