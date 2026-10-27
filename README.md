@@ -1,9 +1,13 @@
 # PoolRotater distributed host
 
-v7.3.4 is published on GitHub and the signed pilot update feed. Its exact
-installed automatic-upgrade path from v7.3.3 passed with all six full catalogs,
-occupied-room/booking protection and preserved configuration. See
-[recovery follow-up and validation limits](docs/V7_3_4_RECOVERY_FOLLOWUP.md).
+v7.3.7 retains the maintenance evidence needed by later updates and adds guarded
+retirement of obsolete automatic drains. See
+[maintenance evidence, first transitions and validation limits](docs/V7_3_7_MAINTENANCE_EVIDENCE.md).
+The matching release's validation report records its tested scope; GitHub and
+the signed feed determine availability. A source checkout is not an approved
+installed runtime.
+The earlier [v7.3.4 recovery notes](docs/V7_3_4_RECOVERY_FOLLOWUP.md) remain
+applicable to their documented predecessor and recovery paths.
 Taiko fixed/automatic rooms, shared feedback and ruleset-separated statistics
 remain as introduced in [v7.3.3](docs/V7_3_3_TAIKO_RATINGS.md). Publication is
 separate from actual host installation; the existing updater drains safely.
@@ -21,7 +25,11 @@ retained. Private-room information never belongs in public directory panels.
 Affected v7.2.9/v7.2.10 hosts: see [first-update activation](docs/UPDATE_QUEUE_ACTIVATION.md)
 for the pinned queue-only bridge. No reinstall or repeated OAuth is needed.
 
-Existing v7.2.12 hosts receive the signed controller update at the safe host-wide empty-room boundary. The central hub can be repaired independently.
+Controller updates use the supported empty-room admission for the installed
+version and available evidence. An existing ownership or transaction hold is
+preserved for review. Older releases can require the host-wide empty boundary;
+eligible newer paths drain rooms individually. The central hub can be repaired
+independently.
 
 Accepted builds are distributed through GitHub and the signed release feed.
 Use the matching release's operator kit for the
