@@ -7,6 +7,8 @@ clear an unknown creation or authorize a provider mutation by itself.
 import hashlib
 import json
 import re
+import os
+import stat
 import uuid
 from .config import ConfigError
 from .layout import atomic_json,read_json,file_lease
@@ -51,6 +53,13 @@ class Receipt:
     def __init__(self,prefix,instance,current,candidate,helpers):
         self.path=prefix/NAME;self.instance=instance;self.current=current;self.candidate=candidate
         self.helpers=helpers
+    def load(self):
+        with file_lease(self.path.parent/'recreation-repair-receipt.lock',timeout=1):
+            try:value=read_json(self.path,maximum=65536)
+            except FileNotFoundError:return None
+            validate(value,self.instance,self.current,self.candidate)
+            self.helpers.validate(value['helpers'])
+            return value
     def begin(self,snapshot):
         with file_lease(self.path.parent/'recreation-repair-receipt.lock',timeout=1):
             return self._begin_locked(snapshot)
@@ -60,10 +69,24 @@ class Receipt:
         try:prior=read_json(self.path,maximum=65536)
         except FileNotFoundError:prior=None
         if prior is not None:
-            validate(prior,self.instance,self.current,self.candidate)
+            # Only a completed predecessor may be archived for a new repair.
+            # Preserve the archive before replacing the current coordination file.
+            validate(prior,self.instance,self.current,prior.get('candidate_sha256'))
             self.helpers.validate(prior['helpers'])
-            # The saved original preferences win over the currently paused state.
-            return prior
+            if prior['candidate_sha256']!=self.candidate:
+                _need(prior['phase']=='complete'and self.current['bundle_sha256']==prior['candidate_sha256'])
+                directory=self.path.parent/'recreation-repair-history'
+                if not directory.exists():directory.mkdir(mode=0o700)
+                info=directory.lstat()
+                _need(stat.S_ISDIR(info.st_mode)and info.st_uid==os.geteuid()and not info.st_mode&0o077)
+                archive=directory/(prior['operation_id']+'.json')
+                try:saved=read_json(archive,maximum=65536)
+                except FileNotFoundError:
+                    atomic_json(archive,prior);saved=read_json(archive,maximum=65536)
+                _need(saved==prior)
+            else:
+                # The saved original preferences win over currently paused state.
+                return prior
         value={'format':1,'operation_id':str(uuid.uuid4()),'instance':self.instance,
                'binding':{k:self.current[k]for k in FIELDS},
                'before_sha256':self.current['bundle_sha256'],'candidate_sha256':self.candidate,

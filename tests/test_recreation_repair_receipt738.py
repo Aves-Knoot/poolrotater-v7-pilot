@@ -72,3 +72,20 @@ class ReceiptTests(unittest.TestCase):
             results=list(executor.map(claim,range(2)))
         self.assertEqual(sum(results),1)
         self.assertTrue(self.receipt.begin(self.snapshot)['startup_attempted'])
+
+    def test_finished_predecessor_is_archived_before_new_repair(self):
+        value=self.ready();value=self.receipt.advance(value,'startup_attempted',journal_sha256='c'*64)
+        value=self.receipt.advance(value,'complete')
+        next_receipt=Receipt(self.prefix,'two',{**self.current,'bundle_sha256':'b'*64},'d'*64,self.helpers)
+        next_value=next_receipt.begin(self.snapshot)
+        self.assertEqual(next_value['phase'],'prepared');self.assertFalse(next_value['startup_attempted'])
+        from poolrotater_host.layout import read_json
+        archive=self.prefix/'recreation-repair-history'/(value['operation_id']+'.json')
+        self.assertEqual(read_json(archive),value)
+    def test_incomplete_repair_cannot_be_retargeted_to_a_different_bundle(self):
+        self.receipt.begin(self.snapshot)
+        other=Receipt(self.prefix,'two',self.current,'d'*64,self.helpers)
+        with self.assertRaises(ConfigError):other.begin(self.snapshot)
+    def test_load_validates_existing_receipt_without_current_stopped_snapshot(self):
+        value=self.ready()
+        self.assertEqual(self.receipt.load(),value)

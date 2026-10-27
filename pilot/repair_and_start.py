@@ -47,9 +47,10 @@ def private_directory(path):
     return path
 
 
-def verify_kit(kit):
+def verify_kit(kit, *, expected_version=None):
+    if expected_version is None:expected_version=EXPECTED_VERSION
     release=json.loads((kit/'release.json').read_text())
-    require(release.get('runtime_version')==EXPECTED_VERSION, 'repair_release_refused')
+    require(release.get('runtime_version')==expected_version, 'repair_release_refused')
     for name,row in release['files'].items():
         path=PurePosixPath(name)
         require(not path.is_absolute() and all(x not in ('','..','.') for x in name.split('/')),

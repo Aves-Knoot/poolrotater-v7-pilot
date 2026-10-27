@@ -268,3 +268,22 @@ def refresh_pin(instance, record):
             return {'status':'deferred','reason':'install_in_progress','pin_refreshed':False}
     except Exception:
         return {'status':'refused','reason':'state_requires_review','pin_refreshed':False}
+
+
+def diagnose_pin(instance, record):
+    """Finite read-only report under native install/policy locks; no pin repair."""
+    try:
+        from ..pilot_installation import paths, _administrative_binding
+        target=paths(instance);prefix=target['prefix'];directory=protected(prefix/'recovery')
+        with file_lease(prefix.parent/'.install.lock'),file_lease(directory/'policy.lock'):
+            _target,_marker,current=_administrative_binding(instance,execution='pilot-live')
+            _need(current==record,'recovery_registration_changed')
+            config=_control(protected(directory/'configuration.json'),private=True,maximum=512*1024)
+            _need(type(config)is dict and type(config.get('record'))is dict,'recovery_policy_invalid')
+            return lineage_diagnostic(prefix,current,config['record'])
+    except _Refusal as error:
+        return {'status':'refused','reason':error.reason,'read_only':True,'pin_refreshed':False}
+    except LeaseBusy:
+        return {'status':'deferred','reason':'recovery_policy_busy','read_only':True,'pin_refreshed':False}
+    except Exception:
+        return {'status':'refused','reason':'recovery_policy_unavailable','read_only':True,'pin_refreshed':False}

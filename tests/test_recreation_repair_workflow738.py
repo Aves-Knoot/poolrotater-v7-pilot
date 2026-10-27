@@ -32,7 +32,10 @@ class Workflow(unittest.TestCase):
         self.upgrade=patched('poolrotater_host.pilot_upgrade.upgrade',side_effect=self.upgrade_once)
         self.ownership=patched('poolrotater_host.pilot_operations._ownership_stopped',side_effect=lambda *args,**kw:copy.deepcopy(self.review))
         self.start=patched('poolrotater_host.pilot_operations.lifecycle',return_value={'ok':True})
-        patched('poolrotater_host.rescue.pin_refresh.refresh_pin',return_value={'status':'current'})
+        self.wait=patched('poolrotater_host.pilot_operations._wait_ready',return_value={'ActiveState':'active'})
+        self.backup=patched('poolrotater_host.recreation_repair_backup.snapshot',return_value={'path':'private-backup','files':1})
+        self.pin=patched('poolrotater_host.rescue.pin_refresh.refresh_pin',return_value={'status':'current'})
+        self.diagnose=patched('poolrotater_host.rescue.pin_refresh.diagnose_pin',return_value={'status':'not-ancestor','read_only':True})
     def upgrade_once(self,*args,**kw):
         self.record['bundle_sha256']='b'*64
         # Exercise the stopped installer's reconciliation rearm, not just no-op upgrade.
@@ -87,3 +90,51 @@ class Workflow(unittest.TestCase):
         with self.assertRaises(ConfigError):self.execute()
         self.assertEqual(self.ops.states['poolrotater-v7-managed-two.timer']['ActiveState'],'inactive')
         self.start.assert_not_called()
+
+    def test_backup_failure_prevents_upgrade_and_start(self):
+        self.backup.side_effect=ConfigError('injected backup failure')
+        with self.assertRaises(ConfigError):self.execute()
+        self.upgrade.assert_not_called();self.start.assert_not_called()
+    def test_completed_start_with_interrupted_restore_recovers_without_another_start(self):
+        result=self.execute();self.assertEqual(result['phase'],'started')
+        self.ops.states[self.target['unit']].update(ActiveState='active',MainPID=99)
+        for key in ('managed','updates','recovery','controller-update'):
+            self.ops.states['poolrotater-v7-'+key+'-two.timer']['ActiveState']='inactive'
+        self.ops.states['poolrotater-v7-network-two.service']['ActiveState']='inactive'
+        result=self.execute()
+        self.assertEqual(result['phase'],'already_running');self.assertIsNotNone(result['helpers'])
+        self.assertEqual(self.start.call_count,1);self.wait.assert_called_once()
+        self.assertEqual(self.ops.states['poolrotater-v7-managed-two.timer']['ActiveState'],'active')
+    def test_uncertain_start_then_verified_running_can_finish_restore_without_restart(self):
+        self.start.side_effect=ConfigError('interrupted startup observation')
+        with self.assertRaises(ConfigError):self.execute()
+        self.ops.states[self.target['unit']].update(ActiveState='active',MainPID=99)
+        result=self.execute()
+        self.assertEqual(result['phase'],'already_running');self.assertEqual(self.start.call_count,1)
+        self.assertEqual(read_json(self.prefix/'recreation-repair.json')['phase'],'complete')
+    def test_running_but_unqualified_start_keeps_helpers_paused(self):
+        self.start.side_effect=ConfigError('interrupted startup observation')
+        with self.assertRaises(ConfigError):self.execute()
+        self.ops.states[self.target['unit']].update(ActiveState='active',MainPID=99)
+        self.wait.side_effect=ConfigError('startup observations require review')
+        with self.assertRaises(ConfigError):self.execute()
+        self.assertEqual(self.start.call_count,1)
+        self.assertEqual(self.ops.states['poolrotater-v7-managed-two.timer']['ActiveState'],'inactive')
+
+    def test_rejected_pin_gets_read_only_lineage_report_without_digest_override(self):
+        self.pin.return_value={'status':'refused','reason':'recovery_pin_not_ancestor','pin_refreshed':False}
+        result=self.execute(start=False)
+        self.diagnose.assert_called_once_with('two',self.record)
+        self.assertEqual(result['recovery_pin']['reason'],'recovery_pin_not_ancestor')
+        self.assertIn('recovery-pin-lineage',[label for label,_ in self.saved]);self.start.assert_not_called()
+
+    def test_pin_diagnosis_is_collected_even_when_missing_candidate_blocks_start(self):
+        self.review['rooms'][0]['result']='unknown_creation'
+        self.pin.return_value={'status':'refused','reason':'recovery_pin_not_ancestor','pin_refreshed':False}
+        def review(instance,action,*args,**kwargs):
+            if action=='inventory':return {'history_complete':True,'history_stable':True,'absence_recovery_qualified':False,'rooms':[]}
+            return copy.deepcopy(self.review)
+        self.ownership.side_effect=review
+        result=self.execute()
+        self.assertEqual(result['phase'],'requires_upstream_evidence')
+        self.diagnose.assert_called_once();self.start.assert_not_called()
