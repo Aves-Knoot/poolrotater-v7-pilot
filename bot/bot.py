@@ -2381,6 +2381,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             # empty room here invalidates its pinned identity and can strand
             # already-drained siblings. Leave the timer armed for cancellation.
             return False
+        if time.monotonic() < getattr(self, '_hard_restart_admission_retry_at', 0.):
+            return False
         if getattr(self, "_pending_hard_restart_maps", None) is not None:
             # Explicit map-counted restarts always take precedence over the
             # scheduled empty-room refresh.
@@ -6686,6 +6688,22 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 log.info('automatic hard restart postponed before close: ownership read admission unavailable')
                 return False
 
+        # The old room is still usable. Resolve and verify a native starting
+        # map BEFORE destroying it, rather than discovering an empty pool or a
+        # temporary download/API failure after CloseRoom has succeeded.
+        try:
+            first = self._prepare_recreation_map()
+        except Exception as error:
+            from poolrotater_host.service_diagnostics import failure_code
+            self._hard_restart_admission_retry_at = time.monotonic() + 30.
+            log.warning('hard restart postponed before close: starting map preflight failed code=%s',
+                        failure_code(error))
+            return False
+        if first is None:
+            self._hard_restart_admission_retry_at = time.monotonic() + 30.
+            log.warning('hard restart postponed before close: no verified native starting map')
+            return False
+
         # This intentionally works even during PLAYING: unlike a soft restart,
         # a hard restart destroys the room, so no playlist/settings mutation is
         # attempted in the active room state.
@@ -6749,7 +6767,7 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         time.sleep(1.0)
 
         try:
-            self.create_room()
+            self.create_room(initial_map=first)
             self.set_state(IDLE)
             log.info(
                 "hard restart complete: old room %s -> new room %s",
@@ -6757,9 +6775,10 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             )
             return True
         except Exception:
-            # create_room closes a half-created room on failure. Let the
-            # process/service fail rather than silently run with no lobby;
-            # systemd's Restart=on-failure can then recover on the VPS.
+            # A mutation may have succeeded without a usable reply. Never
+            # retry creation here or assume systemd can reconcile it. The
+            # parent retains the ownership hold and isolates this dead alias
+            # only while shared account/transport authority remains qualified.
             log.exception(
                 "hard restart could not create replacement for room %s",
                 old_room_id,
@@ -7148,20 +7167,31 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         if item is not None and callable(getattr(getattr(self, 'pool', None), 'record_round', None)):
             self.pool.record_round(item.beatmap_id)
 
-    def _next_downloadable_map(self, max_attempts: int = 30, *, native_only=False):
+    def _playlist_reservation_ids(self):
+        reserved = [m.beatmap_id for _item_id, m in getattr(self, 'queued', [])]
+        for name in ('current_map', 'playing_map', 'starting_map'):
+            active = getattr(self, name, None)
+            if active is not None:
+                reserved.append(active.beatmap_id)
+        return reserved
+
+    def _prepare_recreation_map(self):
+        reserve = getattr(self.pool, 'reserve_playlist_maps', None)
+        try:
+            # The replacement has no old playlist; even a one-map pool can
+            # supply its initial map. Preserve all other selection filters.
+            return self._next_downloadable_map(native_only=True, reserve_current=False)
+        finally:
+            if callable(reserve):
+                reserve(self._playlist_reservation_ids())
+
+    def _next_downloadable_map(self, max_attempts: int = 30, *, native_only=False, reserve_current=True):
         """Pick until a map is either confirmed/assumed downloadable."""
         if not self._refresh_operator_exclusions():
             return None
         for _ in range(max(1, int(max_attempts))):
             if callable(getattr(self.pool, 'reserve_playlist_maps', None)):
-                reserved = [m.beatmap_id for _item_id, m in getattr(self, "queued", [])]
-                current = getattr(self, "current_map", None)
-                if current is not None:
-                    reserved.append(current.beatmap_id)
-                for name in ("playing_map", "starting_map"):
-                    active = getattr(self, name, None)
-                    if active is not None:
-                        reserved.append(active.beatmap_id)
+                reserved = self._playlist_reservation_ids() if reserve_current else []
                 self.pool.reserve_playlist_maps(reserved)
             m = (self.pool.next_map(native_only=True) if native_only and getattr(self.pool, 'mixed_dt', False)
                  else self.pool.next_map())
@@ -7188,7 +7218,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
                 if not self._check_dt_revision(m):
                     if (getattr(self.pool, 'dt_full', False)
                             and time.time() < getattr(self, '_dt_revision_retry_at', 0)):
-                        return self._next_downloadable_map(max_attempts, native_only=True)
+                        return self._next_downloadable_map(max_attempts, native_only=True,
+                                                           reserve_current=reserve_current)
                     continue
             if getattr(m, "is_mania_convert", False):
                 if native_only:
@@ -7209,7 +7240,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
             max_attempts,
         )
         if getattr(self.pool, 'dt_full', False) and not native_only:
-            return self._next_downloadable_map(max_attempts, native_only=True)
+            return self._next_downloadable_map(max_attempts, native_only=True,
+                                               reserve_current=reserve_current)
         return None
 
     def _refresh_operator_exclusions(self):
@@ -7420,8 +7452,8 @@ class LobbyBot(PlayerLanguages, DifficultyRecall):
         self._dt_full_refresh_pending = False
         return True
 
-    def create_room(self) -> None:
-        first = self._next_downloadable_map(native_only=True)
+    def create_room(self, *, initial_map=None) -> None:
+        first = initial_map if initial_map is not None else self._next_downloadable_map(native_only=True)
         if not first:
             raise SystemExit("Pool is empty -- widen the SR range or lower "
                              "min_passcount in config.")
