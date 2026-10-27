@@ -548,16 +548,24 @@ def _validate_drain(value,parent,job):
     return value
 
 
+def _retired_pair_matches(target,parent,job,mailbox,progress):
+    if job.get('obsolete_maintenance_retirement') is None:
+        return False
+    from .maintenance_retirement_io import pair_matches
+    return pair_matches(target,parent,job,mailbox,progress)
+
+
 def _maintenance_paths(target,parent,job):
     path=Path(target['prefix'])/MAINTENANCE_NAME
     receipt=Path(target['root'])/MAINTENANCE_RECEIPT
     existing=_control(path,optional=True)
     progress=_control(receipt,parent['service_uid'],private=True,optional=True)
     if existing is not None:
+        retired=_retired_pair_matches(target,parent,job,existing,progress)
         try:
             validate_maintenance(existing,parent)
         except ConfigError:
-            require(_validate_pre_gate_terminal_pair(existing,progress,parent),
+            require(_validate_pre_gate_terminal_pair(existing,progress,parent) or retired,
                     'update_drain_unrelated_maintenance_pending')
         drain=job.get(RECORD)
         previous_terminal=False
@@ -583,7 +591,7 @@ def _maintenance_paths(target,parent,job):
             progress=None
         if (drain is None or existing['id']!=drain.get('request_id')
                 or existing['mode']!='empty' or existing['rooms']!=drain.get('rooms')):
-            require(previous_terminal or pinned_terminal or progress is not None and progress.get('id')==existing['id']
+            require(retired or previous_terminal or pinned_terminal or progress is not None and progress.get('id')==existing['id']
                     and progress.get('phase') in ('complete','cancelled','expired'),
                     'update_drain_unrelated_maintenance_pending')
     return path,receipt,existing,progress
@@ -706,6 +714,7 @@ def _pre_gate_terminal_matches(target,parent,job,existing,progress):
     the current round's request.
     """
     drain=job.get(RECORD);baseline=job.get(GATE_BASELINE)
+    retired=_retired_pair_matches(target,parent,job,existing,progress)
     fields={'format','job_id','round','nonce','parent_sha256','mailbox_id',
             'mailbox_sha256','receipt_id','receipt_sha256'}
     if (type(drain)is not dict or type(baseline)is not dict
@@ -715,7 +724,7 @@ def _pre_gate_terminal_matches(target,parent,job,existing,progress):
             or baseline.get('nonce')!=job.get('nonce')
             or baseline.get('parent_sha256')!=parent.get('bundle_sha256')
             or type(progress)is not dict or progress.get('id')!=baseline.get('receipt_id')
-            or progress.get('phase') not in ('complete','cancelled','expired')
+            or not retired and progress.get('phase') not in ('complete','cancelled','expired')
             or progress.get('failures')):
         return False
     if drain.get('round',0)>0:
@@ -732,7 +741,7 @@ def _pre_gate_terminal_matches(target,parent,job,existing,progress):
         and baseline.get('mailbox_sha256')==fingerprint(existing))
     if not (current_request or old_mailbox):return False
     if old_mailbox and existing is not None:
-        return (_validate_pre_gate_terminal_pair(existing,progress,parent)
+        return ((_validate_pre_gate_terminal_pair(existing,progress,parent) or retired)
                 and (drain.get('round',0)==0 or _history_matches(
                     target,parent,job,baseline['receipt_id'],progress)))
     return True
@@ -745,17 +754,20 @@ def _pre_gate_baseline(target,parent,job,nonce):
                       private=True,optional=True)
     round_number=job.get('controller_update_drain_round',0)
     if type(round_number)is not int or not 0<=round_number<=2**31-1:return None
+    retired=(round_number==0 and mailbox is not None and progress is not None
+             and _retired_pair_matches(target,parent,job,mailbox,progress))
     if mailbox is None and progress is None:
         mailbox_id=receipt_id=mailbox_sha=receipt_sha=None
     elif mailbox is not None and progress is not None:
         try:
             try:validate_maintenance(mailbox,parent)
             except ConfigError:
-                require(_validate_pre_gate_terminal_pair(mailbox,progress,parent),
+                require(_validate_pre_gate_terminal_pair(mailbox,progress,parent) or retired,
                         'update_drain_pre_gate_maintenance_requires_review')
             else:_validate_maintenance_receipt(progress,parent,mailbox)
         except (ConfigError,NetworkError,ValueError,TypeError):return None
-        if progress.get('phase')not in ('complete','cancelled','expired') or progress.get('failures'):
+        if (not retired and progress.get('phase')not in ('complete','cancelled','expired')
+                or progress.get('failures')):
             return None
         if round_number==0 and progress.get('updated_at')>time.time():return None
         if round_number>0:
@@ -984,6 +996,8 @@ def _request_fenced(target,parent,job,save,*,now=time.time):
     at=_time_value(now)
     require(job.get('before')==parent and job.get('phase')=='waiting_empty'
             and _uuid(job.get('id')) and _process_matches(job),'update_drain_parent_or_process_changed')
+    from .maintenance_retirement_io import ensure_retired
+    ensure_retired(target,parent,job,save,now=at)
     path,receipt_path,existing,progress=_maintenance_paths(target,parent,job)
     drain=job.get(RECORD)
     if drain is not None:
@@ -1041,7 +1055,8 @@ def _request_fenced(target,parent,job,save,*,now=time.time):
     if existing is not None:
         try:validate_maintenance(existing,parent)
         except ConfigError:
-            require(_validate_pre_gate_terminal_pair(existing,progress,parent),
+            require(_validate_pre_gate_terminal_pair(existing,progress,parent)
+                    or _retired_pair_matches(target,parent,job,existing,progress),
                     'update_drain_unrelated_maintenance_pending')
         if progress is not None:_validate_maintenance_receipt(progress,parent,existing)
         if existing.get('id')!=drain['request_id']:

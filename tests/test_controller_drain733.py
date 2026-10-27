@@ -153,6 +153,34 @@ class ControllerDrainIntegrationTests(unittest.TestCase):
         request.assert_not_called();gate.assert_not_called();legacy_rows.assert_not_called()
         disarm.assert_not_called()
 
+    def test_interrupted_retirement_never_falls_through_to_legacy_gate(self):
+        from poolrotater_host.config import ConfigError
+        from poolrotater_host.maintenance_retirement_io import RETIREMENT, FOLDER
+        self.job.pop(RECORD, None)
+        self.job['id'] = '11111111-1111-4111-8111-111111111111'
+        folder = self.target['prefix'] / FOLDER
+        folder.mkdir(mode=0o700, parents=True)
+        for reference_saved in (True, False):
+            with self.subTest(reference_saved=reference_saved):
+                if reference_saved:
+                    self.job[RETIREMENT] = {'invented': 'evidence binding'}
+                else:
+                    self.job.pop(RETIREMENT)
+                    (folder / (self.job['id'] + '.json')).write_text('{}')
+                def save(**value): self.job.update(value)
+                with patch('poolrotater_host.update_drain.release_unpublished_gate', return_value=None), \
+                     patch('poolrotater_host.update_drain.managed_operations_pending', return_value=False), \
+                     patch('poolrotater_host.update_drain.request', side_effect=ConfigError('invented changed proof')), \
+                     patch.object(update, '_gate') as gate, \
+                     patch.object(update, '_rows') as legacy, \
+                     patch.object(update, '_commit') as commit:
+                    accepted = update._step_independent_drain('invented', self.target, self.parent,
+                                                              self.job, save, now=100.)
+                self.assertTrue(accepted)
+                self.assertEqual(self.job['reason'], 'waiting_for_retired_maintenance_evidence')
+                self.assertEqual(self.job['phase'], 'waiting_empty')
+                gate.assert_not_called(); legacy.assert_not_called(); commit.assert_not_called()
+
     def test_orphan_own_locking_gate_is_cleared_before_pending_work_wait(self):
         from poolrotater_host.controller_update import GATE
         self.job.pop(RECORD,None);self.job['nonce']='f'*32

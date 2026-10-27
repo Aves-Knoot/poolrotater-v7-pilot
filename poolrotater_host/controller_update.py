@@ -1020,6 +1020,14 @@ def _step_independent_drain(instance, target, parent, job, save, *, now):
         # Once a request exists, retain its operation and keep retrying fresh
         # evidence; never create another request or reset ownership to proceed.
         if job.get(RECORD) is None:
+            from .maintenance_retirement_io import RETIREMENT, FOLDER
+            if (job.get(RETIREMENT) is not None or type(job.get('id')) is str and os.path.lexists(
+                    Path(target['prefix']) / FOLDER / (job['id'] + '.json'))):
+                # A persisted retirement decision is an admission transaction.
+                # Do not route its interrupted/changed evidence around the
+                # normal guards by falling through to a second, legacy gate.
+                save(reason='waiting_for_retired_maintenance_evidence')
+                return True
             return False
         save(reason='waiting_for_valid_independent_drain_evidence')
         return True
