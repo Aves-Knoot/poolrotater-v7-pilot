@@ -374,6 +374,11 @@ def queue(instance, bundle, sha256, *, from_sha256, deployment_id=None, release_
             raise ConfigError('queued controller starting digest differs')
         if old and old.get('phase') not in ('complete','cancelled'):
             raise ConfigError('a controller update already needs completion or review')
+        # A later queue must not erase the completed job's drain/failure proof.
+        # This records evidence only; it never discharges old maintenance.
+        from .controller_history import REFERENCE, archive_terminal, terminal_reference
+        archive_terminal(target, parent, old)
+        terminal_evidence = terminal_reference(old)
         native = _control(target['root'] / 'state/rolling/status.json', parent['service_uid'])
         service = _service_state(instance)
         stopped=None
@@ -425,6 +430,7 @@ def queue(instance, bundle, sha256, *, from_sha256, deployment_id=None, release_
             'queued_at':time.time(), 'empty_since':None, 'reason':'waiting_for_all_rooms_empty',
             'automatic_recovery':{'format':1,'attempts':0}}
         if release_approval_required:job['release_approval_required']=True
+        if terminal_evidence is not None:job[REFERENCE]=terminal_evidence
         from .managed_host.projection import read as managed_projection
         # The secret-free projection is owned by the service UID, like other
         # host JSON. Keep its normal owner/privacy checks under that identity.
