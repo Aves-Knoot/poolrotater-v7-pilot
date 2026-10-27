@@ -59,12 +59,15 @@ class TerminalHistoryTests(unittest.TestCase):
         job = {**self.job, 'phase': 'cancelled'}
         path = self.archive(job, self.before)
         self.assertEqual(json.loads(path.read_text())['job'], job)
+        # A later stopped upgrade may retain an older cancelled record. Keep
+        # it as evidence without allowing recovery to adopt its old endpoint.
+        self.assertEqual(self.archive(job, self.after), path)
         with self.assertRaises(ConfigError):
-            self.archive(job, self.after)
+            history.read_terminal(self.target, self.after, history.terminal_reference(job))
 
     def test_active_unknown_or_foreign_records_are_not_archived(self):
         for change in ({'phase': 'held'}, {'phase': 'committing'}, {'format': True},
-                       {'id': '../elsewhere'}, {'after': self.before},
+                       {'id': '../elsewhere'},
                        {'before': {**self.before, 'generation': str(uuid.uuid4())}}):
             with self.subTest(change=change), self.assertRaises(ConfigError):
                 self.archive({**self.job, **change})
@@ -139,7 +142,15 @@ class TerminalHistoryTests(unittest.TestCase):
             history.read_terminal(self.target, self.after, reference)
         self.assertFalse(path.exists())
 
-    def test_queue_keeps_original_proof_before_provisioning_and_addresses_it_in_new_job(self):
+    def test_older_completed_job_survives_stopped_upgrade_without_becoming_recovery_authority(self):
+        older = {**self.job, 'after': {**self.after, 'bundle_sha256': 'c' * 64}}
+        path = self.archive(older)
+        self.assertEqual(json.loads(path.read_text())['job'], older)
+        self.assertEqual(self.archive(older), path)
+        with self.assertRaises(ConfigError):
+            history.read_terminal(self.target, self.after, history.terminal_reference(older))
+
+    def exercise_queue(self, *, current_evidence=True):
         from poolrotater_host import controller_update as update
         root = self.prefix.parent / 'host'
         (root / 'config').mkdir(parents=True)
@@ -164,8 +175,12 @@ class TerminalHistoryTests(unittest.TestCase):
             # The previous job still exists, and its durable evidence is already
             # available even if provisioning or a later admission check fails.
             self.assertEqual(original_control(current_path), self.job)
-            self.assertEqual(history.read_terminal(target, self.after,
-                              history.terminal_reference(self.job)), self.job)
+            reference = history.terminal_reference(self.job)
+            if current_evidence:
+                self.assertEqual(history.read_terminal(target, self.after, reference), self.job)
+            else:
+                with self.assertRaises(ConfigError):
+                    history.read_terminal(target, self.after, reference)
             return {'release': '/invented-candidate'}
 
         with ExitStack() as stack:
@@ -199,7 +214,18 @@ class TerminalHistoryTests(unittest.TestCase):
         self.assertEqual(result['phase'], 'waiting_empty')
         self.assertNotEqual(queued['id'], self.job['id'])
         self.assertEqual(queued[history.REFERENCE], history.terminal_reference(self.job))
-        self.assertEqual(history.read_terminal(target, self.after, queued[history.REFERENCE]), self.job)
+        if current_evidence:
+            self.assertEqual(history.read_terminal(target, self.after, queued[history.REFERENCE]), self.job)
+        else:
+            with self.assertRaises(ConfigError):
+                history.read_terminal(target, self.after, queued[history.REFERENCE])
+
+    def test_queue_keeps_original_proof_before_provisioning_and_addresses_it_in_new_job(self):
+        self.exercise_queue()
+
+    def test_queue_after_stopped_upgrade_keeps_older_terminal_without_refusing_update(self):
+        self.job['after'] = {**self.after, 'bundle_sha256': 'c' * 64}
+        self.exercise_queue(current_evidence=False)
 
 
 if __name__ == '__main__':

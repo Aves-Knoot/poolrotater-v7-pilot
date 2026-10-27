@@ -63,15 +63,21 @@ def read_terminal(target, parent, reference):
     return job
 
 
-def _validate_terminal(parent, job):
-    """Both archive writers and readers enforce the same installation binding."""
+def _validate_terminal(parent, job, *, current=True):
+    """Retention and recovery share custody, but only recovery needs currentness.
+
+    A supported stopped upgrade can leave the previous terminal job behind.
+    Archiving it must not block the next update. Merely retaining its bytes
+    grants no authority: readers used for retirement still require the exact
+    current endpoint, followed by independent native activation validation.
+    """
     try:
         if (type(job) is not dict or type(job.get('format')) is not int or job.get('format') != 1
                 or job.get('phase') not in ('complete', 'cancelled')
                 or str(uuid.UUID(job['id'])) != job['id']):
             raise ValueError
         side = 'after' if job['phase'] == 'complete' else 'before'
-        if job.get(side) != parent:
+        if current and job.get(side) != parent:
             raise ValueError
         for endpoint in ('before', 'after'):
             record = job[endpoint]
@@ -86,7 +92,7 @@ def _validate_terminal(parent, job):
 def archive_terminal(target, parent, job):
     if job is None:
         return None
-    _validate_terminal(parent, job)
+    _validate_terminal(parent, job, current=False)
     prefix = Path(target['prefix'])
     if str(prefix) != parent['prefix']:
         raise ConfigError('controller history prefix changed')
