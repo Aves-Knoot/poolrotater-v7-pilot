@@ -148,6 +148,7 @@ class TaikoSlotAndUpgradeBoundaryTests(unittest.TestCase):
 
     def test_booking_reservation_is_rechecked_under_catalog_admission(self):
         with tempfile.TemporaryDirectory() as folder:
+            (Path(folder)/'state/rolling').mkdir(parents=True,mode=0o700)
             owner=SimpleNamespace(runtime=folder,status_lock=threading.Lock(),rollout_alias=None,
                                   stopping=threading.Event(),targets={})
             adapter=NativeAdapter(SimpleNamespace(owner=owner,state=SimpleNamespace()))

@@ -132,10 +132,12 @@ class FleetGate(unittest.TestCase):
 class NativeBoundary(unittest.TestCase):
     def setUp(self):
         from poolrotater_host.managed_host.native import NativeAdapter
+        temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
+        runtime=Path(temporary.name);(runtime/'state/rolling').mkdir(parents=True,mode=0o700)
         self.worker=types.SimpleNamespace(process=types.SimpleNamespace(poll=lambda:None),
             status={'ready':True},fresh=lambda:True,idle_empty=lambda:False,empty_since=time.monotonic()-60)
         self.owner=types.SimpleNamespace(stopping=threading.Event(),rollout_alias=None,targets={},
-            protected_parent={'prefix':'/unused'},runtime='/unused',workers={'room1':self.worker},empty_seconds=5)
+            protected_parent={'prefix':str(runtime)},runtime=str(runtime),status_lock=threading.Lock(),workers={'room1':self.worker},empty_seconds=5)
         state=types.SimpleNamespace()
         self.adapter=NativeAdapter(types.SimpleNamespace(owner=self.owner,state=state))
         self.value={'action':'catalog','alias':'room1','timing':'when_empty'}

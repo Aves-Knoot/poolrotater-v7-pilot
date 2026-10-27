@@ -35,26 +35,37 @@ class Engine:
                     export(self.state)
                 return result
             try:
-                self.adapter.preflight(value)
-                ready=self.adapter.ready(value)
-            except BeforeMutationError as exc:
-                result=self.state.reject_before_mutation(id,exc.code);export(self.state);return result
-            if ready and hasattr(self.adapter,'admit'):ready=self.adapter.admit(value)
-            result=self.state.begin(id,ready=ready)
-            if result['phase']=='waiting_boundary':continue
-            if result['phase']!='applying':export(self.state);return result
-            try:
-                export(self.state)
-                native=self.adapter.apply(value)
-                result=self.state.finish(id,'applied',result=native)
-            except Deferred:
-                self.state.defer(id);result=self.state.operation(id)
-            except BeforeMutationError as exc:
-                result=self.state.reject_before_mutation(id,exc.code);export(self.state)
-            except Exception as error:
-                # No exception text/provider body/configuration enters receipts.
-                log.warning('managed operation failed: id=%s alias=%s exception_type=%s',
-                            id,value['alias'],type(error).__name__)
-                result=self.state.finish(id,'uncertain',error='provider_outcome_uncertain')
-            return result
+                try:
+                    self.adapter.preflight(value)
+                    ready=self.adapter.ready(value)
+                except Deferred:
+                    # A lifecycle lease is busy, not an ownership failure.
+                    result=self.state.begin(id,ready=False)
+                    if result['phase']=='waiting_boundary':continue
+                    export(self.state);return result
+                except BeforeMutationError as exc:
+                    result=self.state.reject_before_mutation(id,exc.code);export(self.state);return result
+                if ready and hasattr(self.adapter,'admit'):ready=self.adapter.admit(value)
+                result=self.state.begin(id,ready=ready)
+                if result['phase']=='waiting_boundary':continue
+                if result['phase']!='applying':export(self.state);return result
+                try:
+                    export(self.state)
+                    native=self.adapter.apply(value)
+                    result=self.state.finish(id,'applied',result=native)
+                except Deferred:
+                    self.state.defer(id);result=self.state.operation(id)
+                except BeforeMutationError as exc:
+                    result=self.state.reject_before_mutation(id,exc.code);export(self.state)
+                except Exception as error:
+                    # No exception text/provider body/configuration enters receipts.
+                    log.warning('managed operation failed: id=%s alias=%s exception_type=%s',
+                                id,value['alias'],type(error).__name__)
+                    result=self.state.finish(id,'uncertain',error='provider_outcome_uncertain')
+                return result
+            finally:
+                # A not-ready room must not retain a lease while considering a
+                # sibling request. Coordinator's final release is idempotent.
+                release=getattr(self.adapter,'release',None)
+                if callable(release):release()
         return None

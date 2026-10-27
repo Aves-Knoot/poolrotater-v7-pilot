@@ -1,7 +1,7 @@
 """Controller adapter: reuse native workers, hotload and verified room closure."""
 import copy
+from contextlib import ExitStack
 import os
-import sys
 from pathlib import Path
 import threading
 import time
@@ -63,7 +63,7 @@ def apply_worker_settings(bot,patch):
     return True
 
 class NativeAdapter:
-    def __init__(self,coordinator):self.coordinator=coordinator;self.owner=coordinator.owner;self.state=coordinator.state;self.admitted=None;self._catalog_admission=None
+    def __init__(self,coordinator):self.coordinator=coordinator;self.owner=coordinator.owner;self.state=coordinator.state;self.admitted=None;self._catalog_admission=None;self._admission_key=None
     def preflight(self,value):
         alias=value['alias']
         if alias not in self.owner.configs:raise BeforeMutationError('room_not_found')
@@ -104,6 +104,9 @@ class NativeAdapter:
                     pool=make_worker_pool(cfg)
                     if not pool.maps:raise ValueError('empty candidate pool')
                 except Exception:raise BeforeMutationError('catalog_unavailable') from None
+        # Do not mistake a normal in-flight refresh for unresolved ownership.
+        # Acquire the same lifecycle leases before interpreting its journal.
+        if not self._acquire_lifecycle(value):raise Deferred()
         row=self.owner.registry.snapshot()['rooms'].get(alias,{})
         if row.get('ownership_unknown') or row.get('phase')=='recovery_required':raise BeforeMutationError('room_ownership_requires_review')
     def ready(self,value):
@@ -127,30 +130,35 @@ class NativeAdapter:
         if value['timing']=='immediate':return True
         return (worker.idle_empty() and worker.empty_since is not None
                 and time.monotonic()-worker.empty_since>=self.owner.empty_seconds)
+    def _acquire_lifecycle(self,value):
+        key=(value.get('id'),value['alias'],value.get('action','capacity'))
+        if self._catalog_admission is not None:return self._admission_key==key
+        from ..bookings.admission import update_admission
+        from ..bookings.update_guard import holds_alias
+        from ..refresh_fence import LOCK
+        from ..layout import LeaseBusy,file_lease
+        try:
+            # Match controller-update ordering: booking admission, then refresh.
+            # Hold both through validation/admission/apply; never A then B.
+            with ExitStack() as guards:
+                guards.enter_context(update_admission(self.owner.runtime))
+                guards.enter_context(file_lease(Path(self.owner.runtime)/LOCK))
+                if value.get('action')=='catalog' and holds_alias(self.owner.runtime,value['alias']):
+                    return False
+                self._catalog_admission=guards.pop_all()
+                self._admission_key=key
+            return True
+        except LeaseBusy:return False
     def admit(self,value):
-        catalog_guard=None
-        if value.get('action')=='catalog':
-            # Reservation admission uses the same mutex. Keep it through the
-            # native catalog handoff so an empty awaiting-arrival room cannot
-            # acquire a lease between readiness and actual closure.
-            from ..bookings.admission import update_admission
-            from ..bookings.update_guard import holds_alias
-            from ..layout import LeaseBusy
-            catalog_guard=update_admission(self.owner.runtime)
-            try:catalog_guard.__enter__()
-            except LeaseBusy:return False
-            try:
-                if holds_alias(self.owner.runtime,value['alias']):
-                    catalog_guard.__exit__(None,None,None);return False
-            except BaseException:
-                catalog_guard.__exit__(*sys.exc_info());raise
+        if not self._acquire_lifecycle(value):return False
         with self.owner.status_lock:
             if (self.owner.rollout_alias or self.owner.stopping.is_set()
                     or os.path.lexists(Path(self.owner.runtime)/'state/rolling/supervisor-maintenance.json')):
-                if catalog_guard is not None:catalog_guard.__exit__(None,None,None)
-                return False
-            self._catalog_admission=catalog_guard
-            self.owner.rollout_alias=value['alias'];self.admitted=value['alias'];return True
+                allowed=False
+            else:
+                self.owner.rollout_alias=value['alias'];self.admitted=value['alias'];allowed=True
+        if not allowed:self.release()
+        return allowed
     def release(self):
         try:
             with self.owner.status_lock:
@@ -158,6 +166,7 @@ class NativeAdapter:
                     self.owner.rollout_alias=None
                 self.admitted=None
         finally:
+            self._admission_key=None
             if self._catalog_admission is not None:
                 guard,self._catalog_admission=self._catalog_admission,None
                 guard.__exit__(None,None,None)
