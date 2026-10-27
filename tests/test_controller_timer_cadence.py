@@ -35,6 +35,10 @@ class ControllerCadenceTests(unittest.TestCase):
                                      return_value=False))
             stack.enter_context(patch('poolrotater_host.pilot_operations._service_state',return_value={'MainPID':1}))
             stack.enter_context(patch('poolrotater_host.updates.approval.require_approved'))
+            # Timer installation has its own provisioning/bridge tests. This
+            # timing-only fixture has no executable successor or systemd; keep
+            # the automatic timer's side effect at that explicit boundary.
+            stack.enter_context(patch.object(update, 'arm', return_value={'ok': True}))
             stack.enter_context(patch.object(update.time,'time',return_value=now))
             stack.enter_context(patch.object(update,'_write'))
             gate=stack.enter_context(patch.object(update,'_gate'))
