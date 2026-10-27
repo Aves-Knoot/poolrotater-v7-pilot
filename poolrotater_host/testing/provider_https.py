@@ -60,6 +60,7 @@ class TLSProvider(OAuthProvider):
         self.wires = {}; self.rooms = []; self.details = {}; self.on_read = None
         self.api_handler = None
         self.referee_handler = None
+        self.history_rooms = None
 
     def wire(self, path, status, body=b'', *, headers=None, chunked=False, delay=0):
         self.wires.setdefault(path, deque()).append((status, body, headers, chunked, delay))
@@ -68,6 +69,18 @@ class TLSProvider(OAuthProvider):
         if self.api_handler is not None:
             result = self.api_handler(method, path, form, bearer, headers)
             if result is not None: return result
+        from ..owned_inventory import history_cursor, is_history_path, PAGE_SIZE
+        if method == 'GET' and is_history_path(path):
+            self.calls.append({'method': method, 'path': path, 'form': form, 'bearer': bearer, 'headers': dict(headers)})
+            if self.on_read: self.on_read(path)
+            if bearer not in self.access: return 401, {}
+            if type(self.history_rooms) is not list: return 503, {}
+            rows = sorted(self.history_rooms, key=lambda row: (int(row['pinned']), row['id']), reverse=True)
+            cursor = history_cursor(path)
+            if cursor is not None:
+                key = (int(cursor['pinned']), cursor['id'])
+                rows = [row for row in rows if (int(row['pinned']), row['id']) < key]
+            return 200, rows[:PAGE_SIZE]
         if method == 'GET' and (path == OWNED_PATH or path.startswith('/api/v2/rooms/')):
             self.calls.append({'method': method, 'path': path, 'form': form, 'bearer': bearer, 'headers': dict(headers)})
             if self.on_read: self.on_read(path)

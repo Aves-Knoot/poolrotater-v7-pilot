@@ -1,6 +1,8 @@
 """Closed diagnostic vocabulary; never forward private exception text."""
 import re
-FAILURE_CODES = frozenset(('managed_host_enrollment_required','managed_policy_migration_busy',
+FAILURE_CODES = frozenset(('ownership_inventory_request_refused','ownership_inventory_unavailable',
+    'ownership_inventory_refused','ownership_inventory_incomplete',
+    'managed_host_enrollment_required','managed_policy_migration_busy',
     'managed_policy_migration_requires_review','managed_root_policy_required',
     'invalid_provider_budget_loader', 'provider_budget_requires_review',
     'provider_budget_changed', 'owner_provider_budget_required', 'owner_provider_budget_mismatch',

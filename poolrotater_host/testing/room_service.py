@@ -123,10 +123,13 @@ class InventedRoomService(RuntimeHub):
 
     def _evidence(self, room_id, *, active):
         detail = {'id': room_id, 'user_id': 99, 'type': 'head_to_head',
-                  'active': active, 'ends_at': None if active else '2000-01-01T00:00:00Z'}
+                  'active': active, 'ends_at': None if active else '2000-01-01T00:00:00Z',
+                  'starts_at': '1999-12-31T00:00:00Z', 'pinned': False}
         self.provider.details[str(room_id)] = (200, detail)
         self.provider.rooms = [copy.deepcopy(row) for status, row in self.provider.details.values()
                                if status == 200 and row['active']]
+        self.provider.history_rooms = [copy.deepcopy(row) for status, row in self.provider.details.values()
+                                       if status == 200]
 
     def api_authenticated(self, bearer, name, args, kwargs):
         self.authenticate(bearer)

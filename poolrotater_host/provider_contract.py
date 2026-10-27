@@ -41,9 +41,11 @@ class PreparedRequest:
 def prepare(method, path, *, form=None, bearer=None):
     """No arbitrary URL, caller headers, room mutation, or token grant is accepted."""
     if not isinstance(method, str) or not isinstance(path, str): raise AuthError('provider_endpoint_refused')
+    from .owned_inventory import is_history_path
+    history = method == 'GET' and is_history_path(path)
     detail = isinstance(path, str) and re.fullmatch(r'/api/v2/rooms/[1-9][0-9]{0,18}', path)
     if (method, path) not in {('POST', '/oauth/token'), ('GET', '/api/v2/me'),
-                             ('DELETE', '/api/v2/oauth/tokens/current'), ('GET', OWNED_PATH)} and not (method == 'GET' and detail):
+                             ('DELETE', '/api/v2/oauth/tokens/current'), ('GET', OWNED_PATH)} and not (method == 'GET' and detail) and not history:
         raise AuthError('provider_endpoint_refused')
     headers = {'Accept': 'application/json', 'Accept-Encoding': 'identity',
                'Connection': 'close', 'x-api-version': API_VERSION}
@@ -67,7 +69,7 @@ def prepare(method, path, *, form=None, bearer=None):
     else:
         if form is not None: raise AuthError('provider_form_refused')
         headers['Authorization'] = 'Bearer ' + _secret(bearer)
-    return PreparedRequest(method, path, headers, body, 1024**2 if detail or path == OWNED_PATH else 65536)
+    return PreparedRequest(method, path, headers, body, 1024**2 if detail or path == OWNED_PATH or history else 65536)
 
 
 def exchange_fixture(connection, request, *, timeout=2, on_status=None):
