@@ -182,15 +182,17 @@ class TaikoSlotAndUpgradeBoundaryTests(unittest.TestCase):
     def test_exact_frozen_candidate_pairs_admit_and_unreviewed_pairs_refuse(self):
         from poolrotater_host.pilot_upgrade import require_repair_compatible
         freeze=json.loads((Path(__file__).resolve().parents[2]/'candidate/freeze.json').read_text())
-        candidate_path=Path(freeze['build']['path'])
+        inputs=json.loads((Path(__file__).resolve().parents[2]/'candidate/validation-inputs.json').read_text())
+        candidate_path=Path(inputs['candidate_path'])
+        self.assertEqual(inputs['candidate_sha256'],freeze['runtime_sha256'])
         candidate_pin=freeze['runtime_sha256']
         with tempfile.TemporaryDirectory() as td:
             candidate=self._frozen_manifest(candidate_path,candidate_pin,Path(td)/'candidate')
-            for index,row in enumerate(freeze['baseline_versions']):
+            for index,row in enumerate(inputs['baselines']):
                 with self.subTest(baseline=row['version']):
                     baseline=self._frozen_manifest(Path(row['archive']),row['sha256'],Path(td)/('baseline-'+str(index)))
                     self.assertEqual((baseline['version'],candidate['version']),
-                                     (row['version'],'v7.3.3'))
+                                     (row['version'],freeze['version']))
                     require_repair_compatible(baseline,candidate)
                     for section in ('shared','storage'):
                         changed={**candidate,section:{**candidate[section]}}
@@ -199,8 +201,8 @@ class TaikoSlotAndUpgradeBoundaryTests(unittest.TestCase):
                         with self.subTest(baseline=row['version'],section=section), \
                              self.assertRaises(ConfigError):
                             require_repair_compatible(baseline,changed)
-            baseline=self._frozen_manifest(Path(freeze['baseline_versions'][0]['archive']),
-                freeze['baseline_versions'][0]['sha256'],Path(td)/'unreviewed-baseline')
+            baseline=self._frozen_manifest(Path(inputs['baselines'][0]['archive']),
+                inputs['baselines'][0]['sha256'],Path(td)/'unreviewed-baseline')
             wrong_version={**candidate,'version':'v7.3.4'}
             with self.assertRaisesRegex(ConfigError,'reviewed runtime family'):
                 require_repair_compatible(baseline,wrong_version)
