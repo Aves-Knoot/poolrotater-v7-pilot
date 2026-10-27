@@ -211,7 +211,15 @@ def ownership(instance, action, *, journal_sha256=None, alias=None, room_id=None
               confirm_lost_creation=False, transaction_id=None, decision=None):
     if action not in ('review', 'clear', 'resume'):
         raise ConfigError('invalid stopped ownership action')
-    target, _, record = administrative_binding(instance)
+    from .stopped_recovery import admission
+    with admission(instance) as (target,record):
+        return _ownership_stopped(instance,action,target,record,
+            journal_sha256=journal_sha256,alias=alias,room_id=room_id,
+            confirm_lost_creation=confirm_lost_creation,transaction_id=transaction_id,decision=decision)
+
+
+def _ownership_stopped(instance,action,target,record,*,journal_sha256,alias,room_id,
+                       confirm_lost_creation,transaction_id,decision):
     if record['execution'] != 'pilot-live':
         raise ConfigError('ownership operator commands require reviewed live pilot')
     unit = _unit(instance, optional=action == 'review')
