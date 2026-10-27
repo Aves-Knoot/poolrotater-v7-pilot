@@ -4,12 +4,14 @@ from contextlib import contextmanager
 import gzip
 import hashlib
 import json
+import logging
 import math
 import os
 from pathlib import Path
 import re
 import sqlite3
 import stat
+import time
 import zlib
 
 from ..network.contracts import NetworkError, canonical, identifier, require
@@ -21,6 +23,7 @@ TEXT_LIMIT = 16 * 1024
 ALIAS = re.compile(r'[A-Za-z0-9_.-]{1,80}\Z')
 VERSION = re.compile(r'[A-Za-z0-9_.+-]{1,80}\Z')
 KINDS = ('operational', 'chat', 'command', 'gap')
+log = logging.getLogger(__name__)
 
 
 def label(value, *, nullable=False):
@@ -50,22 +53,50 @@ def private_database(root, name):
 
 
 def check_database(path):
-    for suffix in ('', '-wal', '-shm', '-journal'):
-        file = Path(str(path) + suffix)
-        if not os.path.lexists(file):
-            if not suffix:
-                raise FileNotFoundError(file)
-            continue
-        try:
-            st = file.lstat()
-        except FileNotFoundError:
-            # SQLite may remove an optional sidecar after lexists and before
-            # lstat while committing a transaction. A vanished main database
-            # remains an error because it is the authority being checked.
-            if suffix:
+    # A privileged read-only SQLite connection may briefly create a private
+    # sidecar under its own UID before fchowning it to the database owner;
+    # a concurrently unlinked journal can also be observed with zero links.
+    # Recheck the entire set before opening anything; never accept an unsafe
+    # file or retry an unsafe main database, extra link or permissive mode.
+    for attempt in range(4):
+        retry=False
+        for suffix in ('', '-wal', '-shm', '-journal'):
+            file = Path(str(path) + suffix)
+            if not os.path.lexists(file):
+                if not suffix:
+                    raise FileNotFoundError(file)
                 continue
-            raise
-        require(stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and st.st_nlink == 1 and not st.st_mode & 0o077, 'unsafe_log_database')
+            try:
+                st = file.lstat()
+            except FileNotFoundError:
+                # SQLite may remove an optional sidecar after lexists and
+                # before lstat. A vanished main database remains an error.
+                if suffix:
+                    continue
+                raise
+            regular = stat.S_ISREG(st.st_mode)
+            owner_matches = st.st_uid == os.geteuid()
+            single_link = st.st_nlink == 1
+            private_mode = not bool(st.st_mode & 0o077)
+            if regular and owner_matches and single_link and private_mode:
+                continue
+            # A SQLite journal may also be unlinked concurrently after the
+            # lookup resolves but before its metadata is read; Linux can then
+            # report link count zero. Recheck, but never accept an extant
+            # zero-link entry or a real extra hard link.
+            transient_sidecar=(suffix and regular and private_mode and
+                (single_link and not owner_matches or owner_matches and st.st_nlink==0))
+            if transient_sidecar and attempt<3:
+                retry=True
+                break
+            # Fixed metadata categories only; never emit a path, UID, mode,
+            # contents or secret-bearing exception text.
+            log.error('private database metadata refused: member=%s regular=%s owner_matches=%s single_link=%s private_mode=%s',
+                      {'':'main','-wal':'wal','-shm':'shm','-journal':'journal'}[suffix],
+                      regular,owner_matches,single_link,private_mode)
+            require(False, 'unsafe_log_database')
+        if not retry:return
+        time.sleep(0.05)
 
 
 @contextmanager
