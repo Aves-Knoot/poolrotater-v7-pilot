@@ -125,6 +125,16 @@ def run_provider_service(root, release, *, authentication, api, hub, observer=No
                 for alias, worker in list(supervisor.workers.items()):
                     phase = phases.get(alias, {}).get('phase')
                     if phase == 'recovery_required':
+                        from .creation_containment import isolate, CONTAINED, DEFERRED
+                        outcome = isolate(supervisor, worker, authentication, hub)
+                        if outcome == CONTAINED:
+                            failing_workers.pop((alias, id(worker)), None)
+                            continue
+                        if outcome == DEFERRED:
+                            key = (alias, id(worker))
+                            seen = failing_workers.setdefault(key, time.monotonic())
+                            if time.monotonic() - seen < WORKER_FAILURE_CLEANUP_SECONDS:
+                                continue
                         raise ConfigError('provider_worker_ownership_recovery_required')
                     # The native rolling engine owns the handoff alias until
                     # activation or safe rollback has settled. Let it handle

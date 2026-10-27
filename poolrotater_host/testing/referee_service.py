@@ -30,6 +30,7 @@ class RefereeFixture:
         self.bad_accept = False
         self.handshake_reply = {}
         self.completion_error = None
+        self.creation_error_after_commit = None
         self.completion_delay = 0
         self.stopped = threading.Event()
         backend.shared = self
@@ -102,6 +103,9 @@ class RefereeFixture:
                     if method=='MakeRoom':
                         body=args[0]
                         result=self.backend.make_authenticated(bearer,body['name'],body['beatmap_id'],body['ruleset_id'])
+                        if self.creation_error_after_commit is not None:
+                            self.send({'type':3,'invocationId':identity,'error':self.creation_error_after_commit})
+                            continue
                     else:result=self.backend.invoke_authenticated(bearer,method,args)
                     # Official RoomJoinedResponse has no top-level creator.
                     # Keep explicit corrupt-owner faults for refusal coverage.
