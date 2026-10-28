@@ -1,7 +1,7 @@
 """Kit entry reuses validated archive primitives and exposes only safe errors."""
 from scripts.test_isolation import require_test_isolation
 require_test_isolation('ordinary')
-import hashlib,json,tempfile,unittest
+import hashlib,json,os,stat,tempfile,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,6 +9,36 @@ from pilot import recreation_repair as entry,repair_and_start as primitives
 from poolrotater_host.config import ConfigError
 
 class Kit(unittest.TestCase):
+    def test_verified_public_sdk_is_readable_without_exposing_other_files(self):
+        with tempfile.TemporaryDirectory()as folder:
+            root=Path(folder);source=root/'payload';nested=source/'package'
+            nested.mkdir(parents=True,mode=0o700);code=nested/'module.py';code.write_bytes(b'public code')
+            entry.readable_public_sdk(root,source,primitives)
+            for path in (root,source,nested):self.assertEqual(stat.S_IMODE(path.stat().st_mode),0o755)
+            self.assertEqual(stat.S_IMODE(code.stat().st_mode),0o444)
+            self.assertEqual(code.read_bytes(),b'public code')
+
+    def test_public_sdk_refuses_siblings_links_and_multiple_file_custody(self):
+        for kind in ('sibling','symlink','hardlink'):
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory()as folder:
+                root=Path(folder);source=root/'payload';source.mkdir(mode=0o700)
+                outside=root/'outside';outside.write_bytes(b'private sentinel');outside.chmod(0o600)
+                if kind=='symlink':
+                    outside.rename(root.parent/(root.name+'-sentinel'))
+                    sentinel=root.parent/(root.name+'-sentinel')
+                    (source/'link').symlink_to(sentinel)
+                elif kind=='hardlink':
+                    sentinel=root.parent/(root.name+'-sentinel');outside.rename(sentinel)
+                    os.link(sentinel,source/'linked')
+                else:sentinel=outside
+                try:
+                    with self.assertRaises(primitives.RepairError):
+                        entry.readable_public_sdk(root,source,primitives)
+                    self.assertEqual(sentinel.read_bytes(),b'private sentinel')
+                    self.assertEqual(stat.S_IMODE(sentinel.stat().st_mode),0o600)
+                finally:
+                    if sentinel.parent!=root:sentinel.unlink()
+
     def test_environment_comes_from_verified_registration_and_exact_supported_bytes(self):
         release={'runtime_sha256':'a'*64,'supported_predecessors':[{'sha256':'b'*64}]}
         record={'execution':'pilot-live','bundle_sha256':'b'*64,

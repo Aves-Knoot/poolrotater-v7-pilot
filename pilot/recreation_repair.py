@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tempfile
 import traceback
@@ -63,6 +64,28 @@ def interpreter_matches(python, environment):
             and sys.flags.isolated and not sys.flags.no_site and sys.dont_write_bytecode)
 
 
+def readable_public_sdk(directory, source, primitives):
+    """UID-scoped native readers must import verified public code after setuid.
+
+    Reports, credentials and backups never live in this temporary extraction.
+    Expose the outer directory last; every code file stays root-owned/read-only.
+    """
+    directory,source=Path(directory),Path(source)
+    outer=directory.lstat()
+    primitives.require(stat.S_ISDIR(outer.st_mode) and not directory.is_symlink()
+                       and outer.st_uid==os.geteuid(),'repair_public_sdk_scope_refused')
+    primitives.require(source==directory/'payload' and set(directory.iterdir())=={source},
+                       'repair_public_sdk_scope_refused')
+    nodes=[source,*source.rglob('*')]
+    for path in nodes:
+        info=path.lstat()
+        primitives.require(info.st_uid==os.geteuid() and not path.is_symlink() and
+            (stat.S_ISDIR(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink==1)),
+            'repair_public_sdk_scope_refused')
+    for path in nodes:path.chmod(0o755 if path.is_dir() else 0o444)
+    directory.chmod(0o755)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--instance',required=True)
@@ -107,6 +130,7 @@ def main():
             python,environment=registered_environment(args.instance,release,primitives)
             primitives.require(interpreter_matches(python,environment),
                                'repair_registered_interpreter_required')
+            readable_public_sdk(directory,source,primitives)
             from poolrotater_host.recreation_repair_workflow import run
             result=run(args.instance,kit/'runtime.zip',release['runtime_sha256'],
                        {row['sha256']for row in release['supported_predecessors']},operations,start=args.start)
