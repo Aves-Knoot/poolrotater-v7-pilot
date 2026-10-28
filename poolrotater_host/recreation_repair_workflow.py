@@ -106,8 +106,13 @@ def run(instance,bundle,candidate,supported_predecessors,ops,*,start=False):
                 ops.operation='ownership_review'
                 review=ownership('review');ops.save('ownership-review',review)
                 require(review.get('journal_unchanged')is True and not review.get('untracked_active_room_ids')
-                        and not review.get('untracked_unconfirmed_room_ids')and review.get('rooms'),
+                        and not review.get('untracked_unconfirmed_room_ids')
+                        and type(review.get('rooms'))is list,
                         'repair_ownership_requires_review')
+                # A never-started installation legitimately has no journal rows.
+                # This is not absence-based recovery: any stored unknown creation
+                # is still returned by native review and takes the guarded branch.
+                # Startup performs its normal fresh provider/account admission.
                 rooms=review['rooms']
                 if any(row.get('result')=='unknown_creation'for row in rooms):
                     ops.operation='ownership_inventory'
