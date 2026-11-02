@@ -478,6 +478,14 @@ def _controller(instance,operation_id,decision='review',*,automatic=False):
             # start; an already-running successor must have its complete witness.
             from ..managed_host.upgrade import prepare as prepare_managed_configuration,matches as managed_matches
             if not service['MainPID']:
+                # A committed upgrade can be resumed after reconciliation has
+                # restarted the dedicated-UID network helper. Preparation needs
+                # the same stopped process census as the initial switch. The
+                # normal integration restoration below retains its saved intent.
+                from ..network import operations as network
+                if network._state(instance)['MainPID']:
+                    checkpoint(save,'network_stop')
+                    network.unit(instance,'stop')
                 checkpoint(save,'configuration')
                 prepare_managed_configuration(target,current,job)
             else:

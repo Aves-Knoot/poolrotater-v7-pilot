@@ -196,6 +196,27 @@ class ControllerRecoveryTests(unittest.TestCase):
                        for call in self.systemctl.call_args_list),3)
   self.assertEqual(sum(call.args[0]=='start' and call.args[1] in names
                        for call in self.systemctl.call_args_list),2)
+ def test_committed_recovery_pauses_returned_network_before_prepare_and_restores_it(self):
+  self.current=self.after
+  self.upgrade={'phase':'committed','transition_id':'retained'}
+  self.network.update(MainPID=543,ActiveState='active')
+  self.job.update(network_active=True)
+  atomic_json(self.target['prefix']/self.native.NAME,self.job)
+  def network_action(instance,action):
+   self.network.update(MainPID=0 if action=='stop' else 544,
+                       ActiveState='inactive' if action=='stop' else 'active')
+   return {'ok':True}
+  self.network_action.side_effect=network_action
+  def prepare(*args,**kwargs):
+   self.assertEqual(self.network['MainPID'],0)
+   self.assertEqual(self.service['MainPID'],0)
+  self.managed_prepare.side_effect=prepare
+  result=self.run_recovery('complete')
+  self.assertEqual(result['phase'],'complete')
+  self.assertEqual([call.args for call in self.network_action.call_args_list],
+                   [('fixture','stop'),('fixture','start')])
+  self.assertEqual(self.network['MainPID'],544)
+  self.finish.assert_not_called()
  def test_stopped_recovery_refuses_approval_before_quiescing_or_lifecycle(self):
   self.approval.side_effect=ConfigError('recovery approval expired')
   with patch.object(update_helpers,'quiesce') as quiesce:
