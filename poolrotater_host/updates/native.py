@@ -422,6 +422,25 @@ class Backend:
                             'upgrade_phase':'absent','registered_successor':False,
                             'services_restarted':False}
             from .recovery import controller
+            if decision == 'complete':
+                # Preparation renders native configuration with the executing
+                # SDK's version. Dispatch to the checked successor, exactly as
+                # timer/recovery-agent completion does, even before registration
+                # changes. The predecessor remains suitable for read-only review.
+                target, _, _ = self.binding()
+                job = _control(protected(target['prefix']/'controller-update.json'),
+                               maximum=2*1024*1024)
+                require(job.get('id') == operation['id'] and
+                        job.get('after', {}).get('bundle_sha256') ==
+                        operation['release']['artifact']['sha256'],
+                        'update_recovery_operation_changed')
+                from .executor import controller as execute_successor
+                execute_successor(self.instance, target, job, decision='complete')
+                result = controller(self.instance, operation['id'], 'review')
+                # The review itself performs no service action; it cannot say
+                # that the preceding successor dispatch restarted no services.
+                return {key:value for key,value in result.items()
+                        if key != 'services_restarted'}
             return controller(self.instance,operation['id'],decision)
         observed=self.observe(operation)
         if decision=='review':return {'ok':True,**observed,'services_restarted':False}
