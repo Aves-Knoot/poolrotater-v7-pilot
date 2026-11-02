@@ -50,6 +50,25 @@ class Workflow(unittest.TestCase):
         receipt=read_json(self.prefix/'recreation-repair.json')
         self.assertTrue(receipt['startup_attempted']);self.assertEqual(receipt['phase'],'complete')
         self.assertGreaterEqual(self.quiet.call_count,2)
+    def test_never_started_empty_native_journal_admits_only_one_normal_start(self):
+        self.review['rooms']=[]
+        result=self.execute()
+        self.assertEqual(result['phase'],'started');self.assertEqual(result['start_attempts'],1)
+        self.start.assert_called_once_with('two','start',preserve_managed_intent=True,admission_held=True)
+        self.assertEqual([call.args[1]for call in self.ownership.call_args_list],['review'])
+        self.assertTrue(read_json(self.prefix/'recreation-repair.json')['startup_attempted'])
+    def test_empty_native_journal_without_start_choice_stays_stopped(self):
+        self.review['rooms']=[]
+        self.assertEqual(self.execute(start=False)['phase'],'ready_for_start')
+        self.start.assert_not_called()
+    def test_missing_native_journal_summary_refuses_without_start(self):
+        del self.review['rooms']
+        with self.assertRaisesRegex(ConfigError,'ownership_requires_review'):self.execute()
+        self.start.assert_not_called()
+    def test_empty_local_journal_does_not_ignore_an_untracked_provider_room(self):
+        self.review['rooms']=[];self.review['untracked_active_room_ids']=[105]
+        with self.assertRaisesRegex(ConfigError,'ownership_requires_review'):self.execute()
+        self.start.assert_not_called()
     def test_unknown_without_id_keeps_original_journal_and_never_starts(self):
         self.review['rooms'][0]['result']='unknown_creation'
         def review(instance,action,*args,**kw):

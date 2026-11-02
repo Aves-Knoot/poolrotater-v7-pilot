@@ -1,8 +1,13 @@
 # PoolRotater distributed host
 
-v7.3.7 retains the maintenance evidence needed by later updates and adds guarded
-retirement of obsolete automatic drains. See
-[maintenance evidence, first transitions and validation limits](docs/V7_3_7_MAINTENANCE_EVIDENCE.md).
+v7.3.8 hardens two-hour empty-room recreation, records safe creation evidence,
+and fences a failed replacement alias while qualified healthy siblings keep
+playing. See [room recreation and stopped recovery](docs/ROOM_RECREATION_RECOVERY.md)
+for the pinned state-preserving repair, no-ID discovery and ownership limits.
+Unknown creation is never retried or silently cleared. Existing holds can still
+require an actual replacement ID or upstream evidence.
+The earlier [maintenance evidence and transition notes](docs/V7_3_7_MAINTENANCE_EVIDENCE.md)
+remain applicable to their documented paths.
 The matching release's validation report records its tested scope; GitHub and
 the signed feed determine availability. A source checkout is not an approved
 installed runtime.
