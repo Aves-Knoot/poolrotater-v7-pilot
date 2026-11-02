@@ -12,7 +12,7 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
-from ..diagnostic_logs.common import private_database, transaction
+from ..diagnostic_logs.common import private_database, transaction, read_transaction
 from ..network.contracts import identifier, integer, require, canonical
 from .contracts import alias as check_alias, request, digest, TERMINAL, ERRORS
 from .settings import validate, public_settings, merge
@@ -62,7 +62,7 @@ class State:
         self._meta(db,'intent_sequence',json.loads(old[0])+1 if old else 1)
     def intent_sequence(self):
         """Explicit decisions only, never progress/diagnostic observations."""
-        with transaction(self.path) as db:
+        with read_transaction(self.path) as db:
             row=db.execute("SELECT value FROM meta WHERE key='intent_sequence'").fetchone()
             return json.loads(row[0]) if row else 0
     def _audit(self,db,operation,alias,actor,action,phase,revision=None,settings=None):
@@ -73,7 +73,7 @@ class State:
         require(row is not None,'room_not_found',404)
         return row
     def refresh_binding(self):
-        with transaction(self.path) as db:
+        with read_transaction(self.path) as db:
             value=self._get(db,'binding')
             require(all(value[k]==self.binding[k] for k in ('installation_id','generation')),'host_identity_mismatch',409)
             self.binding=value
@@ -107,7 +107,7 @@ class State:
     def sharing_ready(self,credential):
         if credential is None:return False
         self.refresh_binding()
-        with transaction(self.path) as db:
+        with read_transaction(self.path) as db:
             row=db.execute("SELECT value FROM meta WHERE key='hub_authority'").fetchone()
             return bool(row and json.loads(row[0])=={k:credential[k] for k in ('host_id','server_epoch')}
                         and self._get(db,'policy_version')==1 and credential['host_id']==self.binding['host_id'])
@@ -216,7 +216,7 @@ class State:
         integer(version,1,1)
         with transaction(self.path) as db:self._meta(db,'policy_version',version)
     def limits(self):
-        with transaction(self.path) as db:return self._limits(db)
+        with read_transaction(self.path) as db:return self._limits(db)
     def _limits(self,db):
         maximum=self._get(db,'max_concurrent_rooms');provider=self._get(db,'provider_room_limit')
         external=self._get(db,'external_rooms');local=db.execute('SELECT count(*) FROM reservations').fetchone()[0]
@@ -436,11 +436,11 @@ class State:
         return {'id':row['id'],'alias':row['alias'],'phase':row['phase'],'failure_code':row['error'],
                 'result':json.loads(row['result']) if row['result'] else None}
     def pending(self):
-        with transaction(self.path) as db:
+        with read_transaction(self.path) as db:
             return [json.loads(r[0]) for r in db.execute("SELECT payload FROM operations WHERE phase IN ('received','validated','waiting_boundary') ORDER BY created,id")]
     def operation(self,id):
         identifier(id)
-        with transaction(self.path) as db:
+        with read_transaction(self.path) as db:
             row=db.execute('SELECT * FROM operations WHERE id=?',(id,)).fetchone()
             require(row is not None,'managed_operation_not_found',404);return self._receipt(row)
     def begin(self,id,*,ready):
@@ -539,14 +539,14 @@ class State:
                 self._finish(db,op,'uncertain','managed_application_requires_review',None)
     def room(self,alias,*,private=False):
         check_alias(alias)
-        with transaction(self.path) as db:
+        with read_transaction(self.path) as db:
             row=dict(self._room(db,alias))
             for key in ('config','effective'):
                 value=json.loads(row[key]);row[key]=value if private else public_settings(value)
             return row
     def snapshot(self,*,controller_phase='unavailable'):
         self.refresh_binding()
-        with transaction(self.path) as db:
+        with read_transaction(self.path) as db:
             limits=self._limits(db);rows=[]
             for row in db.execute('SELECT * FROM rooms ORDER BY alias'):
                 cfg=json.loads(row['config'])

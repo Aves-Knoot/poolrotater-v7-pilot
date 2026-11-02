@@ -127,6 +127,33 @@ def transaction(path):
         db.close()
 
 
+@contextmanager
+def read_transaction(path):
+    """Open a query-only snapshot without reserving SQLite's writer lock.
+
+    A read transaction must not use BEGIN IMMEDIATE: doing so makes a routine
+    status/intent read contend with the actual writer even when SQLite could
+    safely serve the read alongside that writer. Lock exhaustion is returned
+    as a fixed, typed deferral; malformed databases and other SQLite errors
+    retain their original failure behavior.
+    """
+    check_database(path)
+    db=sqlite3.connect(path,timeout=1,isolation_level=None)
+    db.row_factory=sqlite3.Row
+    try:
+        db.execute('PRAGMA query_only=ON')
+        db.execute('BEGIN')
+        yield db
+        db.execute('COMMIT')
+    except BaseException as error:
+        db.rollback()
+        if is_database_busy(error):
+            raise DatabaseBusy('local_database_busy') from None
+        raise
+    finally:
+        db.close()
+
+
 def pack(records):
     raw = canonical(records)
     require(len(raw) <= RAW_LIMIT, 'log_batch_too_large', 413)

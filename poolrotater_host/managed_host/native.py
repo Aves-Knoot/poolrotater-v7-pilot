@@ -1,5 +1,6 @@
 """Controller adapter: reuse native workers, hotload and verified room closure."""
 import copy
+import logging
 from contextlib import ExitStack
 import os
 from pathlib import Path
@@ -10,6 +11,8 @@ from ..layout import load
 from . import settings
 from .engine import Engine,Deferred,BeforeMutationError
 from .projection import export
+
+log = logging.getLogger(__name__)
 
 
 def apply_pool_styles(pool,cfg):
@@ -245,7 +248,8 @@ class NativeAdapter:
 class Coordinator:
     def __init__(self,owner,state):
         self.owner=owner;self.state=state;self.engine=Engine(state,NativeAdapter(self));self.thread=None
-        self._observations={};self.capacity_retry_at={};self.state.recover_applying();export(self.state)
+        self._observations={};self.capacity_retry_at={};self.state_retry_at=0.0
+        self._last_state_busy_log=0.0;self.state.recover_applying();export(self.state)
     def desired_running(self,alias):return self.state.room(alias)['desired']=='running'
     def startup_allowed(self,alias):
         limits=self.state.limits()
@@ -315,18 +319,30 @@ class Coordinator:
                 except Exception:pass
             adapter.release()
     def tick(self):
+        from ..diagnostic_logs.common import DatabaseBusy,is_database_busy
+        if time.monotonic()<self.state_retry_at:return
+        try:self._tick_state()
+        except Exception as error:
+            if not isinstance(error,DatabaseBusy) and not is_database_busy(error):raise
+            now=time.monotonic();self.state_retry_at=now+2.0
+            if now-self._last_state_busy_log>=60:
+                log.warning('managed state observation deferred; failure_code=local_database_busy')
+                self._last_state_busy_log=now
+
+    def _tick_state(self):
         for alias,worker in self.owner.workers.items():
             state=self.owner.registry.snapshot()['rooms'].get(alias,{})
             identity=(worker.broker.generation,state.get('room_id'),state.get('operation'),state.get('ownership_unknown'))
             if self._observations.get(alias)==identity:continue
-            self._observations[alias]=identity
             if (state.get('operation')=='owned' and not state.get('ownership_unknown')
                     and state.get('room_id') in worker.broker.hub.owned):
                 self.state.observe_owned(alias,worker.broker.generation,state['room_id'],adopt=True)
+            self._observations[alias]=identity
         if self.thread is not None and self.thread.is_alive():return
         if self.owner.rollout_alias or self.owner.targets:return
-        capacity=None if self.state.pending() else self.capacity_action()
-        if not self.state.pending() and capacity is None:return
+        pending=self.state.pending()
+        capacity=None if pending else self.capacity_action()
+        if not pending and capacity is None:return
         # Reserve the same parent lifecycle gate used by native rollouts/Discord.
         def execute():
             os.setpriority(os.PRIO_PROCESS,0,max(15,os.getpriority(os.PRIO_PROCESS,0)))

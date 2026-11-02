@@ -891,6 +891,16 @@ class RollingSupervisor:
         from poolrotater_host.network.projection import verified_visibility
         if not force and time.monotonic() - self.last_status_write < 5:
             return
+        managed=getattr(self,'managed',None)
+        managed_visibility=None
+        if managed is not None:
+            from poolrotater_host.diagnostic_logs.common import DatabaseBusy
+            try:
+                managed_visibility={r['alias']:r.get('visibility')
+                    for r in managed.state.snapshot().get('rooms',[])}
+            except DatabaseBusy:
+                log.debug('status publication deferred: managed state busy')
+                return False
         state = self.registry.snapshot()
         for row in state['rooms'].values():
             row['network_visibility'] = 'unknown'
@@ -903,15 +913,13 @@ class RollingSupervisor:
             row['network_visibility'] = verified_visibility(worker, row)
         state.update(supervisor_version=self.manifest["version"], generated_at=time.time(),
                      deployment_empty_seconds=self.empty_seconds, configuration_error=self.config_error)
-        atomic_json(self.directory / "status.json", state)
         public = {"generated_at": state["generated_at"], "supervisor_version": self.manifest["version"], "rooms": {}}
         for alias, row in state["rooms"].items():
             worker = self.workers.get(alias)
             if (getattr(worker,'broker',None) is not None
                     and worker.broker.cfg.get('managed_visibility')=='private'):
                 continue
-            managed=getattr(self,'managed',None)
-            if managed is not None and managed.state.room(alias)['config'].get('visibility')=='private':
+            if managed_visibility is not None and managed_visibility.get(alias)!='public':
                 continue
             fresh = bool(worker and worker.fresh() and worker.status.get("ready")
                          and worker.status.get("running") and row.get("room_id")
@@ -928,8 +936,10 @@ class RollingSupervisor:
         private = getattr(self, 'private_pilot', None)
         if private is not None and private.alias in public['rooms']:
             public['rooms'][private.alias].update(room_id=None, healthy=False, observed_at=None, state='STALE', players=None, current_map=None, queue=[], queue_known=False, match_started_at=None)
+        atomic_json(self.directory / "status.json", state)
         atomic_json(self.directory / "public-status.json", public)
         self.last_status_write = time.monotonic()
+        return True
 
     def start_release_for(self, alias):
         previous = self.registry.snapshot()["rooms"].get(alias, {})
