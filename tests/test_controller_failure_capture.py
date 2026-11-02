@@ -68,6 +68,7 @@ class FailureCaptureTests(unittest.TestCase):
                     protected_parent=None,bookings=None,managed=None,booking_panels=None,
                     workers={},schema_baseline={},_requests=lambda:None,
                     _discord_commands=lambda:None,write_status=lambda:None,runtime=Path(temp))
+                owner._refresh_configuration=lambda:RollingSupervisor._refresh_configuration(owner)
                 error=NetworkError('unsafe_log_database')
                 def fail():raise error
                 setattr(owner,attribute,SimpleNamespace(tick=fail)if attribute in('bookings','managed','booking_panels')else fail)

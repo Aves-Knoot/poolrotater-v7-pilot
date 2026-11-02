@@ -76,7 +76,8 @@ def _tick_with_startup_mocks(monkeypatch, root, state, booking_leases, *, attemp
     target = {'root': root, 'prefix': prefix, 'unit': 'invented.service'}
     marker = {'installation_id': state.binding['installation_id'],
               'generation': state.binding['generation']}
-    record = {'service_uid': os.geteuid(), 'bundle_sha256': 'a' * 64}
+    record = {'service_uid': os.geteuid(), 'bundle_sha256': 'a' * 64,
+              'prefix': str(prefix)}
     monkeypatch.setattr(pilot_installation, 'administrative_binding',
                         lambda instance: (target, marker, record))
     monkeypatch.setattr(pilot_installation, '_stopped', lambda *a, **k: nullcontext())
@@ -142,7 +143,8 @@ def test_stopped_controller_starts_once_for_durable_booking_and_default_off_stay
     off_operations = _tick_with_startup_mocks(monkeypatch, off_root, off_state, [],
                                               attempts=attempts_off)
     result = off_operations.tick('invented')
-    assert result == {'ok': True, 'phase': 'intentionally-stopped', 'rooms_started': False}
+    assert result == {'ok': True, 'phase': 'intentionally-stopped', 'rooms_started': False,
+                      'recovery_pin': {'status': 'absent', 'pin_refreshed': False}}
     assert attempts_off == []
 
 
