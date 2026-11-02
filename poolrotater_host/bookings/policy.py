@@ -6,7 +6,7 @@ import sqlite3
 import stat
 from urllib.parse import quote
 
-from ..diagnostic_logs.common import check_database
+from ..diagnostic_logs.common import check_database, DatabaseBusy, is_database_busy
 from ..layout import atomic_json, checked_root, load as load_host, read_json
 from ..network.contracts import fields, require
 
@@ -58,7 +58,10 @@ def _readonly_rows(root, relative, table, columns):
             require(set(columns)<=actual,'booking_local_state_uncertain',409)
             return [dict(row) for row in db.execute(f'SELECT {",".join(columns)} FROM {table}')]
         finally:db.close()
-    except (sqlite3.Error,OSError):
+    except sqlite3.Error as error:
+        if is_database_busy(error):raise DatabaseBusy('local_database_busy') from None
+        raise ValueError('booking_local_state_uncertain') from None
+    except OSError:
         raise ValueError('booking_local_state_uncertain') from None
 
 

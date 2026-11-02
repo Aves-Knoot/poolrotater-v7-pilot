@@ -1,0 +1,45 @@
+#!/usr/bin/python3
+"""Run development commands with no host network, home, runtime or credentials."""
+import os
+from pathlib import Path
+import resource
+import shutil
+import subprocess
+import sys
+from test_isolation import anchor_fd
+
+root = Path(__file__).resolve().parents[1]
+if not sys.argv[1:]:
+    raise SystemExit("usage: scripts/offline COMMAND [ARG ...]")
+if not Path('/usr/bin/bwrap').is_file():
+    raise SystemExit("bubblewrap is required; refusing to run without isolation")
+if shutil.disk_usage(root).free < 5 * 1024**3:
+    raise SystemExit("less than 5 GiB VPS disk reserve; refusing development job")
+current_nice = os.getpriority(os.PRIO_PROCESS, 0)
+if current_nice < 15:
+    os.nice(15 - current_nice)
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+resource.setrlimit(resource.RLIMIT_AS, (1024**3, 1024**3))
+boundary = anchor_fd('ordinary')
+args = ['/usr/bin/bwrap', '--unshare-all', '--uid', '1000', '--gid', '1000',
+        '--die-with-parent', '--new-session', '--cap-drop', 'ALL',
+        '--ro-bind', '/usr', '/usr',
+        '--tmpfs', '/usr/local', '--remount-ro', '/usr/local',
+        '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib',
+        '--symlink', 'usr/lib64', '/lib64', '--proc', '/proc', '--dev', '/dev',
+        '--tmpfs', '/tmp', '--dir', '/tmp/home', '--dir', '/etc',
+        '--ro-bind', '/etc/ld.so.cache', '/etc/ld.so.cache',
+        '--perms', '0444', '--ro-bind-data', str(boundary), '/etc/poolrotater-test-boundary.json',
+        '--ro-bind', str(root / 'scripts/sandbox-passwd'), '/etc/passwd',
+        '--ro-bind', str(root / 'scripts/sandbox-group'), '/etc/group',
+        '--bind', str(root), str(root), '--chdir', str(root), '--clearenv',
+        '--setenv', 'PATH', f'{root}/.venv/bin:/usr/bin:/bin',
+        '--setenv', 'HOME', '/tmp/home', '--setenv', 'TMPDIR', '/tmp',
+        '--setenv', 'LANG', 'C.UTF-8', '--setenv', 'PYTHONPATH', str(root),
+        '--setenv', 'PYTHONDONTWRITEBYTECODE', '1',
+        '--setenv', 'MALLOC_ARENA_MAX', '2',
+        '--setenv', 'POOLROTATER_OFFLINE_SANDBOX', '1', '--', *sys.argv[1:]]
+try:
+    raise SystemExit(subprocess.call(args, env={'PATH': '/usr/bin:/bin'}, pass_fds=(boundary,)))
+finally:
+    os.close(boundary)

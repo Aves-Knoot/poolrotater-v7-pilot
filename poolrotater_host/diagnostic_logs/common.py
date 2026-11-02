@@ -26,6 +26,16 @@ KINDS = ('operational', 'chat', 'command', 'gap')
 log = logging.getLogger(__name__)
 
 
+class DatabaseBusy(RuntimeError):
+    """A bounded local SQLite contention deferral, never a data error."""
+
+
+def is_database_busy(error):
+    code=getattr(error,'sqlite_errorcode',None)
+    return (type(code)is int and
+            (code&0xff) in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED))
+
+
 def label(value, *, nullable=False):
     require((nullable and value is None) or (isinstance(value, str) and ALIAS.fullmatch(value)), 'invalid_log_label')
     return value

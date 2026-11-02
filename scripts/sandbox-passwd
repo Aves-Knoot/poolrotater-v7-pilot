@@ -1,0 +1,3 @@
+root:x:0:0:Sandbox root:/tmp/home:/bin/sh
+nobody:x:65534:65534:Sandbox fixture user:/nonexistent:/usr/sbin/nologin
+operator:x:1000:1000:Offline operator:/tmp/home:/bin/sh

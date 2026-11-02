@@ -364,6 +364,28 @@ class RollingSupervisor:
                 raise HandoffDeferred("worker_not_quiescent")
             raise RuntimeError("room no longer eligible for " + command)
 
+    def _refresh_configuration(self):
+        """Validate runtime configuration while retaining the installed LKG.
+
+        SQLite busy/locked is a bounded deferral. It must not terminate this
+        parent and its already-owned workers; other configuration and custody
+        failures keep their existing explicit error path.
+        """
+        if self.config_loader is None:return
+        from poolrotater_host.diagnostic_logs.common import DatabaseBusy
+        try:
+            self.config_loader()
+            self.config_error=None
+        except DatabaseBusy:
+            if self.config_error!='local_database_busy':
+                log.warning('native configuration refresh deferred; failure_code=local_database_busy')
+            self.config_error='local_database_busy'
+        except (OSError,ValueError) as exc:
+            if self.config_error!=type(exc).__name__:
+                log.warning('native configuration refresh rejected; retaining running room settings (%s)',
+                            type(exc).__name__)
+            self.config_error=type(exc).__name__
+
     def dispose(self, worker):
         # Fencing rejects any late RPCs before a replacement can take ownership.
         worker.broker.fenced = True
@@ -697,14 +719,7 @@ class RollingSupervisor:
 
     def tick(self):
         self._tick_component = 'configuration'
-        if self.config_loader is not None:
-            try:
-                self.config_loader()
-                self.config_error = None
-            except (OSError, ValueError) as exc:
-                if self.config_error != type(exc).__name__:
-                    log.warning('native configuration refresh rejected; retaining running room settings (%s)', type(exc).__name__)
-                self.config_error = type(exc).__name__
+        self._refresh_configuration()
         self._tick_component = 'deployment_settings'
         self.reload_deployment_settings()
         # Consume protected cancellation before choosing the next empty alias.

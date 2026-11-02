@@ -25,14 +25,38 @@ def operation_id(booking_id, stage):
     return str(uuid.uuid5(uuid.UUID(booking_id), 'booking-native:' + stage))
 
 
+def _readonly_leases(root,binding):
+    """Read the validated local lease view without schema/rebind transactions."""
+    from .policy import _readonly_rows, BOOKINGS_DB
+    from .local import LocalSessions
+    columns=('booking_id','host_id','installation_id','generation','alias',
+        'session_generation','lease','lifecycle_state','roles','settings',
+        'base_settings','cleanup_complete','settings_revision')
+    rows=_readonly_rows(root,BOOKINGS_DB,'host_bookings',columns)
+    result=[]
+    for row in rows or []:
+        require(row['cleanup_complete'] in (0,1),'booking_local_state_uncertain',409)
+        value=LocalSessions._booking(row)
+        lease=value['lease']
+        require(type(lease)is dict and all(row[key]==binding[key] and lease.get(key)==binding[key]
+                for key in ('host_id','installation_id','generation'))
+                and lease.get('alias')==row['alias'] and lease.get('id')==row['booking_id'],
+                'booking_local_state_uncertain',409)
+        if value['state']['phase']=='ended' and value['cleanup_complete']:
+            continue
+        result.append(value)
+    return result
+
+
 def overlay(root, configs):
     """Runtime-only worker binding; never edits operator defaults or grants."""
     aliases = enabled_aliases(root)
     if not aliases or not (Path(root) / 'state/bookings.sqlite3').exists():
         return configs
-    from ..managed_host.policy import state
-    sessions = LocalSessions(root, state(root).binding)
-    leases = {r['lease']['alias']: r for r in sessions.leases() if not r['cleanup_complete']}
+    from .policy import native_binding
+    binding=native_binding(root)
+    leases = {r['lease']['alias']:r for r in _readonly_leases(root,binding)
+              if not r['cleanup_complete']}
     result = copy.deepcopy(configs)
     for cfg in result:
         alias = cfg['_instance_name']
