@@ -40,9 +40,25 @@ def room_descriptors():
     for alias,label,guide in ROOMS:
         if SOURCE.owner:
             try:
-                if json.loads(SOURCE.config(alias).read_text()).get('ruleset_id')==2:
-                    label,guide='Catch fixed','lobbies:catch'
-            except (OSError,ValueError,AttributeError):pass
+                cfg=json.loads(SOURCE.config(alias).read_text())
+                ruleset=cfg.get('ruleset_id')
+                if type(ruleset) is not int:raise ValueError('unknown ruleset')
+                if ruleset==0:
+                    loved=cfg.get('loved_mode') is True
+                    automatic=cfg.get('auto_difficulty') is True
+                    label='Loved' if loved else 'Standard automatic' if automatic else 'Standard fixed'
+                    guide='lobbies:standard_auto' if automatic and not loved else 'lobbies:standard_fixed'
+                elif ruleset==1:label,guide='Taiko','lobbies:taiko'
+                elif ruleset==2:
+                    label='Catch automatic' if cfg.get('auto_difficulty') is True else 'Catch fixed'
+                    guide='lobbies:catch'
+                elif ruleset==3:
+                    keys=cfg.get('mania_keys',cfg.get('keys'))
+                    if type(keys) is not int or keys not in (4,7):raise ValueError('unknown key count')
+                    label,guide='Mania '+str(keys)+'K','lobbies:mania_'+str(keys)+'k'
+                else:raise ValueError('unknown ruleset')
+            except (OSError,ValueError,TypeError,AttributeError):
+                label,guide='Lobby '+alias[-1],''
         result.append((alias,label,guide))
     return result
 
@@ -100,15 +116,30 @@ def main():
             pass
     try:
         snapshot = json.loads(SNAPSHOT.read_text())
+        if SOURCE.owner:
+            # The ten-second exporter already applies native ownership/privacy.
+            # Avoid resurrecting IDs from the five-minute legacy snapshot.
+            live = json.loads(OUTPUT.with_name('status.json').read_text())
+            stamp = live.get('generated_at')
+            if (type(stamp) not in (int, float) or not time.time()-30 <= stamp <= time.time()+30
+                    or live.get('available') is not True or not isinstance(live.get('rooms'), list)):
+                raise ValueError('current owner public status unavailable')
+            snapshot = {'generated_at': datetime.fromtimestamp(stamp, timezone.utc).isoformat(),
+                        'system': {'service': {'active_state': 'active', 'sub_state': 'running'}},
+                        'rooms': live['rooms']}
         active = subprocess.run(['systemctl', 'is-active', '--quiet', SOURCE.service],
                                 timeout=3, check=False).returncode == 0
         # mode=ro plus systemd's read-only mount guarantees no bot DB writes.
         with readonly_database(LEDGER, timeout=1) as conn:
             result = build(snapshot, invite, conn, service_active=active)
     except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error, subprocess.SubprocessError):
+        # An unavailable owner privacy mask also hides configured room types.
+        # Public labels are only authoritative after build() checked that mask.
+        unavailable = ([(a, 'Lobby '+a[-1], '') for a, _, _ in ROOMS]
+                       if SOURCE.owner else room_descriptors())
         result = {'schema': 1, 'discord_url': invite if valid_invite(invite) else None,
                   'observed_at': 0, 'expires_at': 0,
-                  'rooms': [{'alias': a, 'label': l, 'guide': g, 'room_id': None} for a, l, g in room_descriptors()]}
+                  'rooms': [{'alias': a, 'label': l, 'guide': g, 'room_id': None} for a, l, g in unavailable]}
     OUTPUT.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
     temp = OUTPUT.with_suffix('.tmp')
     with temp.open('w') as file:

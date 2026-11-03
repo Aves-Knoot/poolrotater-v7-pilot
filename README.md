@@ -1,6 +1,12 @@
 # PoolRotater distributed host
 
-v7.3.8 hardens two-hour empty-room recreation, records safe creation evidence,
+v7.3.10 focuses on controller resilience during SQLite contention and safe
+completion of interrupted coordinated upgrades. See the [maintenance guide](docs/V7_3_10_MAINTENANCE.md)
+for qualified behavior, normal automatic delivery, preserved settings and limits.
+It retains each host's configured recreation interval; it does not reset room
+defaults or activate new moderation/booking features.
+
+The earlier v7.3.8 recreation hardening records safe creation evidence,
 and fences a failed replacement alias while qualified healthy siblings keep
 playing. See [room recreation and stopped recovery](docs/ROOM_RECREATION_RECOVERY.md)
 for the pinned state-preserving repair, no-ID discovery and ownership limits.
