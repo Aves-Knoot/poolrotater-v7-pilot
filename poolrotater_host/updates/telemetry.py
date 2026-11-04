@@ -11,7 +11,8 @@ from ..network.contracts import (require,fields,integer,number,canonical,verifie
 PHASES=('idle','available','downloaded','staging','dispatching','waiting_empty','installed',
         'held','retrying','paused','controller_consent_required')
 ERRORS=(None,'update_installation_requires_review','update_deployment_receipt_missing',
-        'update_other_deployment_pending','update_check_or_download_failed','update_host_not_running','update_release_requires_manual_retry')
+        'update_other_deployment_pending','update_check_or_download_failed','update_host_not_running','update_release_requires_manual_retry',
+        'update_staging_capacity_wait','update_stopped_host_requires_controller_release')
 
 
 def report(value):

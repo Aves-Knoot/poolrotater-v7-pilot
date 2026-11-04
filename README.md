@@ -3,6 +3,9 @@
 v7.3.10 focuses on controller resilience during SQLite contention and safe
 completion of interrupted coordinated upgrades. See the [maintenance guide](docs/V7_3_10_MAINTENANCE.md)
 for qualified behavior, normal automatic delivery, preserved settings and limits.
+The [capacity reporting follow-up](docs/UPDATE_DIAGNOSTICS_FOLLOWUP.md) documents
+an additive central reporting repair and unreleased host-source correction;
+the signed v7.3.10 runtime remains unchanged.
 It retains each host's configured recreation interval; it does not reset room
 defaults or activate new moderation/booking features.
 
